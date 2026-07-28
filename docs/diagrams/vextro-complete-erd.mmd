@@ -1,0 +1,452 @@
+%% VEXTRO Complete Entity Relationship Diagram
+%% Open this .mmd file on GitHub to view the rendered visual ERD.
+
+erDiagram
+
+    %% =========================
+    %% AUTHENTICATION & ACCESS
+    %% =========================
+
+    USERS {
+        bigint id PK
+        varchar email UK
+        varchar full_name
+        varchar password_hash
+        boolean is_active
+        boolean is_verified
+    }
+
+    ROLES {
+        bigint id PK
+        varchar name UK
+        varchar description
+    }
+
+    USER_ROLES {
+        bigint user_id PK, FK
+        bigint role_id PK, FK
+        timestamptz assigned_at
+    }
+
+    REFRESH_TOKENS {
+        bigint id PK
+        bigint user_id FK
+        varchar token_hash UK
+        timestamptz expires_at
+        timestamptz revoked_at
+    }
+
+    %% =========================
+    %% PRODUCT CATALOG
+    %% =========================
+
+    CATEGORIES {
+        bigint id PK
+        bigint parent_id FK
+        varchar name
+        varchar slug UK
+    }
+
+    BRANDS {
+        bigint id PK
+        varchar name UK
+        varchar slug UK
+    }
+
+    PLATFORMS {
+        bigint id PK
+        varchar name UK
+        varchar code UK
+        varchar base_url
+    }
+
+    CANONICAL_PRODUCTS {
+        bigint id PK
+        bigint category_id FK
+        bigint brand_id FK
+        varchar name
+        varchar model
+        jsonb specifications
+    }
+
+    PRODUCT_VARIANTS {
+        bigint id PK
+        bigint canonical_product_id FK
+        varchar sku UK
+        integer ram_gb
+        integer storage_gb
+        varchar color
+    }
+
+    SELLERS {
+        bigint id PK
+        bigint platform_id FK
+        varchar external_seller_id
+        varchar name
+        numeric rating
+    }
+
+    PRODUCT_LISTINGS {
+        bigint id PK
+        bigint platform_id FK
+        bigint product_variant_id FK
+        bigint seller_id FK
+        varchar external_id
+        numeric current_price
+        boolean is_available
+    }
+
+    PRODUCT_IMAGES {
+        bigint id PK
+        bigint canonical_product_id FK
+        bigint listing_id FK
+        text image_url
+        boolean is_primary
+    }
+
+    %% =========================
+    %% DATA ACQUISITION
+    %% =========================
+
+    SCRAPE_RUNS {
+        bigint id PK
+        bigint platform_id FK
+        varchar run_type
+        varchar status
+        integer items_processed
+    }
+
+    SCRAPE_ERRORS {
+        bigint id PK
+        bigint scrape_run_id FK
+        text source_url
+        varchar error_type
+        text error_message
+    }
+
+    %% =========================
+    %% PRICE INTELLIGENCE
+    %% =========================
+
+    PRICE_OBSERVATIONS {
+        bigint id PK
+        bigint listing_id FK
+        numeric price
+        varchar currency
+        timestamptz observed_at
+    }
+
+    PRICE_ALERTS {
+        bigint id PK
+        bigint user_id FK
+        bigint product_variant_id FK
+        numeric target_price
+        boolean is_active
+    }
+
+    PRICE_FORECASTS {
+        bigint id PK
+        bigint product_variant_id FK
+        bigint model_version_id FK
+        date forecast_date
+        numeric predicted_price
+        numeric confidence_score
+    }
+
+    MARKET_ANOMALIES {
+        bigint id PK
+        bigint listing_id FK
+        varchar anomaly_type
+        numeric anomaly_score
+    }
+
+    %% =========================
+    %% REVIEW INTELLIGENCE
+    %% =========================
+
+    RAW_REVIEWS {
+        bigint id PK
+        bigint listing_id FK
+        bigint seller_id FK
+        varchar external_review_id
+        integer rating
+        text review_text
+    }
+
+    SENTIMENT_RESULTS {
+        bigint id PK
+        bigint review_id FK
+        bigint model_version_id FK
+        varchar sentiment_label
+        numeric confidence_score
+    }
+
+    ASPECT_SENTIMENTS {
+        bigint id PK
+        bigint review_id FK
+        bigint model_version_id FK
+        varchar aspect
+        varchar sentiment_label
+    }
+
+    REVIEW_SUMMARIES {
+        bigint id PK
+        bigint product_variant_id FK
+        bigint model_version_id FK
+        text positive_summary
+        text negative_summary
+    }
+
+    FAKE_REVIEW_RESULTS {
+        bigint id PK
+        bigint review_id FK
+        bigint model_version_id FK
+        numeric suspicious_score
+        varchar risk_level
+    }
+
+    SELLER_TRUST_SCORES {
+        bigint id PK
+        bigint seller_id FK
+        bigint model_version_id FK
+        numeric trust_score
+        varchar risk_level
+    }
+
+    %% =========================
+    %% CONSUMER PERSONALIZATION
+    %% =========================
+
+    USER_EVENTS {
+        bigint id PK
+        bigint user_id FK
+        bigint product_variant_id FK
+        varchar event_type
+        timestamptz occurred_at
+    }
+
+    USER_PREFERENCES {
+        bigint id PK
+        bigint user_id FK, UK
+        jsonb preferred_categories
+        jsonb preferred_brands
+        numeric minimum_price
+        numeric maximum_price
+    }
+
+    WATCHLISTS {
+        bigint id PK
+        bigint user_id FK
+        bigint product_variant_id FK
+        timestamptz created_at
+    }
+
+    SAVED_COMPARISONS {
+        bigint id PK
+        bigint user_id FK
+        varchar title
+    }
+
+    SAVED_COMPARISON_ITEMS {
+        bigint comparison_id PK, FK
+        bigint listing_id PK, FK
+    }
+
+    RECOMMENDATION_RESULTS {
+        bigint id PK
+        bigint user_id FK
+        bigint product_variant_id FK
+        bigint model_version_id FK
+        numeric recommendation_score
+    }
+
+    %% =========================
+    %% SME BUSINESS INTELLIGENCE
+    %% =========================
+
+    ORGANIZATIONS {
+        bigint id PK
+        varchar name
+        varchar industry
+        varchar registration_number UK
+    }
+
+    ORGANIZATION_USERS {
+        bigint organization_id PK, FK
+        bigint user_id PK, FK
+        varchar organization_role
+    }
+
+    BUSINESS_PRODUCTS {
+        bigint id PK
+        bigint organization_id FK
+        bigint product_variant_id FK
+        varchar internal_sku
+        numeric cost_price
+        numeric selling_price
+        integer current_stock
+    }
+
+    COMPETITOR_WATCHLISTS {
+        bigint id PK
+        bigint business_product_id FK
+        bigint listing_id FK
+        boolean is_active
+    }
+
+    SALES_IMPORTS {
+        bigint id PK
+        bigint organization_id FK
+        bigint uploaded_by_user_id FK
+        varchar original_filename
+        varchar status
+    }
+
+    SALES_RECORDS {
+        bigint id PK
+        bigint sales_import_id FK
+        bigint business_product_id FK
+        date sale_date
+        integer quantity
+        numeric total_revenue
+    }
+
+    INVENTORY_SNAPSHOTS {
+        bigint id PK
+        bigint business_product_id FK
+        integer stock_quantity
+        timestamptz observed_at
+    }
+
+    DEMAND_FORECASTS {
+        bigint id PK
+        bigint business_product_id FK
+        bigint model_version_id FK
+        date forecast_date
+        numeric predicted_demand
+    }
+
+    PRICING_SCENARIOS {
+        bigint id PK
+        bigint business_product_id FK
+        bigint created_by_user_id FK
+        numeric current_price
+        numeric proposed_price
+        numeric expected_margin
+    }
+
+    %% =========================
+    %% NOTIFICATIONS & REPORTS
+    %% =========================
+
+    NOTIFICATIONS {
+        bigint id PK
+        bigint user_id FK
+        varchar notification_type
+        varchar title
+        boolean is_read
+    }
+
+    REPORTS {
+        bigint id PK
+        bigint requested_by_user_id FK
+        bigint organization_id FK
+        varchar report_type
+        varchar status
+    }
+
+    %% =========================
+    %% MACHINE LEARNING & AUDIT
+    %% =========================
+
+    MODEL_VERSIONS {
+        bigint id PK
+        varchar model_name
+        varchar model_type
+        varchar version
+        boolean is_active
+    }
+
+    AUDIT_LOGS {
+        bigint id PK
+        bigint user_id FK
+        varchar action
+        varchar resource_type
+        varchar resource_id
+    }
+
+    %% =========================
+    %% RELATIONSHIPS
+    %% =========================
+
+    USERS ||--o{ USER_ROLES : has
+    ROLES ||--o{ USER_ROLES : grants
+    USERS ||--o{ REFRESH_TOKENS : owns
+
+    CATEGORIES o|--o{ CATEGORIES : contains
+    CATEGORIES ||--o{ CANONICAL_PRODUCTS : classifies
+    BRANDS ||--o{ CANONICAL_PRODUCTS : identifies
+    CANONICAL_PRODUCTS ||--o{ PRODUCT_VARIANTS : contains
+
+    PLATFORMS ||--o{ SELLERS : hosts
+    PLATFORMS ||--o{ PRODUCT_LISTINGS : publishes
+    SELLERS ||--o{ PRODUCT_LISTINGS : offers
+    PRODUCT_VARIANTS ||--o{ PRODUCT_LISTINGS : listed_as
+    CANONICAL_PRODUCTS o|--o{ PRODUCT_IMAGES : has
+    PRODUCT_LISTINGS o|--o{ PRODUCT_IMAGES : provides
+
+    PLATFORMS ||--o{ SCRAPE_RUNS : collected_from
+    SCRAPE_RUNS ||--o{ SCRAPE_ERRORS : produces
+
+    PRODUCT_LISTINGS ||--o{ PRICE_OBSERVATIONS : records
+    USERS ||--o{ PRICE_ALERTS : creates
+    PRODUCT_VARIANTS ||--o{ PRICE_ALERTS : monitors
+    PRODUCT_VARIANTS ||--o{ PRICE_FORECASTS : receives
+    MODEL_VERSIONS ||--o{ PRICE_FORECASTS : powers
+    PRODUCT_LISTINGS ||--o{ MARKET_ANOMALIES : may_have
+
+    PRODUCT_LISTINGS ||--o{ RAW_REVIEWS : receives
+    SELLERS ||--o{ RAW_REVIEWS : associated_with
+    RAW_REVIEWS ||--o| SENTIMENT_RESULTS : classified_as
+    MODEL_VERSIONS ||--o{ SENTIMENT_RESULTS : powers
+    RAW_REVIEWS ||--o{ ASPECT_SENTIMENTS : analyzed_for
+    MODEL_VERSIONS ||--o{ ASPECT_SENTIMENTS : powers
+    PRODUCT_VARIANTS ||--o{ REVIEW_SUMMARIES : summarized_as
+    MODEL_VERSIONS ||--o{ REVIEW_SUMMARIES : powers
+    RAW_REVIEWS ||--o| FAKE_REVIEW_RESULTS : inspected_by
+    MODEL_VERSIONS ||--o{ FAKE_REVIEW_RESULTS : powers
+    SELLERS ||--o{ SELLER_TRUST_SCORES : receives
+    MODEL_VERSIONS ||--o{ SELLER_TRUST_SCORES : powers
+
+    USERS ||--o{ USER_EVENTS : generates
+    PRODUCT_VARIANTS ||--o{ USER_EVENTS : receives
+    USERS ||--o| USER_PREFERENCES : configures
+    USERS ||--o{ WATCHLISTS : owns
+    PRODUCT_VARIANTS ||--o{ WATCHLISTS : saved_in
+    USERS ||--o{ SAVED_COMPARISONS : creates
+    SAVED_COMPARISONS ||--o{ SAVED_COMPARISON_ITEMS : contains
+    PRODUCT_LISTINGS ||--o{ SAVED_COMPARISON_ITEMS : selected_in
+    USERS ||--o{ RECOMMENDATION_RESULTS : receives
+    PRODUCT_VARIANTS ||--o{ RECOMMENDATION_RESULTS : recommended_as
+    MODEL_VERSIONS ||--o{ RECOMMENDATION_RESULTS : powers
+
+    ORGANIZATIONS ||--o{ ORGANIZATION_USERS : includes
+    USERS ||--o{ ORGANIZATION_USERS : joins
+    ORGANIZATIONS ||--o{ BUSINESS_PRODUCTS : owns
+    PRODUCT_VARIANTS ||--o{ BUSINESS_PRODUCTS : maps_to
+    BUSINESS_PRODUCTS ||--o{ COMPETITOR_WATCHLISTS : monitors
+    PRODUCT_LISTINGS ||--o{ COMPETITOR_WATCHLISTS : watched_as
+    ORGANIZATIONS ||--o{ SALES_IMPORTS : imports
+    USERS ||--o{ SALES_IMPORTS : uploads
+    SALES_IMPORTS ||--o{ SALES_RECORDS : contains
+    BUSINESS_PRODUCTS ||--o{ SALES_RECORDS : records
+    BUSINESS_PRODUCTS ||--o{ INVENTORY_SNAPSHOTS : tracks
+    BUSINESS_PRODUCTS ||--o{ DEMAND_FORECASTS : receives
+    MODEL_VERSIONS ||--o{ DEMAND_FORECASTS : powers
+    BUSINESS_PRODUCTS ||--o{ PRICING_SCENARIOS : evaluates
+    USERS ||--o{ PRICING_SCENARIOS : creates
+
+    USERS ||--o{ NOTIFICATIONS : receives
+    USERS ||--o{ REPORTS : requests
+    ORGANIZATIONS o|--o{ REPORTS : owns
+    USERS ||--o{ AUDIT_LOGS : performs
