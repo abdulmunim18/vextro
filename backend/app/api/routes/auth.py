@@ -1,0 +1,153 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.api.dependencies.auth import get_current_user
+from app.models.user import User
+
+from app.core.database import get_db
+from app.core.security import create_access_token
+from app.schemas.auth import (
+    TokenResponse,
+    UserLogin,
+    UserRegister,
+    UserResponse,
+)
+from app.services.auth_service import (
+    EmailAlreadyRegisteredError,
+    InactiveAccountError,
+    InvalidCredentialsError,
+    RegistrationRoleNotFoundError,
+    authenticate_user,
+    register_user,
+)
+
+
+router = APIRouter(
+    prefix="/api/v1/auth",
+    tags=["Authentication"],
+)
+
+
+@router.post(
+    "/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def register_account(
+    registration_data: UserRegister,
+    database_session: Session = Depends(get_db),
+) -> UserResponse:
+    """Register a new Consumer or SME user."""
+
+    try:
+        user = register_user(
+            database_session,
+            registration_data,
+        )
+    except EmailAlreadyRegisteredError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "EMAIL_ALREADY_REGISTERED",
+                "message": "An account with this email already exists.",
+            },
+        ) from error
+    except RegistrationRoleNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "REGISTRATION_ROLE_NOT_FOUND",
+                "message": "The selected account role is unavailable.",
+            },
+        ) from error
+
+    return UserResponse(
+        id=user.id,
+        full_name=user.full_name,
+        email=user.email,
+        roles=sorted(role.name for role in user.roles),
+        is_active=user.is_active,
+        is_verified=user.is_verified,
+        created_at=user.created_at,
+    )
+
+
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    status_code=status.HTTP_200_OK,
+)
+def login_account(
+    login_data: UserLogin,
+    database_session: Session = Depends(get_db),
+) -> TokenResponse:
+    """Authenticate a user and issue a JWT access token."""
+
+    try:
+        user = authenticate_user(
+            database_session,
+            login_data,
+        )
+    except InvalidCredentialsError as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "INVALID_CREDENTIALS",
+                "message": "Email or password is incorrect.",
+            },
+            headers={
+                "WWW-Authenticate": "Bearer",
+            },
+        ) from error
+    except InactiveAccountError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "ACCOUNT_INACTIVE",
+                "message": "This account has been deactivated.",
+            },
+        ) from error
+
+    role_names = sorted(
+        role.name for role in user.roles
+    )
+
+    access_token, expires_in = create_access_token(
+        user_id=user.id,
+        roles=role_names,
+    )
+
+    return TokenResponse(
+        access_token=access_token,
+        expires_in=expires_in,
+        user=UserResponse(
+            id=user.id,
+            full_name=user.full_name,
+            email=user.email,
+            roles=role_names,
+            is_active=user.is_active,
+            is_verified=user.is_verified,
+            created_at=user.created_at,
+        ),
+    )
+@router.get(
+    "/me",
+    response_model=UserResponse,
+    status_code=status.HTTP_200_OK,
+)
+def get_current_account(
+    current_user: User = Depends(get_current_user),
+) -> UserResponse:
+    """Return the currently authenticated user."""
+
+    return UserResponse(
+        id=current_user.id,
+        full_name=current_user.full_name,
+        email=current_user.email,
+        roles=sorted(
+            role.name for role in current_user.roles
+        ),
+        is_active=current_user.is_active,
+        is_verified=current_user.is_verified,
+        created_at=current_user.created_at,
+    )
