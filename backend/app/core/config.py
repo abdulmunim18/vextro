@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Application configuration loaded from environment variables."""
+    """VEXTRO application configuration."""
 
     app_name: str = "VEXTRO API"
     app_version: str = "0.1.0"
@@ -17,9 +17,12 @@ class Settings(BaseSettings):
     db_password: str
     db_echo: bool = False
 
+    test_db_name: str = "vextro_test_db"
+
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 7
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -31,7 +34,7 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    """Return one cached settings instance."""
+    """Return the cached application settings."""
 
     return Settings()
 
