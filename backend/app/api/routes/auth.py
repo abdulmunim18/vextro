@@ -18,6 +18,7 @@ from app.services.auth_service import (
     InvalidCredentialsError,
     RegistrationRoleNotFoundError,
     authenticate_user,
+    issue_refresh_token,
     register_user,
 )
 
@@ -116,20 +117,25 @@ def login_account(
         user_id=user.id,
         roles=role_names,
     )
+    refresh_token = issue_refresh_token(
+    database_session,
+    user_id=user.id,
+    )
 
     return TokenResponse(
-        access_token=access_token,
-        expires_in=expires_in,
-        user=UserResponse(
-            id=user.id,
-            full_name=user.full_name,
-            email=user.email,
-            roles=role_names,
-            is_active=user.is_active,
-            is_verified=user.is_verified,
-            created_at=user.created_at,
-        ),
-    )
+    access_token=access_token,
+    refresh_token=refresh_token,
+    expires_in=expires_in,
+    user=UserResponse(
+        id=user.id,
+        full_name=user.full_name,
+        email=user.email,
+        roles=role_names,
+        is_active=user.is_active,
+        is_verified=user.is_verified,
+        created_at=user.created_at,
+    ),
+)
 @router.get(
     "/me",
     response_model=UserResponse,

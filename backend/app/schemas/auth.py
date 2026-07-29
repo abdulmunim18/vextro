@@ -56,11 +56,11 @@ class UserLogin(BaseModel):
         max_length=128,
     )
 
-
 class TokenResponse(BaseModel):
-    """Authentication response containing an access token."""
+    """Authentication response containing session tokens."""
 
     access_token: str
+    refresh_token: str
     token_type: Literal["bearer"] = "bearer"
     expires_in: int
     user: UserResponse
