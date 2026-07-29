@@ -9,6 +9,9 @@ import app.models  # noqa: F401
 from app.core.config import settings
 from app.core.database import Base, get_db
 from app.main import app
+from app.models.brand import Brand
+from app.models.category import Category
+from app.models.platform import Platform
 from app.models.role import Role
 
 
@@ -54,7 +57,7 @@ app.dependency_overrides[get_db] = override_get_db
 
 @pytest.fixture(scope="session", autouse=True)
 def prepare_test_database() -> Generator[None, None, None]:
-    """Create and later remove the test schema."""
+    """Create, seed, and later remove the test database schema."""
 
     if TEST_DATABASE_NAME != "vextro_test_db":
         raise RuntimeError(
@@ -65,22 +68,136 @@ def prepare_test_database() -> Generator[None, None, None]:
     Base.metadata.create_all(bind=test_engine)
 
     with TestingSessionLocal() as database_session:
+        # Default application roles
+        roles = [
+            Role(
+                name="consumer",
+                description="Consumer test role.",
+            ),
+            Role(
+                name="sme",
+                description="SME test role.",
+            ),
+            Role(
+                name="admin",
+                description="Administrator test role.",
+            ),
+        ]
+
+        # Parent category
+        electronics = Category(
+            name="Electronics",
+            slug="electronics",
+            is_active=True,
+        )
+
         database_session.add_all(
             [
-                Role(
-                    name="consumer",
-                    description="Consumer test role.",
-                ),
-                Role(
-                    name="sme",
-                    description="SME test role.",
-                ),
-                Role(
-                    name="admin",
-                    description="Administrator test role.",
-                ),
+                *roles,
+                electronics,
             ]
         )
+
+        # Generate electronics.id before creating child categories
+        database_session.flush()
+
+        child_categories = [
+            Category(
+                parent_id=electronics.id,
+                name="Mobile Phones",
+                slug="mobile-phones",
+                is_active=True,
+            ),
+            Category(
+                parent_id=electronics.id,
+                name="Laptops",
+                slug="laptops",
+                is_active=True,
+            ),
+            Category(
+                parent_id=electronics.id,
+                name="Tablets",
+                slug="tablets",
+                is_active=True,
+            ),
+            Category(
+                parent_id=electronics.id,
+                name="Smart Watches",
+                slug="smart-watches",
+                is_active=True,
+            ),
+            Category(
+                parent_id=electronics.id,
+                name="Audio and Earbuds",
+                slug="audio-and-earbuds",
+                is_active=True,
+            ),
+            Category(
+                parent_id=electronics.id,
+                name="Power Banks",
+                slug="power-banks",
+                is_active=True,
+            ),
+            Category(
+                parent_id=electronics.id,
+                name="Mobile Accessories",
+                slug="mobile-accessories",
+                is_active=True,
+            ),
+        ]
+
+        brand_names = [
+            "Apple",
+            "Samsung",
+            "Xiaomi",
+            "Oppo",
+            "Vivo",
+            "Infinix",
+            "Tecno",
+            "Realme",
+            "OnePlus",
+            "Huawei",
+            "Honor",
+            "Nokia",
+            "Dell",
+            "HP",
+            "Lenovo",
+            "Asus",
+            "Acer",
+        ]
+
+        brands = [
+            Brand(
+                name=brand_name,
+                slug=brand_name.lower().replace(" ", "-"),
+                is_active=True,
+            )
+            for brand_name in brand_names
+        ]
+
+        platforms = [
+            Platform(
+                name="Daraz",
+                code="daraz",
+                base_url="https://www.daraz.pk",
+                is_active=True,
+            ),
+            Platform(
+                name="PriceOye",
+                code="priceoye",
+                base_url="https://priceoye.pk",
+                is_active=True,
+            ),
+        ]
+
+        database_session.add_all(
+            [
+                *child_categories,
+                *brands,
+                *platforms,
+            ]
+        )
+
         database_session.commit()
 
     yield
