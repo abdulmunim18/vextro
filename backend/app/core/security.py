@@ -1,3 +1,5 @@
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -7,6 +9,8 @@ from app.core.config import settings
 
 
 password_hasher = PasswordHash.recommended()
+
+
 def validate_password_strength(password: str) -> str:
     """Validate the VEXTRO password policy."""
 
@@ -20,17 +24,26 @@ def validate_password_strength(password: str) -> str:
             "Password cannot exceed 128 characters."
         )
 
-    if not any(character.islower() for character in password):
+    if not any(
+        character.islower()
+        for character in password
+    ):
         raise ValueError(
             "Password must contain at least one lowercase letter."
         )
 
-    if not any(character.isupper() for character in password):
+    if not any(
+        character.isupper()
+        for character in password
+    ):
         raise ValueError(
             "Password must contain at least one uppercase letter."
         )
 
-    if not any(character.isdigit() for character in password):
+    if not any(
+        character.isdigit()
+        for character in password
+    ):
         raise ValueError(
             "Password must contain at least one number."
         )
@@ -45,8 +58,9 @@ def validate_password_strength(password: str) -> str:
 
     return password
 
+
 def hash_password(plain_password: str) -> str:
-    """Convert a plain password into a secure password hash."""
+    """Convert a plain password into a secure Argon2 hash."""
 
     return password_hasher.hash(plain_password)
 
@@ -55,7 +69,7 @@ def verify_password(
     plain_password: str,
     password_hash: str,
 ) -> bool:
-    """Check whether a plain password matches the stored hash."""
+    """Check whether a plain password matches its stored hash."""
 
     return password_hasher.verify(
         plain_password,
@@ -85,10 +99,29 @@ def create_access_token(
         "exp": expires_at,
     }
 
-    encoded_token = jwt.encode(
+    access_token = jwt.encode(
         payload,
         settings.jwt_secret_key,
         algorithm=settings.jwt_algorithm,
     )
 
-    return encoded_token, int(token_lifetime.total_seconds())
+    return (
+        access_token,
+        int(token_lifetime.total_seconds()),
+    )
+
+
+def generate_refresh_token() -> str:
+    """Generate a secure opaque refresh token."""
+
+    return secrets.token_urlsafe(48)
+
+
+def hash_refresh_token(
+    refresh_token: str,
+) -> str:
+    """Create a SHA-256 hash for database storage."""
+
+    return hashlib.sha256(
+        refresh_token.encode("utf-8")
+    ).hexdigest()
