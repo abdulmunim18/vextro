@@ -4,20 +4,24 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.user import User
 from app.core.security import (
     generate_refresh_token,
     hash_password,
     hash_refresh_token,
     verify_password,
 )
-from app.models.user import User
 from app.repositories.refresh_token_repository import (
     create_refresh_token_record,
+    get_refresh_token_by_hash,
+    revoke_refresh_token_record,
+    rotate_refresh_token_record,
 )
 from app.repositories.user_repository import (
     create_user,
     get_role_by_name,
     get_user_by_email,
+    get_user_by_id,
 )
 from app.schemas.auth import UserLogin, UserRegister
 
@@ -36,6 +40,13 @@ class InvalidCredentialsError(Exception):
 
 class InactiveAccountError(Exception):
     """Raised when the account has been deactivated."""
+
+class InvalidRefreshTokenError(Exception):
+    """Raised when a refresh token is invalid or revoked."""
+
+
+class ExpiredRefreshTokenError(Exception):
+    """Raised when a refresh token has expired."""
 
 
 def register_user(
@@ -135,3 +146,74 @@ def issue_refresh_token(
     )
 
     return raw_refresh_token
+
+def refresh_user_session(
+    database_session: Session,
+    *,
+    raw_refresh_token: str,
+) -> tuple[User, str]:
+    """Rotate a valid refresh token and return the user and new token."""
+
+    current_token = get_refresh_token_by_hash(
+        database_session,
+        hash_refresh_token(raw_refresh_token),
+    )
+
+    if current_token is None:
+        raise InvalidRefreshTokenError
+
+    if current_token.revoked_at is not None:
+        raise InvalidRefreshTokenError
+
+    current_time = datetime.now(timezone.utc)
+
+    if current_token.expires_at <= current_time:
+        raise ExpiredRefreshTokenError
+
+    user = get_user_by_id(
+        database_session,
+        current_token.user_id,
+    )
+
+    if user is None:
+        raise InvalidRefreshTokenError
+
+    if not user.is_active:
+        raise InactiveAccountError
+
+    new_raw_token = generate_refresh_token()
+
+    new_expires_at = current_time + timedelta(
+        days=settings.refresh_token_expire_days
+    )
+
+    rotate_refresh_token_record(
+        database_session,
+        current_token=current_token,
+        new_token_hash=hash_refresh_token(new_raw_token),
+        new_expires_at=new_expires_at,
+    )
+
+    return user, new_raw_token
+
+
+def logout_user_session(
+    database_session: Session,
+    *,
+    raw_refresh_token: str,
+) -> None:
+    """Revoke a refresh-token session when it exists."""
+
+    refresh_token_record = get_refresh_token_by_hash(
+        database_session,
+        hash_refresh_token(raw_refresh_token),
+    )
+
+    if refresh_token_record is None:
+        database_session.rollback()
+        return
+
+    revoke_refresh_token_record(
+        database_session,
+        refresh_token_record,
+    )

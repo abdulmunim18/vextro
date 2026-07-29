@@ -2,11 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.auth import get_current_user
-from app.models.user import User
-
 from app.core.database import get_db
 from app.core.security import create_access_token
+from app.models.user import User
 from app.schemas.auth import (
+    RefreshTokenRequest,
     TokenResponse,
     UserLogin,
     UserRegister,
@@ -14,11 +14,15 @@ from app.schemas.auth import (
 )
 from app.services.auth_service import (
     EmailAlreadyRegisteredError,
+    ExpiredRefreshTokenError,
     InactiveAccountError,
     InvalidCredentialsError,
+    InvalidRefreshTokenError,
     RegistrationRoleNotFoundError,
     authenticate_user,
     issue_refresh_token,
+    logout_user_session,
+    refresh_user_session,
     register_user,
 )
 
@@ -82,7 +86,7 @@ def login_account(
     login_data: UserLogin,
     database_session: Session = Depends(get_db),
 ) -> TokenResponse:
-    """Authenticate a user and issue a JWT access token."""
+    """Authenticate a user and issue access and refresh tokens."""
 
     try:
         user = authenticate_user(
@@ -117,25 +121,28 @@ def login_account(
         user_id=user.id,
         roles=role_names,
     )
+
     refresh_token = issue_refresh_token(
-    database_session,
-    user_id=user.id,
+        database_session,
+        user_id=user.id,
     )
 
     return TokenResponse(
-    access_token=access_token,
-    refresh_token=refresh_token,
-    expires_in=expires_in,
-    user=UserResponse(
-        id=user.id,
-        full_name=user.full_name,
-        email=user.email,
-        roles=role_names,
-        is_active=user.is_active,
-        is_verified=user.is_verified,
-        created_at=user.created_at,
-    ),
-)
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=expires_in,
+        user=UserResponse(
+            id=user.id,
+            full_name=user.full_name,
+            email=user.email,
+            roles=role_names,
+            is_active=user.is_active,
+            is_verified=user.is_verified,
+            created_at=user.created_at,
+        ),
+    )
+
+
 @router.get(
     "/me",
     response_model=UserResponse,
@@ -156,4 +163,86 @@ def get_current_account(
         is_active=current_user.is_active,
         is_verified=current_user.is_verified,
         created_at=current_user.created_at,
+    )
+
+
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    status_code=status.HTTP_200_OK,
+)
+def refresh_access_token(
+    token_data: RefreshTokenRequest,
+    database_session: Session = Depends(get_db),
+) -> TokenResponse:
+    """Rotate a refresh token and issue a new session."""
+
+    try:
+        user, new_refresh_token = refresh_user_session(
+            database_session,
+            raw_refresh_token=token_data.refresh_token,
+        )
+    except ExpiredRefreshTokenError as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "REFRESH_TOKEN_EXPIRED",
+                "message": "The refresh token has expired.",
+            },
+        ) from error
+    except InvalidRefreshTokenError as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "INVALID_REFRESH_TOKEN",
+                "message": "The refresh token is invalid or revoked.",
+            },
+        ) from error
+    except InactiveAccountError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "ACCOUNT_INACTIVE",
+                "message": "This account has been deactivated.",
+            },
+        ) from error
+
+    role_names = sorted(
+        role.name for role in user.roles
+    )
+
+    access_token, expires_in = create_access_token(
+        user_id=user.id,
+        roles=role_names,
+    )
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=new_refresh_token,
+        expires_in=expires_in,
+        user=UserResponse(
+            id=user.id,
+            full_name=user.full_name,
+            email=user.email,
+            roles=role_names,
+            is_active=user.is_active,
+            is_verified=user.is_verified,
+            created_at=user.created_at,
+        ),
+    )
+
+
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def logout_account(
+    token_data: RefreshTokenRequest,
+    database_session: Session = Depends(get_db),
+) -> None:
+    """Revoke the supplied refresh-token session."""
+
+    logout_user_session(
+        database_session,
+        raw_refresh_token=token_data.refresh_token,
     )

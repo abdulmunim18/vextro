@@ -64,3 +64,11 @@ class TokenResponse(BaseModel):
     token_type: Literal["bearer"] = "bearer"
     expires_in: int
     user: UserResponse
+
+class RefreshTokenRequest(BaseModel):
+    """Request containing a refresh token."""
+
+    refresh_token: str = Field(
+        min_length=20,
+        max_length=500,
+    )
