@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
-
+from app.models.price_alert import PriceAlert
+from app.models.user import User
 import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -22,7 +23,39 @@ def unique_value(prefix: str) -> str:
 
     return f"{prefix}-{uuid4().hex[:12]}"
 
+def create_test_user(
+    database_session: Session,
+) -> User:
+    """Create a user for price alert database tests."""
 
+    user = User(
+        full_name="Price Alert Test User",
+        email=f"{unique_value('price-alert-user')}@example.com",
+        password_hash="automated-test-password-hash",
+        is_active=True,
+        is_verified=True,
+    )
+
+    database_session.add(user)
+    database_session.flush()
+
+    return user
+
+
+def get_product_id_for_listing(
+    database_session: Session,
+    listing: ProductListing,
+) -> int:
+    """Return the canonical product ID linked to a listing."""
+
+    variant = database_session.get(
+        ProductVariant,
+        listing.product_variant_id,
+    )
+
+    assert variant is not None
+
+    return variant.canonical_product_id
 def create_listing(
     database_session: Session,
 ) -> ProductListing:
@@ -242,3 +275,373 @@ def test_deleting_listing_cascades_price_history(
     )
 
     assert deleted_snapshot is None
+def test_create_product_and_listing_price_alerts(
+    database_session: Session,
+) -> None:
+    """A user can create product-level and listing-level alerts."""
+
+    user = create_test_user(database_session)
+    listing = create_listing(database_session)
+
+    product_id = get_product_id_for_listing(
+        database_session,
+        listing,
+    )
+
+    product_alert = PriceAlert(
+        user_id=user.id,
+        canonical_product_id=product_id,
+        target_price=Decimal("110000.00"),
+        currency="PKR",
+    )
+
+    listing_alert = PriceAlert(
+        user_id=user.id,
+        listing_id=listing.id,
+        target_price=Decimal("105000.00"),
+        currency="PKR",
+    )
+
+    database_session.add_all(
+        [
+            product_alert,
+            listing_alert,
+        ]
+    )
+    database_session.commit()
+
+    saved_alerts = list(
+        database_session.scalars(
+            select(PriceAlert).where(
+                PriceAlert.user_id == user.id
+            )
+        ).all()
+    )
+
+    assert len(saved_alerts) == 2
+
+    saved_product_alert = next(
+        alert
+        for alert in saved_alerts
+        if alert.canonical_product_id is not None
+    )
+
+    saved_listing_alert = next(
+        alert
+        for alert in saved_alerts
+        if alert.listing_id is not None
+    )
+
+    assert saved_product_alert.canonical_product_id == product_id
+    assert saved_product_alert.listing_id is None
+    assert saved_product_alert.target_price == Decimal("110000.00")
+
+    assert saved_listing_alert.listing_id == listing.id
+    assert saved_listing_alert.canonical_product_id is None
+    assert saved_listing_alert.target_price == Decimal("105000.00")
+
+    assert saved_product_alert.is_active is True
+    assert saved_product_alert.is_triggered is False
+    assert saved_product_alert.notification_count == 0
+
+
+def test_price_alert_requires_exactly_one_target(
+    database_session: Session,
+) -> None:
+    """An alert must target one product or one listing, never both or neither."""
+
+    user = create_test_user(database_session)
+    listing = create_listing(database_session)
+
+    product_id = get_product_id_for_listing(
+        database_session,
+        listing,
+    )
+
+    database_session.commit()
+
+    alert_without_target = PriceAlert(
+        user_id=user.id,
+        target_price=Decimal("100000.00"),
+        currency="PKR",
+    )
+
+    database_session.add(alert_without_target)
+
+    with pytest.raises(IntegrityError):
+        database_session.commit()
+
+    database_session.rollback()
+
+    alert_with_two_targets = PriceAlert(
+        user_id=user.id,
+        canonical_product_id=product_id,
+        listing_id=listing.id,
+        target_price=Decimal("100000.00"),
+        currency="PKR",
+    )
+
+    database_session.add(alert_with_two_targets)
+
+    with pytest.raises(IntegrityError):
+        database_session.commit()
+
+    database_session.rollback()
+
+
+def test_price_alert_target_price_must_be_positive(
+    database_session: Session,
+) -> None:
+    """Target price must be greater than zero."""
+
+    user = create_test_user(database_session)
+    listing = create_listing(database_session)
+
+    database_session.commit()
+
+    invalid_alert = PriceAlert(
+        user_id=user.id,
+        listing_id=listing.id,
+        target_price=Decimal("0.00"),
+        currency="PKR",
+    )
+
+    database_session.add(invalid_alert)
+
+    with pytest.raises(IntegrityError):
+        database_session.commit()
+
+    database_session.rollback()
+
+
+def test_price_alert_currency_and_notification_count_are_validated(
+    database_session: Session,
+) -> None:
+    """Currency length and notification count must remain valid."""
+
+    user = create_test_user(database_session)
+    listing = create_listing(database_session)
+
+    database_session.commit()
+
+    invalid_currency_alert = PriceAlert(
+        user_id=user.id,
+        listing_id=listing.id,
+        target_price=Decimal("100000.00"),
+        currency="PK",
+    )
+
+    database_session.add(invalid_currency_alert)
+
+    with pytest.raises(IntegrityError):
+        database_session.commit()
+
+    database_session.rollback()
+
+    invalid_notification_alert = PriceAlert(
+        user_id=user.id,
+        listing_id=listing.id,
+        target_price=Decimal("100000.00"),
+        currency="PKR",
+        notification_count=-1,
+    )
+
+    database_session.add(invalid_notification_alert)
+
+    with pytest.raises(IntegrityError):
+        database_session.commit()
+
+    database_session.rollback()
+
+
+def test_duplicate_active_product_alert_is_blocked(
+    database_session: Session,
+) -> None:
+    """A user cannot have two active alerts for the same product."""
+
+    user = create_test_user(database_session)
+    listing = create_listing(database_session)
+
+    product_id = get_product_id_for_listing(
+        database_session,
+        listing,
+    )
+
+    database_session.commit()
+
+    first_alert = PriceAlert(
+        user_id=user.id,
+        canonical_product_id=product_id,
+        target_price=Decimal("110000.00"),
+        currency="PKR",
+        is_active=True,
+    )
+
+    database_session.add(first_alert)
+    database_session.commit()
+
+    duplicate_alert = PriceAlert(
+        user_id=user.id,
+        canonical_product_id=product_id,
+        target_price=Decimal("100000.00"),
+        currency="PKR",
+        is_active=True,
+    )
+
+    database_session.add(duplicate_alert)
+
+    with pytest.raises(IntegrityError):
+        database_session.commit()
+
+    database_session.rollback()
+
+
+def test_duplicate_active_listing_alert_is_blocked(
+    database_session: Session,
+) -> None:
+    """A user cannot have two active alerts for the same listing."""
+
+    user = create_test_user(database_session)
+    listing = create_listing(database_session)
+
+    database_session.commit()
+
+    first_alert = PriceAlert(
+        user_id=user.id,
+        listing_id=listing.id,
+        target_price=Decimal("110000.00"),
+        currency="PKR",
+        is_active=True,
+    )
+
+    database_session.add(first_alert)
+    database_session.commit()
+
+    duplicate_alert = PriceAlert(
+        user_id=user.id,
+        listing_id=listing.id,
+        target_price=Decimal("100000.00"),
+        currency="PKR",
+        is_active=True,
+    )
+
+    database_session.add(duplicate_alert)
+
+    with pytest.raises(IntegrityError):
+        database_session.commit()
+
+    database_session.rollback()
+
+
+def test_inactive_alert_allows_new_active_alert(
+    database_session: Session,
+) -> None:
+    """An inactive alert should not block a new active alert."""
+
+    user = create_test_user(database_session)
+    listing = create_listing(database_session)
+
+    product_id = get_product_id_for_listing(
+        database_session,
+        listing,
+    )
+
+    inactive_alert = PriceAlert(
+        user_id=user.id,
+        canonical_product_id=product_id,
+        target_price=Decimal("115000.00"),
+        currency="PKR",
+        is_active=False,
+    )
+
+    active_alert = PriceAlert(
+        user_id=user.id,
+        canonical_product_id=product_id,
+        target_price=Decimal("105000.00"),
+        currency="PKR",
+        is_active=True,
+    )
+
+    database_session.add_all(
+        [
+            inactive_alert,
+            active_alert,
+        ]
+    )
+    database_session.commit()
+
+    saved_alerts = list(
+        database_session.scalars(
+            select(PriceAlert).where(
+                PriceAlert.user_id == user.id,
+                PriceAlert.canonical_product_id == product_id,
+            )
+        ).all()
+    )
+
+    assert len(saved_alerts) == 2
+    assert sum(alert.is_active for alert in saved_alerts) == 1
+
+
+def test_deleting_user_cascades_price_alerts(
+    database_session: Session,
+) -> None:
+    """Deleting a user should remove all alerts owned by that user."""
+
+    user = create_test_user(database_session)
+    listing = create_listing(database_session)
+
+    alert = PriceAlert(
+        user_id=user.id,
+        listing_id=listing.id,
+        target_price=Decimal("100000.00"),
+        currency="PKR",
+    )
+
+    database_session.add(alert)
+    database_session.commit()
+
+    alert_id = alert.id
+
+    database_session.delete(user)
+    database_session.commit()
+
+    deleted_alert = database_session.scalar(
+        select(PriceAlert).where(
+            PriceAlert.id == alert_id
+        )
+    )
+
+    assert deleted_alert is None
+
+
+def test_deleting_listing_cascades_listing_alert(
+    database_session: Session,
+) -> None:
+    """Deleting a listing should remove alerts targeting that listing."""
+
+    user = create_test_user(database_session)
+    listing = create_listing(database_session)
+
+    alert = PriceAlert(
+        user_id=user.id,
+        listing_id=listing.id,
+        target_price=Decimal("100000.00"),
+        currency="PKR",
+    )
+
+    database_session.add(alert)
+    database_session.commit()
+
+    alert_id = alert.id
+
+    database_session.delete(listing)
+    database_session.commit()
+
+    deleted_alert = database_session.scalar(
+        select(PriceAlert).where(
+            PriceAlert.id == alert_id
+        )
+    )
+
+    assert deleted_alert is None
