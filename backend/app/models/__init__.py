@@ -1,6 +1,8 @@
 from app.models.brand import Brand
+from app.models.canonical_product import CanonicalProduct
 from app.models.category import Category
 from app.models.platform import Platform
+from app.models.product_variant import ProductVariant
 from app.models.refresh_token import RefreshToken
 from app.models.role import Role
 from app.models.user import User
@@ -9,8 +11,10 @@ from app.models.user_role import user_roles
 
 __all__ = [
     "Brand",
+    "CanonicalProduct",
     "Category",
     "Platform",
+    "ProductVariant",
     "RefreshToken",
     "Role",
     "User",
