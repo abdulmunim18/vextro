@@ -6,6 +6,7 @@ from app.models.product_listing import ProductListing
 from app.models.product_variant import ProductVariant
 from app.models.refresh_token import RefreshToken
 from app.models.price_history import PriceHistory
+from app.models.price_alert import PriceAlert
 from app.models.role import Role
 from app.models.seller import Seller
 from app.models.user import User
@@ -18,6 +19,7 @@ __all__ = [
     "ProductImage",
     "Platform",
     "ProductListing",
+    "PriceAlert",
     "ProductVariant",
     "RefreshToken",
     "PriceHistory",
