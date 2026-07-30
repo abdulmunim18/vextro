@@ -107,39 +107,35 @@ def test_list_products_supports_pagination_search_and_filters(
 ) -> None:
     """The product list should support pagination, search, and filters."""
 
-    category_one, brand_one, _platform_one = create_reference_data(
-        database_session
-    )
-
-    category_two, brand_two, _platform_two = create_reference_data(
+    category, brand, _platform = create_reference_data(
         database_session
     )
 
     first_product, _first_variant = create_product(
         database_session,
-        category=category_one,
-        brand=brand_one,
+        category=category,
+        brand=brand,
         name="Alpha Phone X",
     )
 
     create_product(
         database_session,
-        category=category_one,
-        brand=brand_one,
+        category=category,
+        brand=brand,
         name="Alpha Phone Lite",
     )
 
     create_product(
         database_session,
-        category=category_two,
-        brand=brand_two,
+        category=category,
+        brand=brand,
         name="Beta Laptop Pro",
     )
 
     create_product(
         database_session,
-        category=category_two,
-        brand=brand_two,
+        category=category,
+        brand=brand,
         name="Hidden Inactive Product",
         is_active=False,
     )
@@ -151,6 +147,8 @@ def test_list_products_supports_pagination_search_and_filters(
         params={
             "page": 1,
             "page_size": 2,
+            "category_slug": category.slug,
+            "brand_slug": brand.slug,
         },
     )
 
@@ -168,8 +166,8 @@ def test_list_products_supports_pagination_search_and_filters(
         "/api/v1/products",
         params={
             "search": "Alpha Phone X",
-            "category_slug": category_one.slug,
-            "brand_slug": brand_one.slug,
+            "category_slug": category.slug,
+            "brand_slug": brand.slug,
         },
     )
 
@@ -181,8 +179,6 @@ def test_list_products_supports_pagination_search_and_filters(
     assert len(filtered_body["items"]) == 1
     assert filtered_body["items"][0]["id"] == first_product.id
     assert filtered_body["items"][0]["name"] == "Alpha Phone X"
-
-
 def test_get_product_detail_includes_variants_and_images(
     client: TestClient,
     database_session: Session,
