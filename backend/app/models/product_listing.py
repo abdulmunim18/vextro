@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from app.models.product_image import ProductImage
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
@@ -27,6 +28,7 @@ from app.core.database import Base
 if TYPE_CHECKING:
     from app.models.product_variant import ProductVariant
     from app.models.seller import Seller
+    from app.models.product_image import ProductImage
 
 
 class ProductListing(Base):
@@ -172,4 +174,8 @@ class ProductListing(Base):
 
     seller: Mapped["Seller | None"] = relationship(
         back_populates="listings",
+    )
+    images: Mapped[list["ProductImage"]] = relationship(
+        back_populates="listing",
+        passive_deletes=True,
     )

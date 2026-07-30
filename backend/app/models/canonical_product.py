@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from typing import TYPE_CHECKING
 from datetime import datetime
 
 from sqlalchemy import (
@@ -19,7 +19,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 
-
+if TYPE_CHECKING:
+    from app.models.product_image import ProductImage
+    from app.models.product_variant import ProductVariant
 class CanonicalProduct(Base):
     """A standardized real-world product shared across marketplaces."""
 
@@ -111,5 +113,9 @@ class CanonicalProduct(Base):
     variants: Mapped[list["ProductVariant"]] = relationship(
         back_populates="canonical_product",
         cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    images: Mapped[list["ProductImage"]] = relationship(
+        back_populates="canonical_product",
         passive_deletes=True,
     )

@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.brand import Brand
+from app.models.product_image import ProductImage
 from app.models.canonical_product import CanonicalProduct
 from app.models.category import Category
 from app.models.platform import Platform
@@ -252,6 +253,166 @@ def test_negative_listing_price_is_blocked(
     )
 
     database_session.add(invalid_listing)
+
+    with pytest.raises(IntegrityError):
+        database_session.commit()
+
+    database_session.rollback()
+def test_create_canonical_product_and_listing_images(
+    database_session: Session,
+) -> None:
+    """Images can belong to a product or a marketplace listing."""
+
+    (
+        _category,
+        _brand,
+        platform,
+        canonical_product,
+        product_variant,
+        seller,
+    ) = create_catalog_chain(database_session)
+
+    listing = ProductListing(
+        platform_id=platform.id,
+        product_variant_id=product_variant.id,
+        seller_id=seller.id,
+        external_id=unique_value("image-test-listing"),
+        title="Image Test Product Listing",
+        product_url="https://example.com/image-test-product",
+        current_price=Decimal("149999.00"),
+    )
+
+    database_session.add(listing)
+    database_session.flush()
+
+    canonical_image = ProductImage(
+        canonical_product_id=canonical_product.id,
+        image_url="https://example.com/images/canonical-product.jpg",
+        alt_text="Canonical product front image",
+        is_primary=True,
+        sort_order=0,
+    )
+
+    listing_image = ProductImage(
+        listing_id=listing.id,
+        image_url="https://example.com/images/marketplace-listing.jpg",
+        alt_text="Marketplace listing image",
+        is_primary=True,
+        sort_order=0,
+    )
+
+    database_session.add_all(
+        [
+            canonical_image,
+            listing_image,
+        ]
+    )
+    database_session.commit()
+
+    saved_product = database_session.scalar(
+        select(CanonicalProduct)
+        .options(selectinload(CanonicalProduct.images))
+        .where(CanonicalProduct.id == canonical_product.id)
+    )
+
+    saved_listing = database_session.scalar(
+        select(ProductListing)
+        .options(selectinload(ProductListing.images))
+        .where(ProductListing.id == listing.id)
+    )
+
+    assert saved_product is not None
+    assert len(saved_product.images) == 1
+    assert saved_product.images[0].canonical_product_id == canonical_product.id
+    assert saved_product.images[0].listing_id is None
+
+    assert saved_listing is not None
+    assert len(saved_listing.images) == 1
+    assert saved_listing.images[0].listing_id == listing.id
+    assert saved_listing.images[0].canonical_product_id is None
+
+
+def test_product_image_cannot_have_two_owners(
+    database_session: Session,
+) -> None:
+    """One image cannot belong to a product and listing simultaneously."""
+
+    (
+        _category,
+        _brand,
+        platform,
+        canonical_product,
+        product_variant,
+        seller,
+    ) = create_catalog_chain(database_session)
+
+    listing = ProductListing(
+        platform_id=platform.id,
+        product_variant_id=product_variant.id,
+        seller_id=seller.id,
+        external_id=unique_value("two-owner-listing"),
+        title="Two Owner Constraint Test",
+        product_url="https://example.com/two-owner-product",
+        current_price=Decimal("100000.00"),
+    )
+
+    database_session.add(listing)
+    database_session.flush()
+
+    invalid_image = ProductImage(
+        canonical_product_id=canonical_product.id,
+        listing_id=listing.id,
+        image_url="https://example.com/images/invalid-two-owners.jpg",
+        sort_order=0,
+    )
+
+    database_session.add(invalid_image)
+
+    with pytest.raises(IntegrityError):
+        database_session.commit()
+
+    database_session.rollback()
+
+
+def test_product_image_must_have_an_owner(
+    database_session: Session,
+) -> None:
+    """An image must belong to either a product or listing."""
+
+    invalid_image = ProductImage(
+        image_url="https://example.com/images/no-owner.jpg",
+        sort_order=0,
+    )
+
+    database_session.add(invalid_image)
+
+    with pytest.raises(IntegrityError):
+        database_session.commit()
+
+    database_session.rollback()
+
+
+def test_negative_product_image_sort_order_is_blocked(
+    database_session: Session,
+) -> None:
+    """Image sort order cannot be negative."""
+
+    (
+        _category,
+        _brand,
+        _platform,
+        canonical_product,
+        _product_variant,
+        _seller,
+    ) = create_catalog_chain(database_session)
+
+    invalid_image = ProductImage(
+        canonical_product_id=canonical_product.id,
+        image_url="https://example.com/images/negative-order.jpg",
+        sort_order=-1,
+    )
+
+    database_session.add(invalid_image)
 
     with pytest.raises(IntegrityError):
         database_session.commit()
