@@ -1,0 +1,420 @@
+from decimal import Decimal
+from uuid import uuid4
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session, selectinload
+
+from app.models.brand import Brand
+from app.models.product_image import ProductImage
+from app.models.canonical_product import CanonicalProduct
+from app.models.category import Category
+from app.models.platform import Platform
+from app.models.product_listing import ProductListing
+from app.models.product_variant import ProductVariant
+from app.models.seller import Seller
+
+
+def unique_value(prefix: str) -> str:
+    """Generate a unique test value."""
+
+    return f"{prefix}-{uuid4().hex[:12]}"
+
+
+def create_catalog_chain(
+    database_session: Session,
+) -> tuple[
+    Category,
+    Brand,
+    Platform,
+    CanonicalProduct,
+    ProductVariant,
+    Seller,
+]:
+    """Create the required records for a marketplace listing."""
+
+    category = Category(
+        name=unique_value("Mobile Phones"),
+        slug=unique_value("mobile-phones"),
+    )
+
+    brand = Brand(
+        name=unique_value("Test Brand"),
+        slug=unique_value("test-brand"),
+    )
+
+    platform_code = unique_value("platform").lower()
+
+    platform = Platform(
+        name=unique_value("Test Platform"),
+        code=platform_code,
+        base_url=f"https://{platform_code}.example.com",
+    )
+
+    database_session.add_all(
+        [
+            category,
+            brand,
+            platform,
+        ]
+    )
+    database_session.flush()
+
+    canonical_product = CanonicalProduct(
+        category_id=category.id,
+        brand_id=brand.id,
+        name=unique_value("Test Smartphone"),
+        slug=unique_value("test-smartphone"),
+        model=unique_value("MODEL"),
+        description="Automated catalog test product.",
+        specifications={
+            "display": "6.5 inch",
+            "battery": "5000 mAh",
+        },
+    )
+
+    database_session.add(canonical_product)
+    database_session.flush()
+
+    product_variant = ProductVariant(
+        canonical_product_id=canonical_product.id,
+        sku=unique_value("SKU"),
+        ram_gb=8,
+        storage_gb=256,
+        color="Black",
+        condition="new",
+        variant_attributes={
+            "network": "5G",
+        },
+    )
+
+    seller = Seller(
+        platform_id=platform.id,
+        external_seller_id=unique_value("seller"),
+        name=unique_value("Test Seller"),
+        profile_url="https://example.com/seller",
+        rating=Decimal("4.50"),
+        review_count=100,
+        is_verified=True,
+    )
+
+    database_session.add_all(
+        [
+            product_variant,
+            seller,
+        ]
+    )
+    database_session.flush()
+
+    return (
+        category,
+        brand,
+        platform,
+        canonical_product,
+        product_variant,
+        seller,
+    )
+
+
+def test_create_complete_marketplace_listing(
+    database_session: Session,
+) -> None:
+    """Verify the complete product-to-listing relationship chain."""
+
+    (
+        category,
+        brand,
+        platform,
+        canonical_product,
+        product_variant,
+        seller,
+    ) = create_catalog_chain(database_session)
+
+    listing = ProductListing(
+        platform_id=platform.id,
+        product_variant_id=product_variant.id,
+        seller_id=seller.id,
+        external_id=unique_value("listing"),
+        title="Test Smartphone 8GB 256GB",
+        product_url="https://example.com/product",
+        current_price=Decimal("199999.00"),
+        original_price=Decimal("209999.00"),
+        currency="PKR",
+        rating=Decimal("4.40"),
+        review_count=250,
+        warranty="1 Year",
+        is_available=True,
+        raw_payload={
+            "source": "automated-test",
+        },
+    )
+
+    database_session.add(listing)
+    database_session.commit()
+
+    saved_listing = database_session.scalar(
+        select(ProductListing)
+        .options(
+            selectinload(ProductListing.product_variant),
+            selectinload(ProductListing.seller),
+        )
+        .where(ProductListing.id == listing.id)
+    )
+
+    assert saved_listing is not None
+    assert saved_listing.platform_id == platform.id
+    assert saved_listing.current_price == Decimal("199999.00")
+    assert saved_listing.currency == "PKR"
+    assert saved_listing.is_available is True
+
+    assert saved_listing.product_variant.id == product_variant.id
+    assert saved_listing.product_variant.canonical_product_id == (
+        canonical_product.id
+    )
+
+    assert saved_listing.seller is not None
+    assert saved_listing.seller.id == seller.id
+    assert saved_listing.seller.platform_id == platform.id
+
+    assert canonical_product.category_id == category.id
+    assert canonical_product.brand_id == brand.id
+
+
+def test_duplicate_listing_external_id_is_blocked(
+    database_session: Session,
+) -> None:
+    """A marketplace external ID must be unique inside one platform."""
+
+    (
+        _category,
+        _brand,
+        platform,
+        _canonical_product,
+        product_variant,
+        seller,
+    ) = create_catalog_chain(database_session)
+
+    external_id = unique_value("duplicate-listing")
+
+    first_listing = ProductListing(
+        platform_id=platform.id,
+        product_variant_id=product_variant.id,
+        seller_id=seller.id,
+        external_id=external_id,
+        title="First Test Listing",
+        product_url="https://example.com/product-one",
+        current_price=Decimal("100000.00"),
+    )
+
+    database_session.add(first_listing)
+    database_session.commit()
+
+    duplicate_listing = ProductListing(
+        platform_id=platform.id,
+        product_variant_id=product_variant.id,
+        seller_id=seller.id,
+        external_id=external_id,
+        title="Duplicate Test Listing",
+        product_url="https://example.com/product-two",
+        current_price=Decimal("99000.00"),
+    )
+
+    database_session.add(duplicate_listing)
+
+    with pytest.raises(IntegrityError):
+        database_session.commit()
+
+    database_session.rollback()
+
+
+def test_negative_listing_price_is_blocked(
+    database_session: Session,
+) -> None:
+    """Database constraints must reject negative listing prices."""
+
+    (
+        _category,
+        _brand,
+        platform,
+        _canonical_product,
+        product_variant,
+        seller,
+    ) = create_catalog_chain(database_session)
+
+    invalid_listing = ProductListing(
+        platform_id=platform.id,
+        product_variant_id=product_variant.id,
+        seller_id=seller.id,
+        external_id=unique_value("negative-price"),
+        title="Invalid Negative Price Listing",
+        product_url="https://example.com/invalid-product",
+        current_price=Decimal("-1.00"),
+    )
+
+    database_session.add(invalid_listing)
+
+    with pytest.raises(IntegrityError):
+        database_session.commit()
+
+    database_session.rollback()
+def test_create_canonical_product_and_listing_images(
+    database_session: Session,
+) -> None:
+    """Images can belong to a product or a marketplace listing."""
+
+    (
+        _category,
+        _brand,
+        platform,
+        canonical_product,
+        product_variant,
+        seller,
+    ) = create_catalog_chain(database_session)
+
+    listing = ProductListing(
+        platform_id=platform.id,
+        product_variant_id=product_variant.id,
+        seller_id=seller.id,
+        external_id=unique_value("image-test-listing"),
+        title="Image Test Product Listing",
+        product_url="https://example.com/image-test-product",
+        current_price=Decimal("149999.00"),
+    )
+
+    database_session.add(listing)
+    database_session.flush()
+
+    canonical_image = ProductImage(
+        canonical_product_id=canonical_product.id,
+        image_url="https://example.com/images/canonical-product.jpg",
+        alt_text="Canonical product front image",
+        is_primary=True,
+        sort_order=0,
+    )
+
+    listing_image = ProductImage(
+        listing_id=listing.id,
+        image_url="https://example.com/images/marketplace-listing.jpg",
+        alt_text="Marketplace listing image",
+        is_primary=True,
+        sort_order=0,
+    )
+
+    database_session.add_all(
+        [
+            canonical_image,
+            listing_image,
+        ]
+    )
+    database_session.commit()
+
+    saved_product = database_session.scalar(
+        select(CanonicalProduct)
+        .options(selectinload(CanonicalProduct.images))
+        .where(CanonicalProduct.id == canonical_product.id)
+    )
+
+    saved_listing = database_session.scalar(
+        select(ProductListing)
+        .options(selectinload(ProductListing.images))
+        .where(ProductListing.id == listing.id)
+    )
+
+    assert saved_product is not None
+    assert len(saved_product.images) == 1
+    assert saved_product.images[0].canonical_product_id == canonical_product.id
+    assert saved_product.images[0].listing_id is None
+
+    assert saved_listing is not None
+    assert len(saved_listing.images) == 1
+    assert saved_listing.images[0].listing_id == listing.id
+    assert saved_listing.images[0].canonical_product_id is None
+
+
+def test_product_image_cannot_have_two_owners(
+    database_session: Session,
+) -> None:
+    """One image cannot belong to a product and listing simultaneously."""
+
+    (
+        _category,
+        _brand,
+        platform,
+        canonical_product,
+        product_variant,
+        seller,
+    ) = create_catalog_chain(database_session)
+
+    listing = ProductListing(
+        platform_id=platform.id,
+        product_variant_id=product_variant.id,
+        seller_id=seller.id,
+        external_id=unique_value("two-owner-listing"),
+        title="Two Owner Constraint Test",
+        product_url="https://example.com/two-owner-product",
+        current_price=Decimal("100000.00"),
+    )
+
+    database_session.add(listing)
+    database_session.flush()
+
+    invalid_image = ProductImage(
+        canonical_product_id=canonical_product.id,
+        listing_id=listing.id,
+        image_url="https://example.com/images/invalid-two-owners.jpg",
+        sort_order=0,
+    )
+
+    database_session.add(invalid_image)
+
+    with pytest.raises(IntegrityError):
+        database_session.commit()
+
+    database_session.rollback()
+
+
+def test_product_image_must_have_an_owner(
+    database_session: Session,
+) -> None:
+    """An image must belong to either a product or listing."""
+
+    invalid_image = ProductImage(
+        image_url="https://example.com/images/no-owner.jpg",
+        sort_order=0,
+    )
+
+    database_session.add(invalid_image)
+
+    with pytest.raises(IntegrityError):
+        database_session.commit()
+
+    database_session.rollback()
+
+
+def test_negative_product_image_sort_order_is_blocked(
+    database_session: Session,
+) -> None:
+    """Image sort order cannot be negative."""
+
+    (
+        _category,
+        _brand,
+        _platform,
+        canonical_product,
+        _product_variant,
+        _seller,
+    ) = create_catalog_chain(database_session)
+
+    invalid_image = ProductImage(
+        canonical_product_id=canonical_product.id,
+        image_url="https://example.com/images/negative-order.jpg",
+        sort_order=-1,
+    )
+
+    database_session.add(invalid_image)
+
+    with pytest.raises(IntegrityError):
+        database_session.commit()
+
+    database_session.rollback()
