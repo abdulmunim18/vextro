@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from app.models.product_variant import ProductVariant
     from app.models.seller import Seller
     from app.models.product_image import ProductImage
+    from app.models.price_history import PriceHistory
 
 
 class ProductListing(Base):
@@ -178,4 +179,11 @@ class ProductListing(Base):
     images: Mapped[list["ProductImage"]] = relationship(
         back_populates="listing",
         passive_deletes=True,
+    )
+
+    price_history: Mapped[list["PriceHistory"]] = relationship(
+        back_populates="listing",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="PriceHistory.captured_at",
     )
