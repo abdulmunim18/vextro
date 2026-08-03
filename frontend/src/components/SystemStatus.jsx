@@ -1,49 +1,44 @@
 import { useEffect, useState } from "react";
 
 import { getPlatforms } from "../services/catalogService";
-import { getApiErrorMessage } from "../utils/apiError";
+
+function extractPlatforms(responseData) {
+  if (Array.isArray(responseData)) {
+    return responseData;
+  }
+
+  if (Array.isArray(responseData?.items)) {
+    return responseData.items;
+  }
+
+  return [];
+}
 
 function SystemStatus() {
   const [status, setStatus] = useState("checking");
-  const [message, setMessage] = useState(
-    "Connecting to VEXTRO backend...",
-  );
+  const [platformCount, setPlatformCount] = useState(0);
 
   useEffect(() => {
     let isMounted = true;
 
     async function checkBackendConnection() {
       try {
-        const platformData = await getPlatforms();
+        const responseData = await getPlatforms();
+        const platforms = extractPlatforms(responseData);
 
         if (!isMounted) {
           return;
         }
 
-        const platforms = Array.isArray(platformData)
-          ? platformData
-          : platformData?.items || [];
-
+        setPlatformCount(platforms.length);
         setStatus("connected");
-
-        setMessage(
-          `Backend connected · ${platforms.length} marketplace${
-            platforms.length === 1 ? "" : "s"
-          } available`,
-        );
-      } catch (error) {
+      } catch {
         if (!isMounted) {
           return;
         }
 
-        setStatus("error");
-
-        setMessage(
-          getApiErrorMessage(
-            error,
-            "VEXTRO backend is currently unavailable.",
-          ),
-        );
+        setPlatformCount(0);
+        setStatus("offline");
       }
     }
 
@@ -54,10 +49,42 @@ function SystemStatus() {
     };
   }, []);
 
+  if (status === "checking") {
+    return (
+      <div
+        className="inline-flex items-center gap-3 rounded-full border border-slate-200 bg-white/80 px-4 py-2 text-xs font-bold text-vextro-muted shadow-sm backdrop-blur"
+        role="status"
+      >
+        <span className="size-2.5 animate-pulse rounded-full bg-amber-400" />
+        Checking VEXTRO API...
+      </div>
+    );
+  }
+
+  if (status === "offline") {
+    return (
+      <div
+        className="inline-flex items-center gap-3 rounded-full border border-red-200 bg-red-50 px-4 py-2 text-xs font-bold text-red-700"
+        role="alert"
+      >
+        <span className="size-2.5 rounded-full bg-red-500" />
+        Backend connection unavailable
+      </div>
+    );
+  }
+
   return (
-    <div className={`system-status system-status-${status}`}>
-      <span className="system-status-dot" />
-      <span>{message}</span>
+    <div
+      className="inline-flex items-center gap-3 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-bold text-emerald-700"
+      role="status"
+    >
+      <span className="relative flex size-2.5">
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-70" />
+        <span className="relative inline-flex size-2.5 rounded-full bg-emerald-500" />
+      </span>
+
+      Backend connected · {platformCount} marketplace
+      {platformCount === 1 ? "" : "s"} available
     </div>
   );
 }
