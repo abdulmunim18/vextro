@@ -556,6 +556,67 @@ p {
 .footer-content p {
   margin: 0;
 }
+.system-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 20px;
+  padding: 9px 13px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  background: white;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 8px 24px rgba(23, 32, 51, 0.06);
+}
+
+.system-status-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #9aa4b5;
+}
+
+.system-status-checking .system-status-dot {
+  animation: status-pulse 1.2s infinite;
+}
+
+.system-status-connected {
+  border-color: rgba(15, 186, 131, 0.3);
+  color: #087d58;
+  background: #effbf7;
+}
+
+.system-status-connected .system-status-dot {
+  background: var(--secondary);
+  box-shadow: 0 0 0 4px rgba(15, 186, 131, 0.13);
+}
+
+.system-status-error {
+  border-color: rgba(220, 38, 38, 0.25);
+  color: #b42318;
+  background: #fff4f3;
+}
+
+.system-status-error .system-status-dot {
+  background: #dc2626;
+  box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.1);
+}
+
+@keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
 
 @media (max-width: 980px) {
   .main-navigation {

@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import SystemStatus from "../components/SystemStatus";
 
 function HomePage() {
   return (
@@ -6,6 +7,7 @@ function HomePage() {
       <section className="hero-section">
         <div className="container hero-grid">
           <div className="hero-content">
+            <SystemStatus />
             <span className="eyebrow">
               Ecommerce Intelligence Platform
             </span>
