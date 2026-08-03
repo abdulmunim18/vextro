@@ -7,7 +7,7 @@ function HomePage() {
       <section className="hero-section">
         <div className="container hero-grid">
           <div className="hero-content">
-            <SystemStatus />
+             <SystemStatus />
             <span className="eyebrow">
               Ecommerce Intelligence Platform
             </span>
