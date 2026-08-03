@@ -1,4 +1,11 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { useState } from "react";
+import {
+  NavLink,
+  Outlet,
+  useNavigate,
+} from "react-router-dom";
+
+import { useAuth } from "../context/AuthContext";
 
 const navigationItems = [
   { label: "Home", path: "/" },
@@ -8,6 +15,36 @@ const navigationItems = [
 ];
 
 function MainLayout() {
+  const navigate = useNavigate();
+
+  const {
+    user,
+    isAuthenticated,
+    isInitializing,
+    logout,
+  } = useAuth();
+
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  async function handleLogout() {
+    setIsLoggingOut(true);
+
+    try {
+      await logout();
+    } catch {
+      // The local session is still cleared by AuthContext.
+    } finally {
+      setIsLoggingOut(false);
+
+      navigate("/", {
+        replace: true,
+      });
+    }
+  }
+
+  const userInitial =
+    user?.full_name?.trim().charAt(0).toUpperCase() || "U";
+
   return (
     <div className="app-shell">
       <header className="main-header">
@@ -21,12 +58,17 @@ function MainLayout() {
             </span>
           </NavLink>
 
-          <nav className="main-navigation" aria-label="Main navigation">
+          <nav
+            className="main-navigation"
+            aria-label="Main navigation"
+          >
             {navigationItems.map((item) => (
               <NavLink
                 key={item.path}
                 className={({ isActive }) =>
-                  isActive ? "nav-link nav-link-active" : "nav-link"
+                  isActive
+                    ? "nav-link nav-link-active"
+                    : "nav-link"
                 }
                 end={item.path === "/"}
                 to={item.path}
@@ -36,15 +78,54 @@ function MainLayout() {
             ))}
           </nav>
 
-          <div className="header-actions">
-            <NavLink className="text-button" to="/login">
-              Login
-            </NavLink>
+          {!isInitializing ? (
+            <div className="header-actions">
+              {isAuthenticated ? (
+                <>
+                  <NavLink
+                    className="user-chip"
+                    to="/dashboard"
+                  >
+                    <span className="user-avatar">
+                      {userInitial}
+                    </span>
 
-            <NavLink className="primary-button small-button" to="/register">
-              Get Started
-            </NavLink>
-          </div>
+                    <span className="user-chip-text">
+                      <strong>{user.full_name}</strong>
+                      <small>
+                        {user.roles?.join(", ") || "User"}
+                      </small>
+                    </span>
+                  </NavLink>
+
+                  <button
+                    className="logout-button"
+                    type="button"
+                    onClick={handleLogout}
+                    disabled={isLoggingOut}
+                  >
+                    {isLoggingOut ? "Exiting..." : "Logout"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <NavLink
+                    className="text-button"
+                    to="/login"
+                  >
+                    Login
+                  </NavLink>
+
+                  <NavLink
+                    className="primary-button small-button"
+                    to="/register"
+                  >
+                    Get Started
+                  </NavLink>
+                </>
+              )}
+            </div>
+          ) : null}
         </div>
       </header>
 

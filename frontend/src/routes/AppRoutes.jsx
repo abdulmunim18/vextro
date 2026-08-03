@@ -1,5 +1,7 @@
 import { Route, Routes } from "react-router-dom";
 
+import LoginPage from "../pages/LoginPage";
+import RegisterPage from "../pages/RegisterPage";
 import MainLayout from "../layouts/MainLayout";
 import HomePage from "../pages/HomePage";
 import NotFoundPage from "../pages/NotFoundPage";
@@ -12,27 +14,9 @@ function AppRoutes() {
       <Route element={<MainLayout />}>
         <Route index element={<HomePage />} />
 
-        <Route
-          path="login"
-          element={
-            <PlaceholderPage
-              eyebrow="Welcome Back"
-              title="Login to VEXTRO"
-              description="Consumer, SME and administrator login will be connected to the existing FastAPI authentication APIs."
-            />
-          }
-        />
+        <Route path="login" element={<LoginPage />} />
 
-        <Route
-          path="register"
-          element={
-            <PlaceholderPage
-              eyebrow="Create Account"
-              title="Join VEXTRO"
-              description="This page will provide separate consumer and SME registration experiences."
-            />
-          }
-        />
+        <Route path="register" element={<RegisterPage />} />
 
         <Route
           path="products"
