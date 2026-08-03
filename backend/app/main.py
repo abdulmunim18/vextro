@@ -12,6 +12,9 @@ from app.api.routes.catalog import router as catalog_router
 from app.api.routes.price_intelligence import (
     router as price_intelligence_router,
 )
+from app.api.routes.price_alerts import (
+    router as price_alerts_router,
+)
 
 app = FastAPI(
     title=settings.app_name,
@@ -38,6 +41,7 @@ app.include_router(auth_router)
 app.include_router(access_router)
 app.include_router(catalog_router)
 app.include_router(product_catalog_router)
+app.include_router(price_alerts_router)
 app.include_router(price_intelligence_router)
 
 @app.get("/", tags=["Root"])
