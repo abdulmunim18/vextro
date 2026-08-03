@@ -10,6 +10,7 @@ import RegisterPage from "../pages/RegisterPage";
 import UnauthorizedPage from "../pages/UnauthorizedPage";
 import GuestRoute from "./GuestRoute";
 import ProtectedRoute from "./ProtectedRoute";
+import ProductsPage from "../pages/ProductsPage";
 
 function AppRoutes() {
   return (
@@ -30,15 +31,9 @@ function AppRoutes() {
         </Route>
 
         <Route
-          path="products"
-          element={
-            <PlaceholderPage
-              eyebrow="Product Discovery"
-              title="Search marketplace products"
-              description="Product search, categories, brands, pagination and marketplace filters will appear here."
-            />
-          }
-        />
+  path="products"
+  element={<ProductsPage />}
+/>
 
         <Route
           path="products/:productId"
