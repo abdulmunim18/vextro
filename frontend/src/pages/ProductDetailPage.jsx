@@ -252,6 +252,14 @@ function ProductDetailPage() {
           Number(listing.current_price),
         ),
     )?.id ?? null;
+    const lowestAvailableListing =
+  sortedListings.find(
+    (listing) =>
+      listing.is_available &&
+      Number.isFinite(
+        Number(listing.current_price),
+      ),
+  ) || null;
 
   const specifications = Object.entries(
     product?.specifications || {},
@@ -471,11 +479,16 @@ function ProductDetailPage() {
               </a>
 
               <Link
-                className="inline-flex min-h-12 items-center justify-center rounded-xl border border-vextro-border bg-white px-6 text-sm font-black text-vextro-ink transition hover:border-blue-200 hover:bg-blue-50"
-                to="/alerts"
-              >
-                Set Price Alert
-              </Link>
+  className="inline-flex min-h-12 items-center justify-center rounded-xl border border-vextro-border bg-white px-6 text-sm font-black text-vextro-ink transition hover:border-blue-200 hover:bg-blue-50"
+  to="/alerts"
+  state={{
+    canonicalProductId: product.id,
+    suggestedTargetPrice:
+      lowestAvailableListing?.current_price,
+  }}
+>
+  Set Price Alert
+</Link>
             </div>
           </div>
         </div>
