@@ -38,3 +38,16 @@ export async function getProductListings(productId) {
 
   return response.data;
 }
+export async function getProductPriceHistory(
+  productId,
+  params = {},
+) {
+  const response = await apiClient.get(
+    `/products/${productId}/price-history`,
+    {
+      params,
+    },
+  );
+
+  return response.data;
+}
