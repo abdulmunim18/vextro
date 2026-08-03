@@ -3,6 +3,7 @@ import {
   Outlet,
 } from "react-router-dom";
 
+import RouteLoadingState from "../components/RouteLoadingState";
 import { useAuth } from "../context/AuthContext";
 
 function getAuthenticatedDestination(user) {
@@ -26,10 +27,7 @@ function GuestRoute() {
 
   if (isInitializing) {
     return (
-      <section className="route-loading-section">
-        <div className="route-loader" />
-        <p>Checking your VEXTRO session...</p>
-      </section>
+      <RouteLoadingState message="Checking your VEXTRO session..." />
     );
   }
 

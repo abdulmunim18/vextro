@@ -4,6 +4,7 @@ import {
   useLocation,
 } from "react-router-dom";
 
+import RouteLoadingState from "../components/RouteLoadingState";
 import { useAuth } from "../context/AuthContext";
 
 function ProtectedRoute({ allowedRoles = [] }) {
@@ -17,10 +18,7 @@ function ProtectedRoute({ allowedRoles = [] }) {
 
   if (isInitializing) {
     return (
-      <section className="route-loading-section">
-        <div className="route-loader" />
-        <p>Restoring your VEXTRO session...</p>
-      </section>
+      <RouteLoadingState message="Restoring your secure VEXTRO session..." />
     );
   }
 
@@ -38,7 +36,8 @@ function ProtectedRoute({ allowedRoles = [] }) {
     );
   }
 
-  const requiresSpecificRole = allowedRoles.length > 0;
+  const requiresSpecificRole =
+    allowedRoles.length > 0;
 
   if (
     requiresSpecificRole &&
@@ -48,6 +47,9 @@ function ProtectedRoute({ allowedRoles = [] }) {
       <Navigate
         to="/forbidden"
         replace
+        state={{
+          attemptedPath: location.pathname,
+        }}
       />
     );
   }
