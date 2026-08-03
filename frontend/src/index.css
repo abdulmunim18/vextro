@@ -1037,3 +1037,46 @@ select.form-input {
     padding-inline: 10px;
   }
 }
+.route-loading-section {
+  display: grid;
+  min-height: calc(100vh - 153px);
+  place-content: center;
+  justify-items: center;
+  gap: 17px;
+  background: var(--soft-surface);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.route-loader {
+  width: 42px;
+  height: 42px;
+  border: 4px solid rgba(49, 87, 213, 0.16);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: route-loader-spin 750ms linear infinite;
+}
+
+.role-information {
+  display: inline-flex;
+  margin-top: 24px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  background: var(--soft-surface);
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.role-information strong {
+  margin-left: 4px;
+  color: var(--dark);
+}
+
+@keyframes route-loader-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -7,22 +7,55 @@ import {
 
 import { useAuth } from "../context/AuthContext";
 
-const navigationItems = [
-  { label: "Home", path: "/" },
-  { label: "Products", path: "/products" },
-  { label: "Dashboard", path: "/dashboard" },
-  { label: "Price Alerts", path: "/alerts" },
-];
+
 
 function MainLayout() {
   const navigate = useNavigate();
-
+  
   const {
-    user,
-    isAuthenticated,
-    isInitializing,
-    logout,
-  } = useAuth();
+  user,
+  isAuthenticated,
+  isInitializing,
+  logout,
+  hasRole,
+} = useAuth();
+const navigationItems = [
+  {
+    label: "Home",
+    path: "/",
+  },
+  {
+    label: "Products",
+    path: "/products",
+  },
+];
+
+if (isAuthenticated) {
+  navigationItems.push({
+    label: "Dashboard",
+    path: "/dashboard",
+  });
+}
+
+if (
+  isAuthenticated &&
+  hasRole("consumer", "admin")
+) {
+  navigationItems.push({
+    label: "Price Alerts",
+    path: "/alerts",
+  });
+}
+
+if (
+  isAuthenticated &&
+  hasRole("admin")
+) {
+  navigationItems.push({
+    label: "Admin",
+    path: "/admin",
+  });
+}
 
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 

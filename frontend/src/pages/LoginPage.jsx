@@ -48,9 +48,12 @@ function LoginPage() {
 
       const roles = loggedInUser.roles || [];
 
-      const destination = roles.includes("admin")
-        ? "/admin"
-        : "/dashboard";
+    const defaultDestination = roles.includes("admin")
+  ? "/admin"
+  : "/dashboard";
+
+    const destination =
+  location.state?.from || defaultDestination;
 
       navigate(destination, {
         replace: true,
