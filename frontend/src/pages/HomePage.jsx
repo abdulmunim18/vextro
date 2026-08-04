@@ -75,7 +75,7 @@ function HomePage() {
 
             <div className="mt-9 flex flex-col gap-3 sm:flex-row">
               <Link
-                className="inline-flex min-h-13 items-center justify-center gap-3 rounded-xl bg-vextro-primary px-6 text-sm font-black text-white shadow-lg shadow-blue-500/20 transition hover:-translate-y-0.5 hover:bg-vextro-primary-dark hover:shadow-xl"
+               className="inline-flex min-h-13 items-center justify-center gap-3 rounded-xl bg-vextro-primary px-6 text-sm font-bold text-white shadow-sm transition-colors duration-200 hover:bg-vextro-primary-dark"
                 to="/products"
               >
                 Explore Products
@@ -83,7 +83,7 @@ function HomePage() {
               </Link>
 
               <Link
-                className="inline-flex min-h-13 items-center justify-center rounded-xl border border-vextro-border bg-white px-6 text-sm font-black text-vextro-ink shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:bg-blue-50"
+              className="inline-flex min-h-13 items-center justify-center rounded-xl border border-vextro-border bg-white px-6 text-sm font-bold text-vextro-ink transition-colors duration-200 hover:border-vextro-primary hover:bg-blue-50 hover:text-vextro-primary"
                 to="/register"
               >
                 Create Free Account
@@ -111,7 +111,7 @@ function HomePage() {
           <div className="relative mx-auto w-full max-w-xl">
             <div className="absolute -inset-7 rounded-[42px] bg-gradient-to-br from-blue-200/40 via-violet-200/30 to-emerald-200/40 blur-2xl" />
 
-            <div className="relative overflow-hidden rounded-[32px] border border-white/80 bg-white/90 p-5 shadow-vextro-lg backdrop-blur-xl sm:p-7">
+            <div className="relative overflow-hidden rounded-[32px] border border-white/80 bg-white/90 p-5 shadow-vextro-lg sm:p-7">
               <div className="flex items-center justify-between border-b border-vextro-border pb-5">
                 <div>
                   <span className="text-[10px] font-black uppercase tracking-[0.18em] text-vextro-muted">
