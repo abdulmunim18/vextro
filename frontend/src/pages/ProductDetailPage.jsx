@@ -8,6 +8,7 @@ import {
   useParams,
 } from "react-router-dom";
 
+import CreatePriceAlertCard from "../components/CreatePriceAlertCard";
 import MarketplaceListingCard from "../components/MarketplaceListingCard";
 import PriceHistoryChart from "../components/PriceHistoryChart";
 import RouteLoadingState from "../components/RouteLoadingState";
@@ -435,6 +436,7 @@ function ProductDetailPage() {
             </div>
 
             <div className="mt-8 rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
+              
               <span className="text-[10px] font-black uppercase tracking-wide text-emerald-700">
                 Lowest current marketplace price
               </span>
@@ -458,6 +460,12 @@ function ProductDetailPage() {
                 </p>
               ) : null}
             </div>
+            <CreatePriceAlertCard
+  product={product}
+  listings={listings}
+  platformNames={platformNames}
+  lowestListing={lowestListing}
+/>
           </div>
         </div>
 

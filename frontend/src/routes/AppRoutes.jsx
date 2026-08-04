@@ -5,13 +5,13 @@ import HomePage from "../pages/HomePage";
 import LoginPage from "../pages/LoginPage";
 import NotFoundPage from "../pages/NotFoundPage";
 import PlaceholderPage from "../pages/PlaceholderPage";
-import PriceAlertsPage from "../pages/PriceAlertsPage";
 import ProductDetailPage from "../pages/ProductDetailPage";
 import ProductsPage from "../pages/ProductsPage";
 import RegisterPage from "../pages/RegisterPage";
 import UnauthorizedPage from "../pages/UnauthorizedPage";
 import GuestRoute from "./GuestRoute";
 import ProtectedRoute from "./ProtectedRoute";
+import PriceAlertsPage from "../pages/PriceAlertsPage";
 
 function AppRoutes() {
   return (
