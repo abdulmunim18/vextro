@@ -1,4 +1,6 @@
-from pydantic import BaseModel, Field
+from datetime import datetime
+
+from pydantic import BaseModel, EmailStr, Field
 
 
 class AdminDashboardResponse(BaseModel):
@@ -20,3 +22,36 @@ class AdminDashboardResponse(BaseModel):
     total_price_alerts: int = Field(ge=0)
     active_price_alerts: int = Field(ge=0)
     triggered_price_alerts: int = Field(ge=0)
+
+
+class AdminUserResponse(BaseModel):
+    """Safe user information returned to an administrator."""
+
+    id: int
+    full_name: str
+    email: EmailStr
+    roles: list[str]
+
+    is_active: bool
+    is_verified: bool
+
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminUserListResponse(BaseModel):
+    """Paginated administrator user-list response."""
+
+    items: list[AdminUserResponse]
+
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1, le=100)
+
+    total_items: int = Field(ge=0)
+    total_pages: int = Field(ge=0)
+
+
+class AdminUserStatusUpdate(BaseModel):
+    """Activate or deactivate one VEXTRO user."""
+
+    is_active: bool
