@@ -1,272 +1,194 @@
-function formatPrice(price, currency = "PKR") {
-  const numericPrice = Number(price);
-
-  if (!Number.isFinite(numericPrice)) {
-    return "Price unavailable";
-  }
-
-  try {
-    return new Intl.NumberFormat("en-PK", {
-      style: "currency",
-      currency,
-      maximumFractionDigits: 0,
-    }).format(numericPrice);
-  } catch {
-    return `${currency} ${numericPrice.toLocaleString("en-PK")}`;
-  }
-}
-
-function formatDate(value) {
-  if (!value) {
-    return "Not available";
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "Not available";
-  }
-
-  return new Intl.DateTimeFormat("en-PK", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  }).format(date);
-}
-
-function getSellerName(listing) {
-  return (
-    listing.seller?.name ||
-    listing.seller?.display_name ||
-    listing.seller?.business_name ||
-    (listing.seller_id
-      ? `Seller #${listing.seller_id}`
-      : "Marketplace seller")
-  );
-}
-
-function getPrimaryImage(listing) {
-  const images = Array.isArray(listing.images)
-    ? listing.images
-    : [];
-
-  const primaryImage =
-    images.find((image) => image.is_primary) || images[0];
-
-  return primaryImage?.image_url || "";
-}
-
-function getPlatformStyles(platformCode = "") {
-  const normalizedCode = platformCode.toLowerCase();
-
-  if (normalizedCode.includes("daraz")) {
-    return {
-      badge:
-        "border-orange-200 bg-orange-50 text-orange-700",
-      icon: "bg-orange-100 text-orange-700",
-    };
-  }
-
-  if (normalizedCode.includes("priceoye")) {
-    return {
-      badge:
-        "border-blue-200 bg-blue-50 text-blue-700",
-      icon: "bg-blue-100 text-blue-700",
-    };
-  }
-
-  return {
-    badge:
-      "border-slate-200 bg-slate-50 text-slate-700",
-    icon: "bg-slate-100 text-slate-700",
-  };
-}
+import {
+  formatDate,
+  formatPrice,
+  toFiniteNumber,
+} from "../utils/productDisplay";
 
 function MarketplaceListingCard({
   listing,
-  platform,
-  isLowestPrice = false,
+  platformName,
+  isLowest,
 }) {
-  const currentPrice = Number(listing.current_price);
-  const originalPrice = Number(listing.original_price);
+  const currentPrice = toFiniteNumber(
+    listing.current_price,
+  );
 
-  const hasDiscount =
-    Number.isFinite(originalPrice) &&
-    Number.isFinite(currentPrice) &&
-    originalPrice > currentPrice;
+  const originalPrice = toFiniteNumber(
+    listing.original_price,
+  );
 
-  const discountPercentage = hasDiscount
-    ? Math.round(
-        ((originalPrice - currentPrice) / originalPrice) * 100,
-      )
-    : 0;
+  const rating = toFiniteNumber(listing.rating);
 
-  const sellerName = getSellerName(listing);
-  const imageUrl = getPrimaryImage(listing);
+  const discountPercentage =
+    currentPrice !== null &&
+    originalPrice !== null &&
+    originalPrice > currentPrice
+      ? Math.round(
+          ((originalPrice - currentPrice) /
+            originalPrice) *
+            100,
+        )
+      : null;
 
-  const platformName =
-    platform?.name ||
-    `Marketplace #${listing.platform_id}`;
+  const sellerName =
+    listing.seller?.name || "Marketplace seller";
 
-  const platformCode =
-    platform?.code || platformName;
-
-  const platformStyles =
-    getPlatformStyles(platformCode);
-
-  const rating = Number(listing.rating);
+  const imageUrl =
+    listing.images?.find(
+      (image) => image.is_primary,
+    )?.image_url ||
+    listing.images?.[0]?.image_url ||
+    "";
 
   return (
     <article
-      className={`relative flex h-full flex-col overflow-hidden rounded-3xl bg-white p-6 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-vextro ${
-        isLowestPrice
-          ? "border-2 border-emerald-300"
-          : "border border-vextro-border"
+      className={`relative overflow-hidden rounded-3xl border bg-white transition duration-300 ${
+        isLowest
+          ? "border-2 border-emerald-300 shadow-lg shadow-emerald-500/10"
+          : "border-vextro-border shadow-sm hover:border-blue-200 hover:shadow-lg"
       }`}
     >
-      {isLowestPrice ? (
-        <span className="absolute right-5 top-0 rounded-b-xl bg-emerald-500 px-4 py-2 text-[10px] font-black uppercase tracking-wider text-white shadow-lg shadow-emerald-500/20">
-          Lowest Price
+      {isLowest ? (
+        <span className="absolute right-4 top-4 z-10 rounded-full bg-emerald-500 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-white shadow-lg shadow-emerald-500/20">
+          Lowest price
         </span>
       ) : null}
 
-      <div className="flex items-start gap-4">
-        <div
-          className={`grid size-13 shrink-0 place-items-center rounded-2xl text-lg font-black ${platformStyles.icon}`}
-        >
-          {platformName.charAt(0).toUpperCase()}
+      <div className="grid sm:grid-cols-[150px_1fr]">
+        <div className="grid min-h-44 place-items-center bg-gradient-to-br from-slate-50 to-blue-50/60 p-5">
+          {imageUrl ? (
+            <img
+              className="h-32 w-full object-contain"
+              src={imageUrl}
+              alt={listing.title}
+              loading="lazy"
+            />
+          ) : (
+            <div className="grid size-20 place-items-center rounded-3xl bg-white text-3xl shadow-sm">
+              🛍️
+            </div>
+          )}
         </div>
 
-        <div className="min-w-0 flex-1">
-          <span
-            className={`inline-flex rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-wider ${platformStyles.badge}`}
-          >
-            {platformName}
-          </span>
+        <div className="p-5 sm:p-6">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-blue-50 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-vextro-primary">
+              {platformName}
+            </span>
 
-          <h3 className="mt-3 line-clamp-2 text-lg font-black leading-6 text-vextro-ink">
+            <span
+              className={`rounded-full px-3 py-1.5 text-[10px] font-black ${
+                listing.is_available
+                  ? "bg-emerald-50 text-emerald-700"
+                  : "bg-red-50 text-red-700"
+              }`}
+            >
+              {listing.is_available
+                ? "In stock"
+                : "Unavailable"}
+            </span>
+
+            {discountPercentage ? (
+              <span className="rounded-full bg-amber-50 px-3 py-1.5 text-[10px] font-black text-amber-700">
+                {discountPercentage}% off
+              </span>
+            ) : null}
+          </div>
+
+          <h3 className="mt-4 line-clamp-2 text-lg font-black leading-6 text-vextro-ink">
             {listing.title}
           </h3>
 
-          <p className="mt-2 truncate text-xs font-semibold text-vextro-muted">
-            {sellerName}
-          </p>
-        </div>
-      </div>
+          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-vextro-muted">
+            <span>
+              Seller:{" "}
+              <strong className="text-vextro-ink">
+                {sellerName}
+              </strong>
+            </span>
 
-      {imageUrl ? (
-        <div className="mt-5 grid h-44 place-items-center rounded-2xl bg-vextro-canvas">
-          <img
-            className="h-full w-full p-5 object-contain"
-            src={imageUrl}
-            alt={listing.title}
-            loading="lazy"
-          />
-        </div>
-      ) : null}
+            {listing.seller?.is_verified ? (
+              <span className="font-bold text-emerald-600">
+                ✓ Verified seller
+              </span>
+            ) : null}
 
-      <div className="mt-6">
-        <span className="text-[10px] font-black uppercase tracking-wide text-vextro-muted">
-          Current marketplace price
-        </span>
+            {rating !== null ? (
+              <span>
+                <strong className="text-amber-500">
+                  ★
+                </strong>{" "}
+                {rating.toFixed(1)} (
+                {listing.review_count || 0} reviews)
+              </span>
+            ) : null}
+          </div>
 
-        <div className="mt-2 flex flex-wrap items-end gap-3">
-          <strong
-            className={`text-3xl font-black tracking-[-0.04em] ${
-              isLowestPrice
-                ? "text-emerald-700"
-                : "text-vextro-ink"
-            }`}
-          >
-            {formatPrice(
-              listing.current_price,
-              listing.currency,
-            )}
-          </strong>
-
-          {hasDiscount ? (
-            <>
-              <span className="pb-1 text-sm font-semibold text-vextro-muted line-through">
-                {formatPrice(
-                  listing.original_price,
-                  listing.currency,
-                )}
+          <div className="mt-6 flex flex-col justify-between gap-5 border-t border-vextro-border pt-5 sm:flex-row sm:items-end">
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-wide text-vextro-muted">
+                Marketplace price
               </span>
 
-              <span className="mb-1 rounded-full bg-red-50 px-2.5 py-1 text-[10px] font-black text-red-600">
-                {discountPercentage}% OFF
-              </span>
-            </>
-          ) : null}
+              <div className="mt-1 flex flex-wrap items-center gap-3">
+                <strong
+                  className={`text-2xl font-black tracking-tight ${
+                    isLowest
+                      ? "text-emerald-700"
+                      : "text-vextro-ink"
+                  }`}
+                >
+                  {formatPrice(
+                    listing.current_price,
+                    listing.currency,
+                  )}
+                </strong>
+
+                {originalPrice !== null &&
+                originalPrice > currentPrice ? (
+                  <del className="text-sm font-semibold text-vextro-muted">
+                    {formatPrice(
+                      originalPrice,
+                      listing.currency,
+                    )}
+                  </del>
+                ) : null}
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-vextro-muted">
+                <span>
+                  Warranty:{" "}
+                  <strong className="text-vextro-ink">
+                    {listing.warranty || "Not listed"}
+                  </strong>
+                </span>
+
+                <span>
+                  Updated:{" "}
+                  <strong className="text-vextro-ink">
+                    {formatDate(listing.last_seen_at)}
+                  </strong>
+                </span>
+              </div>
+            </div>
+
+            <a
+              className={`inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-5 text-sm font-black transition ${
+                listing.is_available
+                  ? "bg-vextro-primary text-white shadow-lg shadow-blue-500/20 hover:-translate-y-0.5 hover:bg-vextro-primary-dark"
+                  : "pointer-events-none bg-slate-100 text-slate-400"
+              }`}
+              href={listing.product_url}
+              target="_blank"
+              rel="noreferrer"
+              aria-disabled={!listing.is_available}
+            >
+              Visit {platformName}
+              <span>↗</span>
+            </a>
+          </div>
         </div>
       </div>
-
-      <div className="mt-6 grid grid-cols-2 gap-3">
-        <div className="rounded-2xl bg-vextro-canvas p-4">
-          <span className="block text-[10px] font-bold uppercase text-vextro-muted">
-            Rating
-          </span>
-
-          <strong className="mt-1 block text-sm font-black text-vextro-ink">
-            {Number.isFinite(rating)
-              ? `★ ${rating.toFixed(1)}`
-              : "Not rated"}
-          </strong>
-
-          <small className="mt-1 block text-[10px] text-vextro-muted">
-            {listing.review_count || 0} reviews
-          </small>
-        </div>
-
-        <div className="rounded-2xl bg-vextro-canvas p-4">
-          <span className="block text-[10px] font-bold uppercase text-vextro-muted">
-            Availability
-          </span>
-
-          <strong
-            className={`mt-1 block text-sm font-black ${
-              listing.is_available
-                ? "text-emerald-700"
-                : "text-red-600"
-            }`}
-          >
-            {listing.is_available
-              ? "In Stock"
-              : "Unavailable"}
-          </strong>
-
-          <small className="mt-1 block text-[10px] text-vextro-muted">
-            Updated {formatDate(listing.last_seen_at)}
-          </small>
-        </div>
-      </div>
-
-      <div className="mt-4 rounded-2xl border border-vextro-border p-4">
-        <div className="flex items-center justify-between gap-4 text-xs">
-          <span className="font-semibold text-vextro-muted">
-            Warranty
-          </span>
-
-          <strong className="text-right font-black text-vextro-ink">
-            {listing.warranty || "Not specified"}
-          </strong>
-        </div>
-      </div>
-
-      <a
-        className={`mt-5 inline-flex min-h-12 items-center justify-center gap-2 rounded-xl px-5 text-sm font-black transition ${
-          listing.is_available
-            ? "bg-vextro-primary text-white shadow-lg shadow-blue-500/20 hover:-translate-y-0.5 hover:bg-vextro-primary-dark"
-            : "pointer-events-none bg-slate-200 text-slate-500"
-        }`}
-        href={listing.product_url}
-        target="_blank"
-        rel="noreferrer"
-        aria-disabled={!listing.is_available}
-      >
-        View on {platformName}
-        <span>↗</span>
-      </a>
     </article>
   );
 }
