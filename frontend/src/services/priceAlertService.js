@@ -2,10 +2,11 @@ import apiClient from "../api/httpClient";
 
 export async function getPriceAlerts() {
   const response = await apiClient.get("/price-alerts");
+
   return response.data;
 }
 
-export async function getPriceAlertById(alertId) {
+export async function getPriceAlert(alertId) {
   const response = await apiClient.get(
     `/price-alerts/${alertId}`,
   );

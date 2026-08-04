@@ -1,9 +1,9 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useState,
 } from "react";
-
 import ProductCard from "../components/ProductCard";
 import {
   getBrands,
@@ -220,6 +220,27 @@ function ProductsPage() {
     });
   }
 
+const categoryNameById = useMemo(
+  () =>
+    new Map(
+      categories.map((category) => [
+        category.id,
+        category.name,
+      ]),
+    ),
+  [categories],
+);
+
+const brandNameById = useMemo(
+  () =>
+    new Map(
+      brands.map((brand) => [
+        brand.id,
+        brand.name,
+      ]),
+    ),
+  [brands],
+);
   const hasAppliedFilters = Boolean(
     appliedFilters.query ||
       appliedFilters.categoryId ||
@@ -446,11 +467,20 @@ function ProductsPage() {
         products.length > 0 ? (
           <div className="mt-5 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
             {products.map((product) => (
-              <ProductCard
-                key={product.id}
-                product={product}
-              />
-            ))}
+  <ProductCard
+    key={product.id}
+    product={{
+      ...product,
+      brand_name:
+        brandNameById.get(product.brand_id) ||
+        "Unbranded",
+      category_name:
+        categoryNameById.get(
+          product.category_id,
+        ) || "General",
+    }}
+  />
+))}
           </div>
         ) : null}
 

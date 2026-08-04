@@ -8,8 +8,9 @@ import {
   useParams,
 } from "react-router-dom";
 
+import CreatePriceAlertCard from "../components/CreatePriceAlertCard";
 import MarketplaceListingCard from "../components/MarketplaceListingCard";
-import PriceHistoryPanel from "../components/PriceHistoryPanel";
+import PriceHistoryChart from "../components/PriceHistoryChart";
 import RouteLoadingState from "../components/RouteLoadingState";
 import {
   getBrands,
@@ -20,6 +21,11 @@ import {
   getProductPriceHistory,
 } from "../services/catalogService";
 import { getApiErrorMessage } from "../utils/apiError";
+import {
+  formatAttributeLabel,
+  formatPrice,
+  toFiniteNumber,
+} from "../utils/productDisplay";
 
 function extractItems(responseData) {
   if (Array.isArray(responseData)) {
@@ -33,59 +39,19 @@ function extractItems(responseData) {
   return [];
 }
 
-function formatSpecificationValue(value) {
-  if (value === null || value === undefined) {
-    return "Not specified";
-  }
-
-  if (typeof value === "boolean") {
-    return value ? "Yes" : "No";
-  }
-
-  if (Array.isArray(value)) {
-    return value.join(", ");
-  }
-
-  if (typeof value === "object") {
-    return Object.entries(value)
-      .map(([key, itemValue]) => `${key}: ${itemValue}`)
-      .join(", ");
-  }
-
-  return String(value);
-}
-
-function formatSpecificationLabel(key) {
-  return key
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (character) =>
-      character.toUpperCase(),
-    );
-}
-
-function getPrimaryImage(product) {
-  const images = Array.isArray(product?.images)
-    ? product.images
-    : [];
-
-  return (
-    images.find((image) => image.is_primary) ||
-    images[0] ||
-    null
-  );
-}
-
 function ProductDetailPage() {
   const { productId } = useParams();
 
   const [product, setProduct] = useState(null);
-  const [listings, setListings] = useState([]);
+  const [listingResponse, setListingResponse] =
+    useState(null);
+
   const [priceHistory, setPriceHistory] =
     useState(null);
 
+  const [platforms, setPlatforms] = useState([]);
   const [categories, setCategories] = useState([]);
   const [brands, setBrands] = useState([]);
-  const [platforms, setPlatforms] = useState([]);
 
   const [selectedImage, setSelectedImage] =
     useState("");
@@ -94,118 +60,82 @@ function ProductDetailPage() {
   const [errorMessage, setErrorMessage] =
     useState("");
 
-  const [sectionWarnings, setSectionWarnings] =
-    useState([]);
-
   useEffect(() => {
     let isMounted = true;
 
     async function loadProductPage() {
-      setIsLoading(true);
-      setErrorMessage("");
-      setSectionWarnings([]);
-
       const numericProductId = Number(productId);
 
       if (
         !Number.isInteger(numericProductId) ||
         numericProductId < 1
       ) {
-        setErrorMessage("Invalid product identifier.");
+        setErrorMessage("Invalid product ID.");
         setIsLoading(false);
         return;
       }
 
-      const results = await Promise.allSettled([
-        getProductById(numericProductId),
-        getProductListings(numericProductId),
-        getProductPriceHistory(numericProductId),
-        getCategories(),
-        getBrands(),
-        getPlatforms(),
-      ]);
+      setIsLoading(true);
+      setErrorMessage("");
 
-      if (!isMounted) {
-        return;
-      }
+      try {
+        const [
+          productData,
+          listingsData,
+          historyData,
+          platformData,
+          categoryData,
+          brandData,
+        ] = await Promise.all([
+          getProductById(numericProductId),
+          getProductListings(numericProductId),
+          getProductPriceHistory(numericProductId),
+          getPlatforms(),
+          getCategories(),
+          getBrands(),
+        ]);
 
-      const [
-        productResult,
-        listingsResult,
-        historyResult,
-        categoriesResult,
-        brandsResult,
-        platformsResult,
-      ] = results;
+        if (!isMounted) {
+          return;
+        }
 
-      if (productResult.status === "rejected") {
+        setProduct(productData);
+        setListingResponse(listingsData);
+        setPriceHistory(historyData);
+        setPlatforms(extractItems(platformData));
+        setCategories(extractItems(categoryData));
+        setBrands(extractItems(brandData));
+
+        const productImages = Array.isArray(
+          productData?.images,
+        )
+          ? productData.images
+          : [];
+
+        const primaryImage =
+          productImages.find(
+            (image) => image.is_primary,
+          ) || productImages[0];
+
+        setSelectedImage(
+          primaryImage?.image_url || "",
+        );
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
         setErrorMessage(
           getApiErrorMessage(
-            productResult.reason,
+            error,
             "Unable to load this product.",
           ),
         );
-
-        setIsLoading(false);
-        return;
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
-
-      const loadedProduct = productResult.value;
-
-      setProduct(loadedProduct);
-
-      const primaryImage =
-        getPrimaryImage(loadedProduct);
-
-      setSelectedImage(primaryImage?.image_url || "");
-
-      const warnings = [];
-
-      if (listingsResult.status === "fulfilled") {
-        setListings(
-          extractItems(listingsResult.value),
-        );
-      } else {
-        setListings([]);
-        warnings.push(
-          "Marketplace listings are temporarily unavailable.",
-        );
-      }
-
-      if (historyResult.status === "fulfilled") {
-        setPriceHistory(historyResult.value);
-      } else {
-        setPriceHistory({
-          product_id: numericProductId,
-          product_name: loadedProduct.name,
-          total_listings: 0,
-          total_points: 0,
-          listings: [],
-        });
-
-        warnings.push(
-          "Historical price data is temporarily unavailable.",
-        );
-      }
-
-      if (categoriesResult.status === "fulfilled") {
-        setCategories(
-          extractItems(categoriesResult.value),
-        );
-      }
-
-      if (brandsResult.status === "fulfilled") {
-        setBrands(extractItems(brandsResult.value));
-      }
-
-      if (platformsResult.status === "fulfilled") {
-        setPlatforms(
-          extractItems(platformsResult.value),
-        );
-      }
-
-      setSectionWarnings(warnings);
-      setIsLoading(false);
     }
 
     loadProductPage();
@@ -215,71 +145,104 @@ function ProductDetailPage() {
     };
   }, [productId]);
 
-  const category = categories.find(
-    (item) => item.id === product?.category_id,
-  );
-
-  const brand = brands.find(
-    (item) => item.id === product?.brand_id,
-  );
-
-  const platformById = useMemo(
+  const listings = useMemo(
     () =>
-      Object.fromEntries(
+      Array.isArray(listingResponse?.items)
+        ? listingResponse.items
+        : [],
+    [listingResponse],
+  );
+
+  const platformNames = useMemo(
+    () =>
+      new Map(
         platforms.map((platform) => [
           platform.id,
-          platform,
+          platform.name,
         ]),
       ),
     [platforms],
   );
 
-  const sortedListings = useMemo(
-    () =>
-      [...listings].sort(
-        (firstListing, secondListing) =>
-          Number(firstListing.current_price) -
-          Number(secondListing.current_price),
-      ),
-    [listings],
-  );
+  const brandName =
+    brands.find(
+      (brand) => brand.id === product?.brand_id,
+    )?.name || "Unbranded";
 
-  const lowestListingId =
-    sortedListings.find(
-      (listing) =>
-        listing.is_available &&
-        Number.isFinite(
-          Number(listing.current_price),
-        ),
-    )?.id ?? null;
-    const lowestAvailableListing =
-  sortedListings.find(
+  const categoryName =
+    categories.find(
+      (category) =>
+        category.id === product?.category_id,
+    )?.name || "General";
+
+  const availableListings = listings.filter(
     (listing) =>
       listing.is_available &&
-      Number.isFinite(
-        Number(listing.current_price),
-      ),
-  ) || null;
-
-  const specifications = Object.entries(
-    product?.specifications || {},
+      toFiniteNumber(listing.current_price) !== null,
   );
 
-  const images = Array.isArray(product?.images)
-    ? [...product.images].sort(
-        (firstImage, secondImage) =>
-          firstImage.sort_order -
-          secondImage.sort_order,
-      )
-    : [];
+  const lowestListing =
+    availableListings.length > 0
+      ? availableListings.reduce(
+          (lowestItem, currentItem) =>
+            toFiniteNumber(
+              currentItem.current_price,
+            ) <
+            toFiniteNumber(
+              lowestItem.current_price,
+            )
+              ? currentItem
+              : lowestItem,
+        )
+      : null;
+
+  const historicalPrices = useMemo(
+    () =>
+      (priceHistory?.listings || [])
+        .flatMap((listing) => listing.points || [])
+        .map((point) => toFiniteNumber(point.price))
+        .filter((price) => price !== null),
+    [priceHistory],
+  );
+
+  const historicalMinimum =
+    historicalPrices.length > 0
+      ? Math.min(...historicalPrices)
+      : null;
+
+  const historicalMaximum =
+    historicalPrices.length > 0
+      ? Math.max(...historicalPrices)
+      : null;
+
+  const historicalAverage =
+    historicalPrices.length > 0
+      ? historicalPrices.reduce(
+          (total, price) => total + price,
+          0,
+        ) / historicalPrices.length
+      : null;
+
+  const defaultCurrency =
+    lowestListing?.currency ||
+    listings[0]?.currency ||
+    "PKR";
 
   const variants = Array.isArray(product?.variants)
     ? product.variants
     : [];
 
+  const productImages = Array.isArray(product?.images)
+    ? product.images
+    : [];
+
+  const specifications = Object.entries(
+    product?.specifications || {},
+  );
+
   if (isLoading) {
     return (
-      <RouteLoadingState message="Loading product intelligence..." />
+      <RouteLoadingState message="Loading product comparison and price intelligence..." />
     );
   }
 
@@ -295,7 +258,7 @@ function ProductDetailPage() {
             Product could not be loaded
           </h1>
 
-          <p className="mt-4 text-sm leading-7 text-vextro-muted">
+          <p className="mt-3 text-sm leading-7 text-vextro-muted">
             {errorMessage}
           </p>
 
@@ -311,71 +274,69 @@ function ProductDetailPage() {
   }
 
   return (
-    <div className="bg-vextro-canvas">
-      <section className="border-b border-vextro-border bg-white">
-        <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:px-8">
-          <nav className="flex flex-wrap items-center gap-2 text-xs font-semibold text-vextro-muted">
-            <Link
-              className="transition hover:text-vextro-primary"
-              to="/"
-            >
-              Home
-            </Link>
+    <section className="relative overflow-hidden bg-vextro-canvas py-12 sm:py-16 lg:py-20">
+      <div className="pointer-events-none absolute -right-48 top-0 size-[460px] rounded-full bg-blue-300/15 blur-3xl" />
 
-            <span>/</span>
+      <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <nav className="mb-8 flex flex-wrap items-center gap-2 text-xs font-semibold text-vextro-muted">
+          <Link
+            className="transition hover:text-vextro-primary"
+            to="/"
+          >
+            Home
+          </Link>
 
-            <Link
-              className="transition hover:text-vextro-primary"
-              to="/products"
-            >
-              Products
-            </Link>
+          <span>/</span>
 
-            <span>/</span>
+          <Link
+            className="transition hover:text-vextro-primary"
+            to="/products"
+          >
+            Products
+          </Link>
 
-            <span className="text-vextro-ink">
-              {product.name}
-            </span>
-          </nav>
-        </div>
-      </section>
+          <span>/</span>
 
-      <section className="relative overflow-hidden py-14 sm:py-18">
-        <div className="pointer-events-none absolute -right-40 top-0 size-96 rounded-full bg-blue-300/15 blur-3xl" />
+          <span className="text-vextro-ink">
+            {product.name}
+          </span>
+        </nav>
 
-        <div className="relative mx-auto grid max-w-7xl gap-10 px-4 sm:px-6 lg:grid-cols-[0.88fr_1.12fr] lg:px-8">
+        <div className="grid gap-8 lg:grid-cols-[0.9fr_1.1fr]">
           <div>
-            <div className="grid min-h-[480px] place-items-center overflow-hidden rounded-3xl border border-vextro-border bg-white p-7 shadow-sm">
+            <div className="grid min-h-[430px] place-items-center overflow-hidden rounded-3xl border border-vextro-border bg-white p-8 shadow-sm">
               {selectedImage ? (
                 <img
-                  className="max-h-[430px] w-full object-contain"
+                  className="max-h-[390px] w-full object-contain"
                   src={selectedImage}
                   alt={product.name}
                 />
               ) : (
-                <div className="flex flex-col items-center gap-4 text-center">
-                  <span className="grid size-24 place-items-center rounded-3xl bg-gradient-to-br from-vextro-primary to-violet-600 text-4xl font-black text-white shadow-vextro">
-                    {product.name.charAt(0)}
+                <div className="flex flex-col items-center gap-4 text-vextro-muted">
+                  <span className="grid size-28 place-items-center rounded-[32px] bg-gradient-to-br from-vextro-primary to-violet-600 text-5xl font-black text-white shadow-vextro">
+                    {product.name
+                      .charAt(0)
+                      .toUpperCase()}
                   </span>
 
-                  <p className="text-sm font-semibold text-vextro-muted">
+                  <p className="text-sm font-semibold">
                     Product image unavailable
                   </p>
                 </div>
               )}
             </div>
 
-            {images.length > 1 ? (
+            {productImages.length > 1 ? (
               <div className="mt-4 grid grid-cols-4 gap-3 sm:grid-cols-5">
-                {images.map((image) => (
+                {productImages.map((image) => (
                   <button
-                    className={`grid h-20 place-items-center overflow-hidden rounded-xl bg-white p-2 transition ${
+                    className={`grid aspect-square place-items-center overflow-hidden rounded-2xl border bg-white p-2 transition ${
                       selectedImage === image.image_url
-                        ? "border-2 border-vextro-primary"
-                        : "border border-vextro-border hover:border-blue-300"
+                        ? "border-2 border-vextro-primary shadow-md"
+                        : "border-vextro-border hover:border-blue-200"
                     }`}
-                    type="button"
                     key={image.id}
+                    type="button"
                     onClick={() =>
                       setSelectedImage(image.image_url)
                     }
@@ -394,52 +355,47 @@ function ProductDetailPage() {
             ) : null}
           </div>
 
-          <div className="flex flex-col justify-center">
-            <div className="flex flex-wrap gap-2">
-              <span className="rounded-full bg-blue-50 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-vextro-primary">
-                {brand?.name || "Unbranded"}
+          <div className="rounded-3xl border border-vextro-border bg-white p-7 shadow-sm sm:p-9">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-blue-50 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-vextro-primary">
+                {brandName}
               </span>
 
-              <span className="rounded-full bg-violet-50 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-violet-700">
-                {category?.name ||
-                  `Category #${product.category_id}`}
+              <span className="rounded-full bg-vextro-canvas px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-vextro-muted">
+                {categoryName}
               </span>
 
-              {product.is_active ? (
-                <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-emerald-700">
-                  Active Product
-                </span>
-              ) : null}
+              <span
+                className={`rounded-full px-3 py-1.5 text-[10px] font-black ${
+                  product.is_active
+                    ? "bg-emerald-50 text-emerald-700"
+                    : "bg-red-50 text-red-700"
+                }`}
+              >
+                {product.is_active
+                  ? "Active product"
+                  : "Inactive product"}
+              </span>
             </div>
 
-            <h1 className="mt-6 text-4xl font-black leading-[1.02] tracking-[-0.05em] text-vextro-ink sm:text-5xl lg:text-6xl">
+            <h1 className="mt-6 text-4xl font-black leading-[1.03] tracking-[-0.05em] text-vextro-ink sm:text-5xl">
               {product.name}
             </h1>
 
             {product.model ? (
-              <p className="mt-4 text-base font-bold text-vextro-primary">
+              <p className="mt-3 text-base font-bold text-vextro-primary">
                 Model: {product.model}
               </p>
             ) : null}
 
-            <p className="mt-6 text-sm leading-8 text-vextro-muted sm:text-base">
+            <p className="mt-6 text-sm leading-7 text-vextro-muted sm:text-base">
               {product.description ||
-                "Detailed product information will be updated as marketplace data becomes available."}
+                "Marketplace listings and historical price intelligence for this standardized VEXTRO product."}
             </p>
 
-            <div className="mt-8 grid gap-3 sm:grid-cols-3">
-              <div className="rounded-2xl border border-vextro-border bg-white p-5">
-                <span className="text-[10px] font-black uppercase text-vextro-muted">
-                  Variants
-                </span>
-
-                <strong className="mt-2 block text-2xl font-black text-vextro-ink">
-                  {variants.length}
-                </strong>
-              </div>
-
-              <div className="rounded-2xl border border-vextro-border bg-white p-5">
-                <span className="text-[10px] font-black uppercase text-vextro-muted">
+            <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="rounded-2xl bg-vextro-canvas p-4">
+                <span className="text-[10px] font-black uppercase tracking-wide text-vextro-muted">
                   Listings
                 </span>
 
@@ -448,72 +404,82 @@ function ProductDetailPage() {
                 </strong>
               </div>
 
-              <div className="rounded-2xl border border-vextro-border bg-white p-5">
-                <span className="text-[10px] font-black uppercase text-vextro-muted">
-                  Price Points
+              <div className="rounded-2xl bg-vextro-canvas p-4">
+                <span className="text-[10px] font-black uppercase tracking-wide text-vextro-muted">
+                  Available
                 </span>
 
-                <strong className="mt-2 block text-2xl font-black text-vextro-ink">
+                <strong className="mt-2 block text-2xl font-black text-emerald-600">
+                  {availableListings.length}
+                </strong>
+              </div>
+
+              <div className="rounded-2xl bg-vextro-canvas p-4">
+                <span className="text-[10px] font-black uppercase tracking-wide text-vextro-muted">
+                  Variants
+                </span>
+
+                <strong className="mt-2 block text-2xl font-black text-vextro-primary">
+                  {variants.length}
+                </strong>
+              </div>
+
+              <div className="rounded-2xl bg-vextro-canvas p-4">
+                <span className="text-[10px] font-black uppercase tracking-wide text-vextro-muted">
+                  Snapshots
+                </span>
+
+                <strong className="mt-2 block text-2xl font-black text-violet-600">
                   {priceHistory?.total_points || 0}
                 </strong>
               </div>
             </div>
 
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <a
-                className={`inline-flex min-h-12 items-center justify-center rounded-xl px-6 text-sm font-black text-white shadow-lg ${
-                  lowestListingId
-                    ? "bg-vextro-primary shadow-blue-500/20 hover:bg-vextro-primary-dark"
-                    : "pointer-events-none bg-slate-400"
-                }`}
-                href={
-                  sortedListings.find(
-                    (listing) =>
-                      listing.id === lowestListingId,
-                  )?.product_url || "#"
-                }
-                target="_blank"
-                rel="noreferrer"
-              >
-                View Lowest Price
-              </a>
+            <div className="mt-8 rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
+              
+              <span className="text-[10px] font-black uppercase tracking-wide text-emerald-700">
+                Lowest current marketplace price
+              </span>
 
-              <Link
-  className="inline-flex min-h-12 items-center justify-center rounded-xl border border-vextro-border bg-white px-6 text-sm font-black text-vextro-ink transition hover:border-blue-200 hover:bg-blue-50"
-  to="/alerts"
-  state={{
-    canonicalProductId: product.id,
-    suggestedTargetPrice:
-      lowestAvailableListing?.current_price,
-  }}
->
-  Set Price Alert
-</Link>
+              <strong className="mt-2 block text-3xl font-black tracking-tight text-emerald-700">
+                {lowestListing
+                  ? formatPrice(
+                      lowestListing.current_price,
+                      lowestListing.currency,
+                    )
+                  : "No available offer"}
+              </strong>
+
+              {lowestListing ? (
+                <p className="mt-2 text-xs font-semibold text-emerald-700">
+                  Available on{" "}
+                  {platformNames.get(
+                    lowestListing.platform_id,
+                  ) ||
+                    `Platform ${lowestListing.platform_id}`}
+                </p>
+              ) : null}
             </div>
+            <CreatePriceAlertCard
+  product={product}
+  listings={listings}
+  platformNames={platformNames}
+  lowestListing={lowestListing}
+/>
           </div>
         </div>
-      </section>
 
-      {sectionWarnings.length ? (
-        <section className="mx-auto max-w-7xl px-4 pb-4 sm:px-6 lg:px-8">
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
-            {sectionWarnings.join(" ")}
-          </div>
-        </section>
-      ) : null}
-
-      {variants.length > 0 ? (
-        <section className="border-y border-vextro-border bg-white py-14 sm:py-18">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        {variants.length > 0 ? (
+          <section className="mt-10 rounded-3xl border border-vextro-border bg-white p-7 shadow-sm sm:p-9">
             <span className="text-xs font-black uppercase tracking-[0.18em] text-vextro-primary">
-              Product Configurations
+              Product Variants
             </span>
 
             <h2 className="mt-3 text-3xl font-black tracking-tight text-vextro-ink">
-              Available variants
+              Available configurations
             </h2>
 
-            <div className="mt-7 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {variants.map((variant) => (
                 <article
                   className="rounded-2xl border border-vextro-border bg-vextro-canvas p-5"
@@ -522,7 +488,7 @@ function ProductDetailPage() {
                   <div className="flex items-center justify-between gap-4">
                     <strong className="text-sm font-black text-vextro-ink">
                       {variant.sku ||
-                        `Variant #${variant.id}`}
+                        `Variant ${variant.id}`}
                     </strong>
 
                     <span className="rounded-full bg-white px-3 py-1 text-[10px] font-black capitalize text-vextro-muted">
@@ -530,150 +496,194 @@ function ProductDetailPage() {
                     </span>
                   </div>
 
-                  <div className="mt-5 grid grid-cols-3 gap-2">
-                    <div>
-                      <span className="block text-[9px] font-bold uppercase text-vextro-muted">
-                        RAM
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {variant.ram_gb ? (
+                      <span className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-vextro-ink">
+                        {variant.ram_gb} GB RAM
                       </span>
+                    ) : null}
 
-                      <strong className="mt-1 block text-sm text-vextro-ink">
-                        {variant.ram_gb
-                          ? `${variant.ram_gb} GB`
-                          : "—"}
-                      </strong>
-                    </div>
-
-                    <div>
-                      <span className="block text-[9px] font-bold uppercase text-vextro-muted">
-                        Storage
+                    {variant.storage_gb ? (
+                      <span className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-vextro-ink">
+                        {variant.storage_gb} GB Storage
                       </span>
+                    ) : null}
 
-                      <strong className="mt-1 block text-sm text-vextro-ink">
-                        {variant.storage_gb
-                          ? `${variant.storage_gb} GB`
-                          : "—"}
-                      </strong>
-                    </div>
-
-                    <div>
-                      <span className="block text-[9px] font-bold uppercase text-vextro-muted">
-                        Color
+                    {variant.color ? (
+                      <span className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-vextro-ink">
+                        {variant.color}
                       </span>
-
-                      <strong className="mt-1 block truncate text-sm text-vextro-ink">
-                        {variant.color || "—"}
-                      </strong>
-                    </div>
+                    ) : null}
                   </div>
                 </article>
               ))}
             </div>
-          </div>
-        </section>
-      ) : null}
+          </section>
+        ) : null}
 
-      {specifications.length > 0 ? (
-        <section className="py-14 sm:py-18">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-            <span className="text-xs font-black uppercase tracking-[0.18em] text-vextro-primary">
-              Technical Details
-            </span>
-
-            <h2 className="mt-3 text-3xl font-black tracking-tight text-vextro-ink">
-              Product specifications
-            </h2>
-
-            <div className="mt-7 overflow-hidden rounded-3xl border border-vextro-border bg-white shadow-sm">
-              {specifications.map(
-                ([key, value], index) => (
-                  <div
-                    className={`grid gap-3 px-6 py-5 sm:grid-cols-[0.4fr_0.6fr] ${
-                      index !== specifications.length - 1
-                        ? "border-b border-vextro-border"
-                        : ""
-                    }`}
-                    key={key}
-                  >
-                    <span className="text-sm font-bold text-vextro-muted">
-                      {formatSpecificationLabel(key)}
-                    </span>
-
-                    <strong className="text-sm leading-6 text-vextro-ink">
-                      {formatSpecificationValue(value)}
-                    </strong>
-                  </div>
-                ),
-              )}
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      <section className="border-y border-vextro-border bg-white py-14 sm:py-18">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <span className="text-xs font-black uppercase tracking-[0.18em] text-vextro-primary">
-            Cross-Platform Comparison
-          </span>
-
-          <div className="mt-3 flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
+        <section className="mt-10">
+          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
             <div>
-              <h2 className="text-3xl font-black tracking-tight text-vextro-ink">
-                Marketplace listings
+              <span className="text-xs font-black uppercase tracking-[0.18em] text-vextro-primary">
+                Marketplace Comparison
+              </span>
+
+              <h2 className="mt-3 text-3xl font-black tracking-tight text-vextro-ink sm:text-4xl">
+                Compare current offers
               </h2>
 
-              <p className="mt-3 max-w-2xl text-sm leading-7 text-vextro-muted">
-                Compare current price, seller, rating,
-                availability and warranty across supported
-                marketplaces.
+              <p className="mt-3 text-sm leading-7 text-vextro-muted">
+                Prices, availability and seller information are
+                loaded from the VEXTRO marketplace catalog.
               </p>
             </div>
 
-            <span className="rounded-full bg-vextro-canvas px-4 py-2 text-xs font-black text-vextro-muted">
-              Sorted by lowest price
+            <span className="rounded-full border border-vextro-border bg-white px-4 py-2 text-xs font-black text-vextro-muted">
+              {listingResponse?.total || 0} offers
             </span>
           </div>
 
-          {sortedListings.length > 0 ? (
-            <div className="mt-8 grid gap-6 lg:grid-cols-2">
-              {sortedListings.map((listing) => (
-                <MarketplaceListingCard
-                  key={listing.id}
-                  listing={listing}
-                  platform={
-                    platformById[listing.platform_id]
-                  }
-                  isLowestPrice={
-                    listing.id === lowestListingId
-                  }
-                />
-              ))}
+          {listings.length > 0 ? (
+            <div className="mt-7 grid gap-5">
+              {listings
+                .slice()
+                .sort(
+                  (firstListing, secondListing) =>
+                    (toFiniteNumber(
+                      firstListing.current_price,
+                    ) ?? Number.MAX_VALUE) -
+                    (toFiniteNumber(
+                      secondListing.current_price,
+                    ) ?? Number.MAX_VALUE),
+                )
+                .map((listing) => (
+                  <MarketplaceListingCard
+                    key={listing.id}
+                    listing={listing}
+                    platformName={
+                      platformNames.get(
+                        listing.platform_id,
+                      ) ||
+                      `Platform ${listing.platform_id}`
+                    }
+                    isLowest={
+                      listing.id === lowestListing?.id
+                    }
+                  />
+                ))}
             </div>
           ) : (
-            <div className="mt-8 grid min-h-72 place-content-center justify-items-center rounded-3xl border border-dashed border-slate-300 bg-vextro-canvas p-8 text-center">
-              <span className="text-4xl">🛒</span>
-
-              <h3 className="mt-5 text-xl font-black text-vextro-ink">
-                No marketplace listings available
+            <div className="mt-7 rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center">
+              <h3 className="text-xl font-black text-vextro-ink">
+                No marketplace listings found
               </h3>
 
-              <p className="mt-3 max-w-lg text-sm leading-7 text-vextro-muted">
-                Listings will appear after this product has been
-                matched with supported marketplace offers.
+              <p className="mt-2 text-sm text-vextro-muted">
+                Offers will appear after marketplace data is
+                imported.
               </p>
             </div>
           )}
-        </div>
-      </section>
+        </section>
 
-      <section className="py-14 sm:py-18">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <PriceHistoryPanel
-            history={priceHistory}
-            platformById={platformById}
-          />
-        </div>
-      </section>
-    </div>
+        <section className="mt-10 rounded-3xl border border-vextro-border bg-white p-6 shadow-sm sm:p-9">
+          <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
+            <div>
+              <span className="text-xs font-black uppercase tracking-[0.18em] text-vextro-primary">
+                Price Intelligence
+              </span>
+
+              <h2 className="mt-3 text-3xl font-black tracking-tight text-vextro-ink sm:text-4xl">
+                Historical price movement
+              </h2>
+
+              <p className="mt-3 text-sm leading-7 text-vextro-muted">
+                Every marketplace snapshot is preserved instead
+                of replacing previous prices.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-xl bg-vextro-canvas p-3 text-center">
+                <span className="block text-[9px] font-black uppercase text-vextro-muted">
+                  Minimum
+                </span>
+
+                <strong className="mt-1 block text-xs font-black text-emerald-600">
+                  {formatPrice(
+                    historicalMinimum,
+                    defaultCurrency,
+                  )}
+                </strong>
+              </div>
+
+              <div className="rounded-xl bg-vextro-canvas p-3 text-center">
+                <span className="block text-[9px] font-black uppercase text-vextro-muted">
+                  Average
+                </span>
+
+                <strong className="mt-1 block text-xs font-black text-vextro-primary">
+                  {formatPrice(
+                    historicalAverage,
+                    defaultCurrency,
+                  )}
+                </strong>
+              </div>
+
+              <div className="rounded-xl bg-vextro-canvas p-3 text-center">
+                <span className="block text-[9px] font-black uppercase text-vextro-muted">
+                  Maximum
+                </span>
+
+                <strong className="mt-1 block text-xs font-black text-red-600">
+                  {formatPrice(
+                    historicalMaximum,
+                    defaultCurrency,
+                  )}
+                </strong>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-8">
+            <PriceHistoryChart history={priceHistory} />
+          </div>
+        </section>
+
+        {specifications.length > 0 ? (
+          <section className="mt-10 rounded-3xl border border-vextro-border bg-white p-7 shadow-sm sm:p-9">
+            <span className="text-xs font-black uppercase tracking-[0.18em] text-vextro-primary">
+              Product Information
+            </span>
+
+            <h2 className="mt-3 text-3xl font-black tracking-tight text-vextro-ink">
+              Specifications
+            </h2>
+
+            <dl className="mt-7 grid gap-px overflow-hidden rounded-2xl border border-vextro-border bg-vextro-border sm:grid-cols-2">
+              {specifications.map(
+                ([attribute, value]) => (
+                  <div
+                    className="flex items-center justify-between gap-5 bg-white p-5"
+                    key={attribute}
+                  >
+                    <dt className="text-sm font-bold text-vextro-muted">
+                      {formatAttributeLabel(attribute)}
+                    </dt>
+
+                    <dd className="text-right text-sm font-black text-vextro-ink">
+                      {typeof value === "object"
+                        ? JSON.stringify(value)
+                        : String(value)}
+                    </dd>
+                  </div>
+                ),
+              )}
+            </dl>
+          </section>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
