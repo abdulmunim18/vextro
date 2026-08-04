@@ -12,6 +12,7 @@ import UnauthorizedPage from "../pages/UnauthorizedPage";
 import GuestRoute from "./GuestRoute";
 import ProtectedRoute from "./ProtectedRoute";
 import PriceAlertsPage from "../pages/PriceAlertsPage";
+import DashboardPage from "../pages/DashboardPage";
 
 function AppRoutes() {
   return (
@@ -55,16 +56,10 @@ function AppRoutes() {
             />
           }
         >
-          <Route
-            path="dashboard"
-            element={
-              <PlaceholderPage
-                eyebrow="User Dashboard"
-                title="Your ecommerce intelligence dashboard"
-                description="Saved products, recent searches, price changes and account information will appear here."
-              />
-            }
-          />
+        <Route
+       path="dashboard"
+        element={<DashboardPage />}
+        />
         </Route>
 
         {/* Consumer and Admin routes */}
