@@ -1,5 +1,6 @@
 import apiClient from "../api/httpClient";
 
+
 export async function getAdminDashboard() {
   const response = await apiClient.get(
     "/admin/dashboard",
@@ -8,9 +9,8 @@ export async function getAdminDashboard() {
   return response.data;
 }
 
-export async function getAdminUsers(
-  params = {},
-) {
+
+export async function getAdminUsers(params = {}) {
   const response = await apiClient.get(
     "/admin/users",
     {
@@ -21,6 +21,7 @@ export async function getAdminUsers(
   return response.data;
 }
 
+
 export async function updateAdminUserStatus(
   userId,
   isActive,
@@ -29,6 +30,45 @@ export async function updateAdminUserStatus(
     `/admin/users/${userId}/status`,
     {
       is_active: isActive,
+    },
+  );
+
+  return response.data;
+}
+
+
+export async function getAdminProducts(params = {}) {
+  const response = await apiClient.get(
+    "/admin/products",
+    {
+      params,
+    },
+  );
+
+  return response.data;
+}
+
+
+export async function updateAdminProductStatus(
+  productId,
+  isActive,
+) {
+  const response = await apiClient.patch(
+    `/admin/products/${productId}/status`,
+    {
+      is_active: isActive,
+    },
+  );
+
+  return response.data;
+}
+
+
+export async function getAdminListings(params = {}) {
+  const response = await apiClient.get(
+    "/admin/listings",
+    {
+      params,
     },
   );
 
