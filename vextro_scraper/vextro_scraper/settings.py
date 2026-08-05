@@ -59,7 +59,10 @@ DOWNLOAD_DELAY = 1
 # Configure item pipelines
 # See https://docs.scrapy.org/en/latest/topics/item-pipeline.html
 ITEM_PIPELINES = {
+    # Runs first (300) to format strings and numbers
     "vextro_scraper.pipelines.VextroCleaningPipeline": 300,
+    # Runs second (400) to send the clean data to FastAPI
+    "vextro_scraper.pipelines.VextroApiIngestionPipeline": 400,
 }
 
 # Enable and configure the AutoThrottle extension (disabled by default)
