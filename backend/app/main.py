@@ -7,8 +7,12 @@ from app.core.config import settings
 
 from app.api.routes.access import router as access_router
 
+from app.api.routes.admin import router as admin_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.catalog import router as catalog_router
+from app.api.routes.admin_catalog import (
+    router as admin_catalog_router,
+)
 from app.api.routes.price_intelligence import (
     router as price_intelligence_router,
 )
@@ -43,6 +47,8 @@ app.include_router(catalog_router)
 app.include_router(product_catalog_router)
 app.include_router(price_alerts_router)
 app.include_router(price_intelligence_router)
+app.include_router(admin_router)
+app.include_router(admin_catalog_router)
 
 @app.get("/", tags=["Root"])
 def root() -> dict[str, str]:
