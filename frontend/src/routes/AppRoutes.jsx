@@ -4,7 +4,6 @@ import MainLayout from "../layouts/MainLayout";
 import HomePage from "../pages/HomePage";
 import LoginPage from "../pages/LoginPage";
 import NotFoundPage from "../pages/NotFoundPage";
-import PlaceholderPage from "../pages/PlaceholderPage";
 import ProductDetailPage from "../pages/ProductDetailPage";
 import ProductsPage from "../pages/ProductsPage";
 import RegisterPage from "../pages/RegisterPage";
@@ -12,6 +11,7 @@ import UnauthorizedPage from "../pages/UnauthorizedPage";
 import GuestRoute from "./GuestRoute";
 import ProtectedRoute from "./ProtectedRoute";
 import PriceAlertsPage from "../pages/PriceAlertsPage";
+import AdminPage from "../pages/AdminPage";
 import DashboardPage from "../pages/DashboardPage";
 
 function AppRoutes() {
@@ -87,16 +87,10 @@ function AppRoutes() {
             />
           }
         >
-          <Route
-            path="admin"
-            element={
-              <PlaceholderPage
-                eyebrow="Administration"
-                title="VEXTRO Admin Panel"
-                description="Manage users, products, marketplace listings and system activity."
-              />
-            }
-          />
+         <Route
+  path="admin"
+  element={<AdminPage />}
+/>
         </Route>
 
         {/* Error routes */}
