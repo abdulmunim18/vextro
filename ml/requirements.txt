@@ -1,0 +1,8 @@
+# Add ML dependencies here module by module.
+# Example future packages:
+# pandas
+# numpy
+# scikit-learn
+# statsmodels
+# transformers
+# pytest
