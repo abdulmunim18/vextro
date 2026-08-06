@@ -11,6 +11,7 @@ from app.models.role import Role
 from app.models.seller import Seller
 from app.models.user import User
 from app.models.user_role import user_roles
+
 from app.models.product_image import ProductImage
 __all__ = [
     "Brand",
@@ -28,3 +29,7 @@ __all__ = [
     "User",
     "user_roles",
 ]
+from app.models.business_product import BusinessProduct
+from app.models.competitor_watchlist import CompetitorWatchlist
+from app.models.organization import Organization
+from app.models.organization_user import OrganizationUser
