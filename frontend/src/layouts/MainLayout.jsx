@@ -66,7 +66,15 @@ function MainLayout() {
       path: "/alerts",
     });
   }
-
+if (
+  isAuthenticated &&
+  hasRole("sme", "admin")
+) {
+  navigationItems.push({
+    label: "SME Workspace",
+    path: "/sme",
+  });
+}
   if (
     isAuthenticated &&
     hasRole("admin")
