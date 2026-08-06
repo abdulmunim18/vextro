@@ -128,3 +128,68 @@ export async function updateCompetitorWatchlistStatus(
 
   return response.data;
 }
+
+export async function uploadSalesImport(
+  organizationId,
+  file,
+) {
+  const formData = new FormData();
+
+  formData.append(
+    "file",
+    file,
+  );
+
+  const response = await apiClient.post(
+    `/sme/organizations/${organizationId}/sales/imports`,
+    formData,
+    {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+      timeout: 30000,
+    },
+  );
+
+  return response.data;
+}
+
+export async function getSalesImports(
+  organizationId,
+  params = {},
+) {
+  const response = await apiClient.get(
+    `/sme/organizations/${organizationId}/sales/imports`,
+    {
+      params,
+    },
+  );
+
+  return response.data;
+}
+
+export async function getSalesImport(
+  organizationId,
+  salesImportId,
+) {
+  const response = await apiClient.get(
+    `/sme/organizations/${organizationId}/sales/imports/${salesImportId}`,
+  );
+
+  return response.data;
+}
+
+export async function getSalesImportRecords(
+  organizationId,
+  salesImportId,
+  params = {},
+) {
+  const response = await apiClient.get(
+    `/sme/organizations/${organizationId}/sales/imports/${salesImportId}/records`,
+    {
+      params,
+    },
+  );
+
+  return response.data;
+}
