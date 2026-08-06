@@ -8,6 +8,8 @@ class SmartphoneItem(scrapy.Item):
     color = scrapy.Field()
     condition = scrapy.Field()
     warranty = scrapy.Field()
+    is_available = scrapy.Field()
+    external_id = scrapy.Field()
     
     # Time-Series Data (12-hour refresh cycle)
     price = scrapy.Field()
