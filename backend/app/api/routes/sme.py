@@ -3,8 +3,10 @@
 from fastapi import (
     APIRouter,
     Depends,
+    File,
     Path,
     Query,
+    UploadFile,
     status,
 )
 from sqlalchemy.orm import Session
@@ -26,6 +28,13 @@ from app.schemas.sme import (
     OrganizationResponse,
     OrganizationUpdate,
 )
+from app.schemas.sales import (
+    SalesImportListResponse,
+    SalesImportResponse,
+    SalesImportResultResponse,
+    SalesRecordListResponse,
+)
+from app.services.sales_service import SalesService
 from app.services.sme_service import SMEService
 
 
@@ -36,6 +45,7 @@ router = APIRouter(
 
 
 sme_service = SMEService()
+sales_service = SalesService()
 
 
 @router.post(
@@ -374,4 +384,168 @@ def update_competitor_watchlist_status_endpoint(
         watchlist_id=watchlist_id,
         user_id=current_user.id,
         payload=payload,
+    )
+
+
+@router.post(
+    (
+        "/organizations/{organization_id}"
+        "/sales/imports"
+    ),
+    response_model=SalesImportResultResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_sales_csv_endpoint(
+    organization_id: int = Path(
+        ge=1,
+        description="Organization ID.",
+    ),
+    file: UploadFile = File(
+        description=(
+            "UTF-8 CSV containing SME sales rows."
+        ),
+    ),
+    current_user: User = Depends(
+        sme_or_admin,
+    ),
+    database_session: Session = Depends(
+        get_db,
+    ),
+) -> SalesImportResultResponse:
+    """Upload, validate and store one SME sales CSV."""
+
+    try:
+        file_content = await file.read()
+        original_filename = file.filename
+
+    finally:
+        await file.close()
+
+    return sales_service.process_csv_import(
+        database_session,
+        organization_id=organization_id,
+        user_id=current_user.id,
+        filename=original_filename,
+        file_content=file_content,
+    )
+
+
+@router.get(
+    (
+        "/organizations/{organization_id}"
+        "/sales/imports"
+    ),
+    response_model=SalesImportListResponse,
+)
+def list_sales_imports_endpoint(
+    organization_id: int = Path(
+        ge=1,
+        description="Organization ID.",
+    ),
+    page: int = Query(
+        default=1,
+        ge=1,
+        description="Pagination page.",
+    ),
+    page_size: int = Query(
+        default=10,
+        ge=1,
+        le=100,
+        description="Items returned per page.",
+    ),
+    current_user: User = Depends(
+        sme_or_admin,
+    ),
+    database_session: Session = Depends(
+        get_db,
+    ),
+) -> SalesImportListResponse:
+    """Return paginated sales imports for an organization."""
+
+    return sales_service.list_sales_imports(
+        database_session,
+        organization_id=organization_id,
+        user_id=current_user.id,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get(
+    (
+        "/organizations/{organization_id}"
+        "/sales/imports/{sales_import_id}"
+    ),
+    response_model=SalesImportResponse,
+)
+def read_sales_import_endpoint(
+    organization_id: int = Path(
+        ge=1,
+        description="Organization ID.",
+    ),
+    sales_import_id: int = Path(
+        ge=1,
+        description="Sales import ID.",
+    ),
+    current_user: User = Depends(
+        sme_or_admin,
+    ),
+    database_session: Session = Depends(
+        get_db,
+    ),
+) -> SalesImportResponse:
+    """Return one sales import belonging to an organization."""
+
+    return sales_service.read_sales_import(
+        database_session,
+        organization_id=organization_id,
+        sales_import_id=sales_import_id,
+        user_id=current_user.id,
+    )
+
+
+@router.get(
+    (
+        "/organizations/{organization_id}"
+        "/sales/imports/{sales_import_id}"
+        "/records"
+    ),
+    response_model=SalesRecordListResponse,
+)
+def list_sales_records_endpoint(
+    organization_id: int = Path(
+        ge=1,
+        description="Organization ID.",
+    ),
+    sales_import_id: int = Path(
+        ge=1,
+        description="Sales import ID.",
+    ),
+    page: int = Query(
+        default=1,
+        ge=1,
+        description="Pagination page.",
+    ),
+    page_size: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+        description="Items returned per page.",
+    ),
+    current_user: User = Depends(
+        sme_or_admin,
+    ),
+    database_session: Session = Depends(
+        get_db,
+    ),
+) -> SalesRecordListResponse:
+    """Return accepted sales records from one import."""
+
+    return sales_service.list_sales_records(
+        database_session,
+        organization_id=organization_id,
+        sales_import_id=sales_import_id,
+        user_id=current_user.id,
+        page=page,
+        page_size=page_size,
     )
