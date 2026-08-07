@@ -1,0 +1,7 @@
+# Add scraper dependencies here when implementation starts.
+# Example future packages:
+# requests
+# beautifulsoup4
+# pydantic
+# pydantic-settings
+# pytest
