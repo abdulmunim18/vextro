@@ -8,6 +8,9 @@ from decimal import Decimal
 from app.core.database import get_db
 from app.models.product_listing import ProductListing
 from app.models.canonical_product import CanonicalProduct
+from app.models.product_variant import ProductVariant
+from app.models.platform import Platform
+from app.models.category import Category
 from app.models.price_history import PriceHistory
 
 # Create the router for the ingestion URL
@@ -55,21 +58,54 @@ def ingest_priceoye_listing(payload: ScrapedItemPayload, db: Session = Depends(g
             return {"status": "success", "action": "updated", "listing_id": listing.id}
 
         else:
-            # 3. Create a brand new Canonical Product if we have never seen it before
+            # 3. Ensure Platform exists
+            platform = db.query(Platform).filter(Platform.code == "priceoye").first()
+            if not platform:
+                platform = Platform(
+                    name="PriceOye",
+                    code="priceoye",
+                    base_url="https://priceoye.pk",
+                    is_active=True
+                )
+                db.add(platform)
+                db.flush()
+
+            # 4. Ensure Category exists
+            category = db.query(Category).filter(Category.slug == "smartphones").first()
+            if not category:
+                category = Category(
+                    name="Smartphones",
+                    slug="smartphones",
+                    is_active=True
+                )
+                db.add(category)
+                db.flush()
+
+            # 5. Create a brand new Canonical Product
             canonical = CanonicalProduct(
-                category_id=1,  # Temporary default category ID
+                category_id=category.id,
                 name=payload.model,
                 slug=payload.external_id,
                 model=payload.model,
                 specifications={"color": payload.color, "variant": payload.variant}
             )
             db.add(canonical)
-            db.flush() 
+            db.flush()
 
-            # 4. Create the attached Product Listing for PriceOye
+            # 6. Create the Product Variant configuration
+            variant = ProductVariant(
+                canonical_product_id=canonical.id,
+                color=payload.color if payload.color and payload.color != "N/A" else None,
+                condition="new",
+                variant_attributes={"raw_variant": payload.variant}
+            )
+            db.add(variant)
+            db.flush()
+
+            # 7. Create the attached Product Listing for PriceOye
             new_listing = ProductListing(
-                platform_id=1,  # Temporary default ID for PriceOye
-                product_variant_id=canonical.id,
+                platform_id=platform.id,
+                product_variant_id=variant.id,
                 external_id=payload.external_id,
                 title=payload.model,
                 product_url=payload.product_url,
@@ -80,6 +116,15 @@ def ingest_priceoye_listing(payload: ScrapedItemPayload, db: Session = Depends(g
                 raw_payload=payload.dict()
             )
             db.add(new_listing)
+            db.flush()
+
+            # 8. Record initial price history entry
+            history_entry = PriceHistory(
+                listing_id=new_listing.id,
+                price=Decimal(str(payload.price)),
+                captured_at=datetime.utcnow()
+            )
+            db.add(history_entry)
             db.commit()
             
             return {"status": "success", "action": "created", "listing_id": new_listing.id}
