@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from app.api.routes import ingest
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes.product_catalog import router as product_catalog_router
 
@@ -49,10 +50,7 @@ app.include_router(catalog_router)
 app.include_router(product_catalog_router)
 app.include_router(price_alerts_router)
 app.include_router(price_intelligence_router)
-app.include_router(admin_router)
-app.include_router(admin_catalog_router)
-app.include_router(acquisition_router)
-app.include_router(sme_router)
+app.include_router(ingest.router, prefix="/api/v1")
 
 @app.get("/", tags=["Root"])
 def root() -> dict[str, str]:
