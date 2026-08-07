@@ -1,5 +1,3 @@
-"""Integration tests for marketplace acquisition ingestion."""
-
 from collections.abc import Generator
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -28,10 +26,6 @@ from app.models.seller import Seller
 
 ENDPOINT = (
     "/api/v1/internal/acquisition/listings"
-)
-
-MATCH_ENDPOINT = (
-    "/api/v1/internal/acquisition/match-product"
 )
 
 MATCH_ENDPOINT = (
@@ -599,6 +593,7 @@ def test_ingestion_updates_existing_listing(
     assert seller.name == (
         "Updated Acquisition Test Seller"
     )
+
 def test_product_match_returns_correct_variant(
     client: TestClient,
     acquisition_context: dict[str, object],
@@ -772,3 +767,320 @@ def test_product_match_rejects_invalid_ingestion_key(
     assert response.json() == {
         "detail": "Invalid ingestion key.",
     }
+
+
+def test_product_match_to_ingestion_to_price_intelligence_e2e(
+    client: TestClient,
+    acquisition_context: dict[str, object],
+) -> None:
+    """Complete marketplace matching and acquisition pipeline."""
+
+    token = str(
+        acquisition_context["token"]
+    )
+
+    marketplace_title = (
+        f"Samsung Acquisition Test Phone "
+        f"{token} "
+        f"ACQ-{token} "
+        "8GB RAM 256GB Black"
+    )
+
+    # Step 1: Resolve the scraper title to a VEXTRO variant.
+    match_response = client.post(
+        MATCH_ENDPOINT,
+        headers=ingestion_headers(),
+        json={
+            "title": marketplace_title,
+        },
+    )
+
+    assert match_response.status_code == 200
+
+    match_body = match_response.json()
+
+    assert match_body["matched"] is True
+
+    matched_variant_id = (
+        match_body["product_variant_id"]
+    )
+
+    matched_product_id = (
+        match_body["canonical_product_id"]
+    )
+
+    assert matched_variant_id == (
+        acquisition_context["variant_id"]
+    )
+
+    assert matched_product_id == (
+        acquisition_context["product_id"]
+    )
+
+    # Step 2: Pass the matcher result into acquisition ingestion.
+    ingestion_payload = build_payload(
+        acquisition_context,
+        current_price=124999.0,
+    )
+
+    ingestion_payload[
+        "product_variant_id"
+    ] = matched_variant_id
+
+    ingestion_payload["title"] = (
+        marketplace_title
+    )
+
+    ingestion_response = client.post(
+        ENDPOINT,
+        headers=ingestion_headers(),
+        json=ingestion_payload,
+    )
+
+    assert ingestion_response.status_code == 201
+
+    ingestion_body = ingestion_response.json()
+
+    assert ingestion_body["status"] == "created"
+
+    assert (
+        ingestion_body["listing_created"]
+        is True
+    )
+
+    assert (
+        ingestion_body["price_history_created"]
+        is True
+    )
+
+    assert ingestion_body["listing_id"] is not None
+
+    assert (
+        ingestion_body["price_history_id"]
+        is not None
+    )
+
+    listing_id = ingestion_body["listing_id"]
+
+    # Step 3: Verify the ingested price through
+    # the consumer Price Intelligence API.
+    price_response = client.get(
+        (
+            f"/api/v1/products/"
+            f"{matched_product_id}/price-history"
+        )
+    )
+
+    assert price_response.status_code == 200
+
+    price_body = price_response.json()
+
+    assert (
+        price_body["product_id"]
+        == matched_product_id
+    )
+
+    assert price_body["total_listings"] == 1
+    assert price_body["total_points"] == 1
+
+    assert len(price_body["listings"]) == 1
+
+    listing = price_body["listings"][0]
+
+    assert listing["listing_id"] == listing_id
+
+    summary = listing["summary"]
+
+    assert Decimal(
+        str(summary["current_price"])
+    ) == Decimal("124999.00")
+
+    assert Decimal(
+        str(summary["lowest_price"])
+    ) == Decimal("124999.00")
+
+    assert Decimal(
+        str(summary["highest_price"])
+    ) == Decimal("124999.00")
+
+    assert Decimal(
+        str(summary["average_price"])
+    ) == Decimal("124999.00")
+
+    assert len(listing["points"]) == 1
+
+    assert Decimal(
+        str(listing["points"][0]["price"])
+    ) == Decimal("124999.00")
+
+    # Step 4: Simulate a later scraper run with a changed price.
+    second_capture_time = (
+        BASE_CAPTURE_TIME
+        + timedelta(hours=12)
+    )
+
+    second_payload = build_payload(
+        acquisition_context,
+        captured_at=second_capture_time,
+        current_price=119999.0,
+    )
+
+    # The scraper must keep using the ID returned by matching.
+    second_payload[
+        "product_variant_id"
+    ] = matched_variant_id
+
+    second_payload["title"] = (
+        marketplace_title
+    )
+
+    update_response = client.post(
+        ENDPOINT,
+        headers=ingestion_headers(),
+        json=second_payload,
+    )
+
+    assert update_response.status_code == 200
+
+    update_body = update_response.json()
+
+    assert update_body["status"] == "updated"
+
+    assert (
+        update_body["listing_created"]
+        is False
+    )
+
+    assert (
+        update_body["price_history_created"]
+        is True
+    )
+
+    assert (
+        update_body["listing_id"]
+        == listing_id
+    )
+
+    # Step 5: Price Intelligence must now expose both captures.
+    updated_price_response = client.get(
+        (
+            f"/api/v1/products/"
+            f"{matched_product_id}/price-history"
+        )
+    )
+
+    assert updated_price_response.status_code == 200
+
+    updated_price_body = (
+        updated_price_response.json()
+    )
+
+    assert (
+        updated_price_body["total_listings"]
+        == 1
+    )
+
+    assert (
+        updated_price_body["total_points"]
+        == 2
+    )
+
+    updated_listing = (
+        updated_price_body["listings"][0]
+    )
+
+    assert (
+        updated_listing["listing_id"]
+        == listing_id
+    )
+
+    updated_summary = (
+        updated_listing["summary"]
+    )
+
+    assert Decimal(
+        str(updated_summary["current_price"])
+    ) == Decimal("119999.00")
+
+    assert Decimal(
+        str(updated_summary["lowest_price"])
+    ) == Decimal("119999.00")
+
+    assert Decimal(
+        str(updated_summary["highest_price"])
+    ) == Decimal("124999.00")
+
+    assert Decimal(
+        str(updated_summary["average_price"])
+    ) == Decimal("122499.00")
+
+    returned_prices = [
+        Decimal(str(point["price"]))
+        for point in updated_listing["points"]
+    ]
+
+    assert returned_prices == [
+        Decimal("124999.00"),
+        Decimal("119999.00"),
+    ]
+
+    # Step 6: Sending the same capture again must be idempotent.
+    duplicate_response = client.post(
+        ENDPOINT,
+        headers=ingestion_headers(),
+        json=second_payload,
+    )
+
+    assert duplicate_response.status_code == 200
+
+    duplicate_body = (
+        duplicate_response.json()
+    )
+
+    assert (
+        duplicate_body["status"]
+        == "duplicate"
+    )
+
+    assert (
+        duplicate_body["listing_created"]
+        is False
+    )
+
+    assert (
+        duplicate_body["price_history_created"]
+        is False
+    )
+
+    assert (
+        duplicate_body["listing_id"]
+        == listing_id
+    )
+
+    # Step 7: Duplicate ingestion must not create a third point.
+    final_price_response = client.get(
+        (
+            f"/api/v1/products/"
+            f"{matched_product_id}/price-history"
+        )
+    )
+
+    assert final_price_response.status_code == 200
+
+    final_price_body = (
+        final_price_response.json()
+    )
+
+    assert (
+        final_price_body["total_points"]
+        == 2
+    )
+
+    assert (
+        len(
+            final_price_body[
+                "listings"
+            ][0]["points"]
+        )
+        == 2
+    )
