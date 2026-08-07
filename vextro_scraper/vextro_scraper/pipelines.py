@@ -29,17 +29,19 @@ import logging
 
 class VextroApiIngestionPipeline:
     def __init__(self):
-        # This is the local URL your backend team will create.
-        # Once deployed, this will change to your live server URL.
-        self.api_url = 'http://localhost:8000/api/v1/ingest/priceoye'
+        # Base URL, the platform will be appended dynamically
+        self.base_api_url = 'http://localhost:8000/api/v1/ingest/'
 
     def process_item(self, item, spider):
         # Convert Scrapy item to a standard dictionary
         payload = dict(item)
+        
+        platform_code = payload.get('platform', 'unknown').lower()
+        api_url = f"{self.base_api_url}{platform_code}"
 
         try:
             # Fire the data to the backend via POST request
-            response = requests.post(self.api_url, json=payload, timeout=5)
+            response = requests.post(api_url, json=payload, timeout=5)
 
             # Log success or failure directly in your VS Code terminal
             if response.status_code in [200, 201]:

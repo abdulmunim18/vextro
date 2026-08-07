@@ -30,8 +30,8 @@ class ScrapedItemPayload(BaseModel):
     is_available: bool
     warranty: Optional[str] = "Official Brand Warranty"
 
-@router.post("/priceoye", status_code=status.HTTP_201_CREATED)
-def ingest_priceoye_listing(payload: ScrapedItemPayload, db: Session = Depends(get_db)):
+@router.post("/{platform_code}", status_code=status.HTTP_201_CREATED)
+def ingest_listing(platform_code: str, payload: ScrapedItemPayload, db: Session = Depends(get_db)):
     try:
         # 1. Search for an existing listing using the unique slug (external_id)
         listing = db.query(ProductListing).filter(
@@ -59,12 +59,18 @@ def ingest_priceoye_listing(payload: ScrapedItemPayload, db: Session = Depends(g
 
         else:
             # 3. Ensure Platform exists
-            platform = db.query(Platform).filter(Platform.code == "priceoye").first()
+            platform = db.query(Platform).filter(Platform.code == platform_code).first()
             if not platform:
+                # Auto-resolve basic platform info
+                platform_info = {
+                    "priceoye": {"name": "PriceOye", "base_url": "https://priceoye.pk"},
+                    "daraz": {"name": "Daraz", "base_url": "https://daraz.pk"}
+                }.get(platform_code, {"name": platform_code.capitalize(), "base_url": f"https://{platform_code}.com"})
+                
                 platform = Platform(
-                    name="PriceOye",
-                    code="priceoye",
-                    base_url="https://priceoye.pk",
+                    name=platform_info["name"],
+                    code=platform_code,
+                    base_url=platform_info["base_url"],
                     is_active=True
                 )
                 db.add(platform)
@@ -81,26 +87,44 @@ def ingest_priceoye_listing(payload: ScrapedItemPayload, db: Session = Depends(g
                 db.add(category)
                 db.flush()
 
-            # 5. Create a brand new Canonical Product
-            canonical = CanonicalProduct(
-                category_id=category.id,
-                name=payload.model,
-                slug=payload.external_id,
-                model=payload.model,
-                specifications={"color": payload.color, "variant": payload.variant}
-            )
-            db.add(canonical)
-            db.flush()
+            # 5. Get or Create a Canonical Product
+            # Daraz and PriceOye might have the same model name, or Daraz might have multiple items with same model.
+            # Truncate to match database schema limits (model=120, name=255)
+            model_clean = payload.model[:120]
+            name_clean = payload.model[:255]
+            
+            canonical = db.query(CanonicalProduct).filter(CanonicalProduct.model == model_clean).first()
+            
+            if not canonical:
+                # Ensure slug uniqueness by prefixing platform code if needed, 
+                # but external_id is usually unique enough. Let's use platform_code + external_id
+                unique_slug = f"{platform_code}-{payload.external_id}"
+                canonical = CanonicalProduct(
+                    category_id=category.id,
+                    name=name_clean,
+                    slug=unique_slug,
+                    model=model_clean,
+                    specifications={"color": payload.color, "variant": payload.variant}
+                )
+                db.add(canonical)
+                db.flush()
 
-            # 6. Create the Product Variant configuration
-            variant = ProductVariant(
-                canonical_product_id=canonical.id,
-                color=payload.color if payload.color and payload.color != "N/A" else None,
-                condition="new",
-                variant_attributes={"raw_variant": payload.variant}
-            )
-            db.add(variant)
-            db.flush()
+            # 6. Get or Create the Product Variant configuration
+            # A canonical product might already have this variant
+            variant = db.query(ProductVariant).filter(
+                ProductVariant.canonical_product_id == canonical.id,
+                ProductVariant.color == (payload.color if payload.color and payload.color != "N/A" else None)
+            ).first()
+
+            if not variant:
+                variant = ProductVariant(
+                    canonical_product_id=canonical.id,
+                    color=payload.color if payload.color and payload.color != "N/A" else None,
+                    condition="new",
+                    variant_attributes={"raw_variant": payload.variant}
+                )
+                db.add(variant)
+                db.flush()
 
             # 7. Create the attached Product Listing for PriceOye
             new_listing = ProductListing(
