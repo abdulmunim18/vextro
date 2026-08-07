@@ -643,3 +643,324 @@ def test_another_sme_cannot_access_sales_import(
     )
 
     assert records_response.status_code == 404
+def test_sales_analytics_returns_correct_totals_and_trends(
+    client: TestClient,
+    sales_context: dict[str, object],
+) -> None:
+    """Aggregate revenue, units, trends and product performance."""
+
+    headers = sales_context["headers"]
+    organization_id = int(
+        sales_context["organization_id"],
+    )
+    first_sku = str(
+        sales_context["sku"],
+    )
+
+    products_endpoint = (
+        f"{ORGANIZATIONS_ENDPOINT}/"
+        f"{organization_id}/products"
+    )
+
+    second_product_response = client.post(
+        products_endpoint,
+        headers=headers,
+        json={
+            "name": "Analytics Test Phone 2",
+            "sku": (
+                f"{first_sku}-SECOND"
+            ),
+            "cost_price": 40,
+            "selling_price": 50,
+            "currency": "PKR",
+            "stock_level": 30,
+            "reorder_level": 5,
+        },
+    )
+
+    assert second_product_response.status_code == 201
+
+    second_product = (
+        second_product_response.json()
+    )
+
+    second_sku = second_product["sku"]
+
+    csv_content = (
+        "sku,sale_date,quantity,unit_price,currency\n"
+        f"{first_sku},2026-08-01,2,100,PKR\n"
+        f"{first_sku},2026-08-02,1,150,PKR\n"
+        f"{second_sku},2026-08-02,3,50,PKR\n"
+    )
+
+    import_response = client.post(
+        sales_context["imports_endpoint"],
+        headers=headers,
+        files={
+            "file": (
+                "analytics-sales.csv",
+                csv_content,
+                "text/csv",
+            ),
+        },
+    )
+
+    assert import_response.status_code == 201
+
+    import_payload = import_response.json()
+
+    assert (
+        import_payload["sales_import"]["accepted_rows"]
+        == 3
+    )
+    assert (
+        import_payload["sales_import"]["rejected_rows"]
+        == 0
+    )
+
+    analytics_endpoint = (
+        f"{ORGANIZATIONS_ENDPOINT}/"
+        f"{organization_id}/sales/analytics"
+    )
+
+    response = client.get(
+        analytics_endpoint,
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+
+    assert payload["organization_id"] == organization_id
+    assert payload["currency"] == "PKR"
+    assert payload["start_date"] is None
+    assert payload["end_date"] is None
+
+    summary = payload["summary"]
+
+    assert float(summary["total_revenue"]) == 500.0
+    assert summary["total_units_sold"] == 6
+    assert summary["total_sales_records"] == 3
+    assert summary["products_sold"] == 2
+
+    assert round(
+        float(summary["average_selling_price"]),
+        2,
+    ) == 83.33
+
+    trend = payload["revenue_trend"]
+
+    assert len(trend) == 2
+
+    assert trend[0]["sale_date"] == "2026-08-01"
+    assert float(trend[0]["revenue"]) == 200.0
+    assert trend[0]["units_sold"] == 2
+    assert trend[0]["sales_records"] == 1
+
+    assert trend[1]["sale_date"] == "2026-08-02"
+    assert float(trend[1]["revenue"]) == 300.0
+    assert trend[1]["units_sold"] == 4
+    assert trend[1]["sales_records"] == 2
+
+    products = payload["product_performance"]
+
+    assert len(products) == 2
+
+    assert products[0]["sku"] == first_sku
+    assert float(products[0]["revenue"]) == 350.0
+    assert products[0]["units_sold"] == 3
+    assert products[0]["sales_records"] == 2
+
+    assert round(
+        float(
+            products[0][
+                "average_selling_price"
+            ],
+        ),
+        2,
+    ) == 116.67
+
+    assert products[1]["sku"] == second_sku
+    assert float(products[1]["revenue"]) == 150.0
+    assert products[1]["units_sold"] == 3
+    assert products[1]["sales_records"] == 1
+
+    assert round(
+        float(
+            products[1][
+                "average_selling_price"
+            ],
+        ),
+        2,
+    ) == 50.0
+
+
+def test_sales_analytics_supports_date_filtering(
+    client: TestClient,
+    sales_context: dict[str, object],
+) -> None:
+    """Filter organization analytics by inclusive dates."""
+
+    headers = sales_context["headers"]
+    organization_id = int(
+        sales_context["organization_id"],
+    )
+    sku = str(
+        sales_context["sku"],
+    )
+
+    csv_content = (
+        "sku,sale_date,quantity,unit_price,currency\n"
+        f"{sku},2026-08-01,1,100,PKR\n"
+        f"{sku},2026-08-02,2,200,PKR\n"
+        f"{sku},2026-08-03,3,300,PKR\n"
+    )
+
+    response = client.post(
+        sales_context["imports_endpoint"],
+        headers=headers,
+        files={
+            "file": (
+                "analytics-date-filter.csv",
+                csv_content,
+                "text/csv",
+            ),
+        },
+    )
+
+    assert response.status_code == 201
+
+    analytics_endpoint = (
+        f"{ORGANIZATIONS_ENDPOINT}/"
+        f"{organization_id}/sales/analytics"
+    )
+
+    response = client.get(
+        analytics_endpoint,
+        headers=headers,
+        params={
+            "start_date": "2026-08-02",
+            "end_date": "2026-08-02",
+        },
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+
+    assert payload["start_date"] == "2026-08-02"
+    assert payload["end_date"] == "2026-08-02"
+
+    summary = payload["summary"]
+
+    assert float(summary["total_revenue"]) == 400.0
+    assert summary["total_units_sold"] == 2
+    assert summary["total_sales_records"] == 1
+    assert summary["products_sold"] == 1
+
+    assert len(payload["revenue_trend"]) == 1
+
+    assert (
+        payload["revenue_trend"][0]["sale_date"]
+        == "2026-08-02"
+    )
+
+
+def test_sales_analytics_returns_empty_state(
+    client: TestClient,
+    sales_context: dict[str, object],
+) -> None:
+    """Return zero metrics when an organization has no sales."""
+
+    headers = sales_context["headers"]
+    organization_id = int(
+        sales_context["organization_id"],
+    )
+
+    analytics_endpoint = (
+        f"{ORGANIZATIONS_ENDPOINT}/"
+        f"{organization_id}/sales/analytics"
+    )
+
+    response = client.get(
+        analytics_endpoint,
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+    summary = payload["summary"]
+
+    assert float(summary["total_revenue"]) == 0.0
+    assert summary["total_units_sold"] == 0
+    assert summary["total_sales_records"] == 0
+    assert float(
+        summary["average_selling_price"],
+    ) == 0.0
+    assert summary["products_sold"] == 0
+
+    assert payload["revenue_trend"] == []
+    assert payload["product_performance"] == []
+
+
+def test_sales_analytics_rejects_invalid_date_range(
+    client: TestClient,
+    sales_context: dict[str, object],
+) -> None:
+    """Reject a start date later than the end date."""
+
+    headers = sales_context["headers"]
+    organization_id = int(
+        sales_context["organization_id"],
+    )
+
+    analytics_endpoint = (
+        f"{ORGANIZATIONS_ENDPOINT}/"
+        f"{organization_id}/sales/analytics"
+    )
+
+    response = client.get(
+        analytics_endpoint,
+        headers=headers,
+        params={
+            "start_date": "2026-08-10",
+            "end_date": "2026-08-01",
+        },
+    )
+
+    assert response.status_code == 422
+
+    assert response.json()["detail"] == (
+        "start_date cannot be later than end_date."
+    )
+
+
+def test_another_sme_cannot_access_sales_analytics(
+    client: TestClient,
+    sales_context: dict[str, object],
+) -> None:
+    """Hide another SME organization's analytics."""
+
+    organization_id = int(
+        sales_context["organization_id"],
+    )
+
+    other_headers = register_and_login(
+        client,
+        account_type="sme",
+        prefix="sales-analytics-other-sme",
+    )
+
+    analytics_endpoint = (
+        f"{ORGANIZATIONS_ENDPOINT}/"
+        f"{organization_id}/sales/analytics"
+    )
+
+    response = client.get(
+        analytics_endpoint,
+        headers=other_headers,
+    )
+
+    assert response.status_code == 404

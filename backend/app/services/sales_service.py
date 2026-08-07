@@ -17,6 +17,7 @@ from app.models.sales_import import SalesImport
 from app.repositories.sales_repository import SalesRepository
 from app.repositories.sme_repository import SMERepository
 from app.schemas.sales import (
+    SalesAnalyticsResponse,
     SalesCSVRowError,
     SalesImportListResponse,
     SalesImportResponse,
@@ -1183,5 +1184,75 @@ class SalesService:
                     record,
                 )
                 for record in records
+            ],
+        )
+
+    def get_sales_analytics(
+        self,
+        database_session: Session,
+        *,
+        organization_id: int,
+        user_id: int,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> SalesAnalyticsResponse:
+        """Return aggregated sales analytics for one organization."""
+
+        self._get_accessible_organization(
+            database_session,
+            organization_id=organization_id,
+            user_id=user_id,
+        )
+
+        if (
+            start_date is not None
+            and end_date is not None
+            and start_date > end_date
+        ):
+            raise HTTPException(
+                status_code=(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT
+                ),
+                detail=(
+                    "start_date cannot be later "
+                    "than end_date."
+                ),
+            )
+
+        analytics = (
+            self.repository.get_sales_analytics(
+                database_session,
+                organization_id=organization_id,
+                start_date=start_date,
+                end_date=end_date,
+            )
+        )
+
+        return SalesAnalyticsResponse(
+            organization_id=organization_id,
+            currency="PKR",
+            start_date=start_date,
+            end_date=end_date,
+            summary={
+                "total_revenue":
+                    analytics["total_revenue"],
+                "total_units_sold":
+                    analytics["total_units_sold"],
+                "total_sales_records":
+                    analytics[
+                        "total_sales_records"
+                    ],
+                "average_selling_price":
+                    analytics[
+                        "average_selling_price"
+                    ],
+                "products_sold":
+                    analytics["products_sold"],
+            },
+            revenue_trend=analytics[
+                "revenue_trend"
+            ],
+            product_performance=analytics[
+                "product_performance"
             ],
         )

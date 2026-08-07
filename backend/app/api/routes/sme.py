@@ -1,3 +1,4 @@
+from datetime import date
 """API routes for SME business intelligence."""
 
 from fastapi import (
@@ -29,6 +30,7 @@ from app.schemas.sme import (
     OrganizationUpdate,
 )
 from app.schemas.sales import (
+    SalesAnalyticsResponse,
     SalesImportListResponse,
     SalesImportResponse,
     SalesImportResultResponse,
@@ -548,4 +550,46 @@ def list_sales_records_endpoint(
         user_id=current_user.id,
         page=page,
         page_size=page_size,
+    )
+
+@router.get(
+    (
+        "/organizations/{organization_id}"
+        "/sales/analytics"
+    ),
+    response_model=SalesAnalyticsResponse,
+    summary="Read SME Sales Analytics",
+)
+def read_sales_analytics_endpoint(
+    organization_id: int = Path(
+        ge=1,
+        description="Organization ID.",
+    ),
+    start_date: date | None = Query(
+        default=None,
+        description=(
+            "Optional inclusive sales start date."
+        ),
+    ),
+    end_date: date | None = Query(
+        default=None,
+        description=(
+            "Optional inclusive sales end date."
+        ),
+    ),
+    current_user: User = Depends(
+        sme_or_admin,
+    ),
+    database_session: Session = Depends(
+        get_db,
+    ),
+) -> SalesAnalyticsResponse:
+    """Return aggregated sales analytics for one organization."""
+
+    return sales_service.get_sales_analytics(
+        database_session,
+        organization_id=organization_id,
+        user_id=current_user.id,
+        start_date=start_date,
+        end_date=end_date,
     )
