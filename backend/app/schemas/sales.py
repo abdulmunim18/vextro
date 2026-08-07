@@ -192,3 +192,117 @@ class SalesRecordListResponse(BaseModel):
     items: list[SalesRecordResponse] = Field(
         default_factory=list,
     )
+class SalesAnalyticsSummaryResponse(BaseModel):
+    """Headline sales metrics for one SME organization."""
+
+    total_revenue: Decimal = Field(
+        ge=0,
+        max_digits=18,
+        decimal_places=2,
+    )
+
+    total_units_sold: int = Field(
+        ge=0,
+    )
+
+    total_sales_records: int = Field(
+        ge=0,
+    )
+
+    average_selling_price: Decimal = Field(
+        ge=0,
+        max_digits=18,
+        decimal_places=2,
+    )
+
+    products_sold: int = Field(
+        ge=0,
+    )
+
+
+class SalesRevenueTrendPointResponse(BaseModel):
+    """Aggregated sales metrics for one calendar date."""
+
+    sale_date: date
+
+    revenue: Decimal = Field(
+        ge=0,
+        max_digits=18,
+        decimal_places=2,
+    )
+
+    units_sold: int = Field(
+        ge=0,
+    )
+
+    sales_records: int = Field(
+        ge=0,
+    )
+
+
+class SalesProductPerformanceResponse(BaseModel):
+    """Aggregated sales performance for one business product."""
+
+    business_product_id: int = Field(
+        ge=1,
+    )
+
+    product_name: str = Field(
+        min_length=1,
+        max_length=255,
+    )
+
+    sku: str | None = Field(
+        default=None,
+        max_length=120,
+    )
+
+    revenue: Decimal = Field(
+        ge=0,
+        max_digits=18,
+        decimal_places=2,
+    )
+
+    units_sold: int = Field(
+        ge=0,
+    )
+
+    sales_records: int = Field(
+        ge=0,
+    )
+
+    average_selling_price: Decimal = Field(
+        ge=0,
+        max_digits=18,
+        decimal_places=2,
+    )
+
+
+class SalesAnalyticsResponse(BaseModel):
+    """Sales analytics for one SME organization."""
+
+    organization_id: int = Field(
+        ge=1,
+    )
+
+    currency: str = Field(
+        min_length=3,
+        max_length=3,
+    )
+
+    start_date: date | None = None
+    end_date: date | None = None
+
+    summary: SalesAnalyticsSummaryResponse
+
+    revenue_trend: list[
+        SalesRevenueTrendPointResponse
+    ] = Field(
+        default_factory=list,
+    )
+
+    product_performance: list[
+        SalesProductPerformanceResponse
+    ] = Field(
+        default_factory=list,
+    )
