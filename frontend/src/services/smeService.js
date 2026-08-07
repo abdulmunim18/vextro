@@ -193,3 +193,16 @@ export async function getSalesImportRecords(
 
   return response.data;
 }
+export const getSalesAnalytics = async (
+  organizationId,
+  params = {},
+) => {
+  const response = await apiClient.get(
+    `/sme/organizations/${organizationId}/sales/analytics`,
+    {
+      params,
+    },
+  );
+
+  return response.data;
+};
