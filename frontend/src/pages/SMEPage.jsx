@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import SMEBusinessProducts from "../components/SMEBusinessProducts";
 import SMECompetitorWatchlist from "../components/SMECompetitorWatchlist";
 import SMESalesImport from "../components/SMESalesImport";
+import SMESalesAnalytics from "../components/SMESalesAnalytics";
 import {
   createOrganization,
   getOrganizations,
@@ -607,6 +608,10 @@ function SMEPage() {
   organizationName={selectedOrganization.name}
 />
 <SMESalesImport
+  organizationId={selectedOrganization.id}
+  organizationName={selectedOrganization.name}
+/>
+<SMESalesAnalytics
   organizationId={selectedOrganization.id}
   organizationName={selectedOrganization.name}
 />
