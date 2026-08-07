@@ -30,6 +30,14 @@ ENDPOINT = (
     "/api/v1/internal/acquisition/listings"
 )
 
+MATCH_ENDPOINT = (
+    "/api/v1/internal/acquisition/match-product"
+)
+
+MATCH_ENDPOINT = (
+    "/api/v1/internal/acquisition/match-product"
+)
+
 TEST_INGESTION_KEY = (
     "VextroTestIngestionKey2026Secure"
 )
@@ -591,3 +599,176 @@ def test_ingestion_updates_existing_listing(
     assert seller.name == (
         "Updated Acquisition Test Seller"
     )
+def test_product_match_returns_correct_variant(
+    client: TestClient,
+    acquisition_context: dict[str, object],
+) -> None:
+    """Match a specific marketplace title to the expected variant."""
+
+    token = str(
+        acquisition_context["token"]
+    )
+
+    response = client.post(
+        MATCH_ENDPOINT,
+        headers=ingestion_headers(),
+        json={
+            "title": (
+                f"Acquisition Test Phone "
+                f"{token} "
+                "8GB 256GB Black"
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+
+    body = response.json()
+
+    assert body["matched"] is True
+
+    assert (
+        body["product_variant_id"]
+        == acquisition_context["variant_id"]
+    )
+
+    assert (
+        body["canonical_product_id"]
+        == acquisition_context["product_id"]
+    )
+
+    assert body["confidence"] >= 75
+
+    assert body["product_name"] == (
+        f"Acquisition Test Phone {token}"
+    )
+
+    assert body["brand_name"] == "Samsung"
+    assert body["model"] == f"ACQ-{token}"
+
+    assert body["ram_gb"] == 8
+    assert body["storage_gb"] == 256
+    assert body["color"] == "Black"
+
+
+def test_product_match_rejects_unknown_product(
+    client: TestClient,
+    acquisition_context: dict[str, object],
+) -> None:
+    """Do not automatically match an unrelated marketplace product."""
+
+    response = client.post(
+        MATCH_ENDPOINT,
+        headers=ingestion_headers(),
+        json={
+            "title": (
+                "Random Ultra Phone XYZ "
+                "24GB 2TB Neon Green"
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+
+    body = response.json()
+
+    assert body["matched"] is False
+    assert body["product_variant_id"] is None
+    assert body["canonical_product_id"] is None
+    assert body["reason"]
+
+
+def test_product_match_rejects_wrong_storage(
+    client: TestClient,
+    acquisition_context: dict[str, object],
+) -> None:
+    """Reject a strong product match when storage is incompatible."""
+
+    token = str(
+        acquisition_context["token"]
+    )
+
+    response = client.post(
+        MATCH_ENDPOINT,
+        headers=ingestion_headers(),
+        json={
+            "title": (
+                f"Acquisition Test Phone "
+                f"{token} "
+                "8GB 128GB Black"
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+
+    body = response.json()
+
+    assert body["matched"] is False
+    assert body["product_variant_id"] is None
+    assert body["canonical_product_id"] is None
+
+    assert "storage" in (
+        body["reason"].lower()
+    )
+
+
+def test_product_match_rejects_vague_title(
+    client: TestClient,
+    acquisition_context: dict[str, object],
+) -> None:
+    """Reject titles without enough product identity."""
+
+    response = client.post(
+        MATCH_ENDPOINT,
+        headers=ingestion_headers(),
+        json={
+            "title": (
+                "Samsung smartphone 256GB"
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+
+    body = response.json()
+
+    assert body["matched"] is False
+    assert body["product_variant_id"] is None
+    assert body["canonical_product_id"] is None
+
+    assert (
+        "specific enough"
+        in body["reason"].lower()
+    )
+
+
+def test_product_match_rejects_invalid_ingestion_key(
+    client: TestClient,
+    acquisition_context: dict[str, object],
+) -> None:
+    """Protect the internal product matching endpoint."""
+
+    token = str(
+        acquisition_context["token"]
+    )
+
+    response = client.post(
+        MATCH_ENDPOINT,
+        headers=ingestion_headers(
+            "wrong-ingestion-key",
+        ),
+        json={
+            "title": (
+                f"Acquisition Test Phone "
+                f"{token} "
+                "8GB 256GB Black"
+            ),
+        },
+    )
+
+    assert response.status_code == 401
+
+    assert response.json() == {
+        "detail": "Invalid ingestion key.",
+    }
