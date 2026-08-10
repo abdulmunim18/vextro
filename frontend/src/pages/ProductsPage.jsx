@@ -1,5 +1,4 @@
 import {
-  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -16,8 +15,8 @@ const PAGE_SIZE = 12;
 
 const initialFilters = {
   query: "",
-  categoryId: "",
-  brandId: "",
+  categorySlug: "",
+  brandSlug: "",
 };
 
 function extractItems(responseData) {
@@ -50,6 +49,7 @@ function ProductsPage() {
   const [brands, setBrands] = useState([]);
 
   const [page, setPage] = useState(1);
+  const [reloadKey, setReloadKey] = useState(0);
   const [totalItems, setTotalItems] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
 
@@ -105,38 +105,40 @@ function ProductsPage() {
     };
   }, []);
 
-  const loadProducts = useCallback(async () => {
-    setIsLoadingProducts(true);
-    setErrorMessage("");
+useEffect(() => {
+  let isCancelled = false;
 
-    const params = {
-      page,
-      page_size: PAGE_SIZE,
-    };
+  const params = {
+    page,
+    page_size: PAGE_SIZE,
+  };
 
-    const normalizedQuery =
-      appliedFilters.query.trim();
+  const normalizedQuery =
+    appliedFilters.query.trim();
 
-    if (normalizedQuery) {
-      params.q = normalizedQuery;
-      params.search = normalizedQuery;
-    }
+  if (normalizedQuery) {
+    params.q = normalizedQuery;
+    params.search = normalizedQuery;
+  }
 
-    if (appliedFilters.categoryId) {
-      params.category_id = Number(
-        appliedFilters.categoryId,
-      );
-    }
+  if (appliedFilters.categorySlug) {
+    params.category_slug =
+      appliedFilters.categorySlug;
+  }
 
-    if (appliedFilters.brandId) {
-      params.brand_id = Number(
-        appliedFilters.brandId,
-      );
-    }
+  if (appliedFilters.brandSlug) {
+    params.brand_slug =
+      appliedFilters.brandSlug;
+  }
 
-    try {
-      const responseData = await getProducts(params);
-      const responseItems = extractItems(responseData);
+  getProducts(params)
+    .then((responseData) => {
+      if (isCancelled) {
+        return;
+      }
+
+      const responseItems =
+        extractItems(responseData);
 
       const responseTotalItems = Number(
         responseData?.total_items ??
@@ -147,7 +149,9 @@ function ProductsPage() {
       const responseTotalPages = Number(
         responseData?.total_pages ??
           responseData?.pages ??
-          Math.ceil(responseTotalItems / PAGE_SIZE),
+          Math.ceil(
+            responseTotalItems / PAGE_SIZE,
+          ),
       );
 
       setProducts(responseItems);
@@ -164,7 +168,12 @@ function ProductsPage() {
           ? responseTotalPages
           : 1,
       );
-    } catch (error) {
+    })
+    .catch((error) => {
+      if (isCancelled) {
+        return;
+      }
+
       setProducts([]);
       setTotalItems(0);
       setTotalPages(1);
@@ -175,14 +184,19 @@ function ProductsPage() {
           "Unable to load marketplace products.",
         ),
       );
-    } finally {
-      setIsLoadingProducts(false);
-    }
-  }, [appliedFilters, page]);
+    })
+    .finally(() => {
+      if (!isCancelled) {
+        setIsLoadingProducts(false);
+      }
+    });
 
-  useEffect(() => {
-    loadProducts();
-  }, [loadProducts]);
+  return () => {
+    isCancelled = true;
+  };
+}, [appliedFilters, page, reloadKey]);
+
+
 
   function handleFilterChange(event) {
     const { name, value } = event.target;
@@ -193,32 +207,44 @@ function ProductsPage() {
     }));
   }
 
-  function handleSearch(event) {
-    event.preventDefault();
+ function handleSearch(event) {
+  event.preventDefault();
 
-    setPage(1);
+  setIsLoadingProducts(true);
+  setErrorMessage("");
+  setPage(1);
 
-    setAppliedFilters({
-      query: draftFilters.query.trim(),
-      categoryId: draftFilters.categoryId,
-      brandId: draftFilters.brandId,
-    });
-  }
+  setAppliedFilters({
+    query: draftFilters.query.trim(),
+    categorySlug: draftFilters.categorySlug,
+    brandSlug: draftFilters.brandSlug,
+  });
+}
 
-  function handleReset() {
-    setDraftFilters(initialFilters);
-    setAppliedFilters(initialFilters);
-    setPage(1);
-  }
+function handleReset() {
+  setIsLoadingProducts(true);
+  setErrorMessage("");
+  setDraftFilters(initialFilters);
+  setAppliedFilters(initialFilters);
+  setPage(1);
+}
 
-  function changePage(nextPage) {
-    setPage(nextPage);
+function handleRetry() {
+  setIsLoadingProducts(true);
+  setErrorMessage("");
+  setReloadKey((currentKey) => currentKey + 1);
+}
 
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
-  }
+function changePage(nextPage) {
+  setIsLoadingProducts(true);
+  setErrorMessage("");
+  setPage(nextPage);
+
+  window.scrollTo({
+    top: 0,
+    behavior: "smooth",
+  });
+}
 
 const categoryNameById = useMemo(
   () =>
@@ -241,11 +267,11 @@ const brandNameById = useMemo(
     ),
   [brands],
 );
-  const hasAppliedFilters = Boolean(
-    appliedFilters.query ||
-      appliedFilters.categoryId ||
-      appliedFilters.brandId,
-  );
+const hasAppliedFilters = Boolean(
+  appliedFilters.query ||
+    appliedFilters.categorySlug ||
+    appliedFilters.brandSlug,
+);
 
   return (
     <section className="relative min-h-[calc(100vh-145px)] overflow-hidden bg-vextro-canvas py-14 sm:py-18 lg:py-20">
@@ -322,24 +348,24 @@ const brandNameById = useMemo(
             </label>
 
             <select
-              id="category-filter"
-              className="min-h-12 w-full cursor-pointer rounded-xl border border-vextro-border bg-white px-4 text-sm text-vextro-ink outline-none transition focus:border-vextro-primary focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
-              name="categoryId"
-              value={draftFilters.categoryId}
-              onChange={handleFilterChange}
-              disabled={isLoadingFilters}
-            >
-              <option value="">All categories</option>
+  id="category-filter"
+  className="min-h-12 w-full cursor-pointer rounded-xl border border-vextro-border bg-white px-4 text-sm text-vextro-ink outline-none transition focus:border-vextro-primary focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+  name="categorySlug"
+  value={draftFilters.categorySlug}
+  onChange={handleFilterChange}
+  disabled={isLoadingFilters}
+>
+  <option value="">All categories</option>
 
-              {categories.map((category) => (
-                <option
-                  key={category.id}
-                  value={category.id}
-                >
-                  {category.name}
-                </option>
-              ))}
-            </select>
+  {categories.map((category) => (
+    <option
+      key={category.id}
+      value={category.slug}
+    >
+      {category.name}
+    </option>
+  ))}
+</select>
           </div>
 
           <div className="grid gap-2">
@@ -351,24 +377,24 @@ const brandNameById = useMemo(
             </label>
 
             <select
-              id="brand-filter"
-              className="min-h-12 w-full cursor-pointer rounded-xl border border-vextro-border bg-white px-4 text-sm text-vextro-ink outline-none transition focus:border-vextro-primary focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
-              name="brandId"
-              value={draftFilters.brandId}
-              onChange={handleFilterChange}
-              disabled={isLoadingFilters}
-            >
-              <option value="">All brands</option>
+  id="brand-filter"
+  className="min-h-12 w-full cursor-pointer rounded-xl border border-vextro-border bg-white px-4 text-sm text-vextro-ink outline-none transition focus:border-vextro-primary focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+  name="brandSlug"
+  value={draftFilters.brandSlug}
+  onChange={handleFilterChange}
+  disabled={isLoadingFilters}
+>
+  <option value="">All brands</option>
 
-              {brands.map((brand) => (
-                <option
-                  key={brand.id}
-                  value={brand.id}
-                >
-                  {brand.name}
-                </option>
-              ))}
-            </select>
+  {brands.map((brand) => (
+    <option
+      key={brand.id}
+      value={brand.slug}
+    >
+      {brand.name}
+    </option>
+  ))}
+</select>
           </div>
 
           <button
@@ -409,7 +435,7 @@ const brandNameById = useMemo(
             <button
               className="min-h-10 rounded-xl border border-red-200 bg-white px-4 text-xs font-black text-red-700 transition hover:bg-red-100"
               type="button"
-              onClick={loadProducts}
+              onClick={handleRetry}
             >
               Try again
             </button>
