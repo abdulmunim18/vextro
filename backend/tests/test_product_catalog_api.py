@@ -399,3 +399,308 @@ def test_product_list_rejects_invalid_pagination(
 
     assert invalid_page_response.status_code == 422
     assert invalid_page_size_response.status_code == 422
+
+def test_compare_products_returns_selected_product_details(
+    client: TestClient,
+    database_session: Session,
+) -> None:
+    """Comparison should return two selected active products."""
+
+    category, brand, _platform = create_reference_data(
+        database_session
+    )
+
+    first_product, first_variant = create_product(
+        database_session,
+        category=category,
+        brand=brand,
+        name="Comparison Phone Alpha",
+    )
+
+    second_product, second_variant = create_product(
+        database_session,
+        category=category,
+        brand=brand,
+        name="Comparison Phone Beta",
+    )
+
+    database_session.commit()
+
+    response = client.get(
+        "/api/v1/products/compare",
+        params=[
+            ("product_ids", first_product.id),
+            ("product_ids", second_product.id),
+        ],
+    )
+
+    assert response.status_code == 200
+
+    body = response.json()
+
+    assert body["total"] == 2
+    assert len(body["items"]) == 2
+    assert "summary" in body
+
+    summary = body["summary"]
+
+    assert "cheapest_product_id" in summary
+    assert "cheapest_product_name" in summary
+    assert "lowest_current_price" in summary
+    assert "currency" in summary
+    assert "price_gap" in summary
+    assert "price_gap_percentage" in summary
+
+    returned_ids = {
+        item["product"]["id"]
+        for item in body["items"]
+    }
+
+    assert returned_ids == {
+        first_product.id,
+        second_product.id,
+    }
+
+    first_item = next(
+        item
+        for item in body["items"]
+        if item["product"]["id"] == first_product.id
+    )
+
+    assert (
+        first_item["product"]["name"]
+        == "Comparison Phone Alpha"
+    )
+
+    assert (
+        first_item["product"]["specifications"]["battery"]
+        == "5000 mAh"
+    )
+
+    assert len(first_item["product"]["variants"]) == 1
+    assert (
+        first_item["product"]["variants"][0]["id"]
+        == first_variant.id
+    )
+
+    second_item = next(
+        item
+        for item in body["items"]
+        if item["product"]["id"] == second_product.id
+    )
+
+    assert (
+        second_item["product"]["variants"][0]["id"]
+        == second_variant.id
+    )
+
+    assert "listings" in first_item
+    assert "price_history" in first_item
+def test_compare_products_rejects_duplicate_product_ids(
+    client: TestClient,
+    database_session: Session,
+) -> None:
+    """The same product cannot be compared with itself."""
+
+    category, brand, _platform = create_reference_data(
+        database_session
+    )
+
+    product, _variant = create_product(
+        database_session,
+        category=category,
+        brand=brand,
+        name="Duplicate Comparison Phone",
+    )
+
+    database_session.commit()
+
+    response = client.get(
+        "/api/v1/products/compare",
+        params=[
+            ("product_ids", product.id),
+            ("product_ids", product.id),
+        ],
+    )
+
+    assert response.status_code == 422
+    assert (
+        response.json()["detail"]
+        == "Duplicate product IDs are not allowed."
+    )
+
+
+def test_compare_products_requires_at_least_two_products(
+    client: TestClient,
+) -> None:
+    """Comparison requires at least two product IDs."""
+
+    response = client.get(
+        "/api/v1/products/compare",
+        params=[
+            ("product_ids", 1),
+        ],
+    )
+
+    assert response.status_code == 422
+
+
+def test_compare_products_rejects_more_than_three_products(
+    client: TestClient,
+) -> None:
+    """Comparison supports a maximum of three products."""
+
+    response = client.get(
+        "/api/v1/products/compare",
+        params=[
+            ("product_ids", 1),
+            ("product_ids", 2),
+            ("product_ids", 3),
+            ("product_ids", 4),
+        ],
+    )
+
+    assert response.status_code == 422
+
+
+def test_compare_products_returns_404_when_product_is_missing(
+    client: TestClient,
+    database_session: Session,
+) -> None:
+    """Missing products should make the comparison fail safely."""
+
+    category, brand, _platform = create_reference_data(
+        database_session
+    )
+
+    product, _variant = create_product(
+        database_session,
+        category=category,
+        brand=brand,
+        name="Existing Comparison Phone",
+    )
+
+    database_session.commit()
+
+    response = client.get(
+        "/api/v1/products/compare",
+        params=[
+            ("product_ids", product.id),
+            ("product_ids", 999999999),
+        ],
+    )
+
+    assert response.status_code == 404
+    assert (
+        response.json()["detail"]
+        == "One or more products were not found."
+    )
+def test_compare_products_calculates_price_summary(
+    client: TestClient,
+    database_session: Session,
+) -> None:
+    """Comparison should summarize the cheapest current offers."""
+
+    category, brand, platform = create_reference_data(
+        database_session
+    )
+
+    samsung, samsung_variant = create_product(
+        database_session,
+        category=category,
+        brand=brand,
+        name="Samsung Comparison Phone",
+    )
+
+    xiaomi, xiaomi_variant = create_product(
+        database_session,
+        category=category,
+        brand=brand,
+        name="Xiaomi Comparison Phone",
+    )
+
+    seller = Seller(
+        platform_id=platform.id,
+        external_seller_id=unique_value("comparison-seller"),
+        name="Comparison Seller",
+        profile_url="https://example.com/comparison-seller",
+        rating=Decimal("4.80"),
+        review_count=500,
+        is_verified=True,
+        is_active=True,
+    )
+
+    database_session.add(seller)
+    database_session.flush()
+
+    samsung_listing = ProductListing(
+        platform_id=platform.id,
+        product_variant_id=samsung_variant.id,
+        seller_id=seller.id,
+        external_id=unique_value("samsung-comparison"),
+        title="Samsung Comparison Listing",
+        product_url="https://example.com/samsung-comparison",
+        current_price=Decimal("114999.00"),
+        currency="PKR",
+        rating=Decimal("4.80"),
+        review_count=300,
+        warranty="1 Year",
+        is_available=True,
+    )
+
+    xiaomi_listing = ProductListing(
+        platform_id=platform.id,
+        product_variant_id=xiaomi_variant.id,
+        seller_id=seller.id,
+        external_id=unique_value("xiaomi-comparison"),
+        title="Xiaomi Comparison Listing",
+        product_url="https://example.com/xiaomi-comparison",
+        current_price=Decimal("76499.00"),
+        currency="PKR",
+        rating=Decimal("4.70"),
+        review_count=250,
+        warranty="1 Year",
+        is_available=True,
+    )
+
+    database_session.add_all(
+        [
+            samsung_listing,
+            xiaomi_listing,
+        ]
+    )
+
+    database_session.commit()
+
+    response = client.get(
+        "/api/v1/products/compare",
+        params=[
+            ("product_ids", samsung.id),
+            ("product_ids", xiaomi.id),
+        ],
+    )
+
+    assert response.status_code == 200
+
+    summary = response.json()["summary"]
+
+    assert summary["cheapest_product_id"] == xiaomi.id
+
+    assert (
+        summary["cheapest_product_name"]
+        == "Xiaomi Comparison Phone"
+    )
+
+    assert Decimal(
+        summary["lowest_current_price"]
+    ) == Decimal("76499.00")
+
+    assert summary["currency"] == "PKR"
+
+    assert Decimal(
+        summary["price_gap"]
+    ) == Decimal("38500.00")
+
+    assert Decimal(
+        summary["price_gap_percentage"]
+    ) == Decimal("50.33")

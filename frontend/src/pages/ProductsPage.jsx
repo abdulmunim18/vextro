@@ -3,6 +3,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { Link } from "react-router-dom";
 import ProductCard from "../components/ProductCard";
 import {
   getBrands,
@@ -44,9 +45,12 @@ function ProductsPage() {
     initialFilters,
   );
 
-  const [products, setProducts] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [brands, setBrands] = useState([]);
+const [products, setProducts] = useState([]);
+const [selectedProducts, setSelectedProducts] =
+  useState([]);
+
+const [categories, setCategories] = useState([]);
+const [brands, setBrands] = useState([]);
 
   const [page, setPage] = useState(1);
   const [reloadKey, setReloadKey] = useState(0);
@@ -245,6 +249,34 @@ function changePage(nextPage) {
     behavior: "smooth",
   });
 }
+function handleToggleCompare(product) {
+  setSelectedProducts((currentProducts) => {
+    const isAlreadySelected =
+      currentProducts.some(
+        (selectedProduct) =>
+          selectedProduct.id === product.id,
+      );
+
+    if (isAlreadySelected) {
+      return currentProducts.filter(
+        (selectedProduct) =>
+          selectedProduct.id !== product.id,
+      );
+    }
+
+    if (currentProducts.length >= 3) {
+      return currentProducts;
+    }
+
+    return [
+      ...currentProducts,
+      product,
+    ];
+  });
+}
+function handleClearComparison() {
+  setSelectedProducts([]);
+}
 
 const categoryNameById = useMemo(
   () =>
@@ -272,9 +304,23 @@ const hasAppliedFilters = Boolean(
     appliedFilters.categorySlug ||
     appliedFilters.brandSlug,
 );
-
+const selectedProductIds = useMemo(
+  () =>
+    new Set(
+      selectedProducts.map(
+        (selectedProduct) => selectedProduct.id,
+      ),
+    ),
+  [selectedProducts],
+);
+const comparisonUrl =
+  selectedProducts.length >= 2
+    ? `/compare?ids=${selectedProducts
+        .map((product) => product.id)
+        .join(",")}`
+    : "";
   return (
-    <section className="relative min-h-[calc(100vh-145px)] overflow-hidden bg-vextro-canvas py-14 sm:py-18 lg:py-20">
+    <section className="relative min-h-[calc(100vh-145px)] overflow-x-hidden bg-vextro-canvas py-14 sm:py-18 lg:py-20">
       <div className="pointer-events-none absolute -right-48 top-0 size-[460px] rounded-full bg-blue-300/15 blur-3xl" />
 
       <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
@@ -494,18 +540,24 @@ const hasAppliedFilters = Boolean(
           <div className="mt-5 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
             {products.map((product) => (
   <ProductCard
-    key={product.id}
-    product={{
-      ...product,
-      brand_name:
-        brandNameById.get(product.brand_id) ||
-        "Unbranded",
-      category_name:
-        categoryNameById.get(
-          product.category_id,
-        ) || "General",
-    }}
-  />
+  key={product.id}
+  product={{
+    ...product,
+    brand_name:
+      brandNameById.get(product.brand_id) ||
+      "Unbranded",
+    category_name:
+      categoryNameById.get(
+        product.category_id,
+      ) || "General",
+  }}
+  isSelected={selectedProductIds.has(product.id)}
+  compareDisabled={
+    selectedProducts.length >= 3 &&
+    !selectedProductIds.has(product.id)
+  }
+  onToggleCompare={handleToggleCompare}
+/>
 ))}
           </div>
         ) : null}
@@ -575,6 +627,62 @@ const hasAppliedFilters = Boolean(
           </nav>
         ) : null}
       </div>
+
+        {selectedProducts.length > 0 ? (
+          <div className="fixed inset-x-0 bottom-0 z-50 border-t border-vextro-border bg-white/95 px-4 py-4 shadow-[0_-12px_35px_rgba(15,23,42,0.12)] backdrop-blur">
+            <div className="mx-auto flex max-w-7xl flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-3">
+                  <strong className="text-sm font-black text-vextro-ink">
+                    Compare products
+                  </strong>
+
+                  <span className="rounded-full bg-blue-50 px-3 py-1 text-[10px] font-black text-vextro-primary">
+                    {selectedProducts.length}/3 selected
+                  </span>
+                </div>
+
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {selectedProducts.map((product) => (
+                    <span
+                      className="max-w-52 truncate rounded-lg bg-vextro-canvas px-3 py-2 text-xs font-bold text-vextro-ink"
+                      key={product.id}
+                    >
+                      {product.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex shrink-0 items-center gap-3">
+                <button
+                  className="min-h-11 rounded-xl border border-vextro-border bg-white px-4 text-sm font-black text-vextro-muted transition hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+                  type="button"
+                  onClick={handleClearComparison}
+                >
+                  Clear
+                </button>
+
+                {selectedProducts.length >= 2 ? (
+                  <Link
+                    className="inline-flex min-h-11 items-center justify-center rounded-xl bg-vextro-primary px-5 text-sm font-black text-white shadow-lg shadow-blue-500/20 transition hover:bg-vextro-primary-dark"
+                    to={comparisonUrl}
+                  >
+                    Compare {selectedProducts.length} Products →
+                  </Link>
+                ) : (
+                  <button
+                    className="min-h-11 cursor-not-allowed rounded-xl bg-slate-200 px-5 text-sm font-black text-slate-500"
+                    type="button"
+                    disabled
+                  >
+                    Select 1 more product
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : null}
     </section>
   );
 }

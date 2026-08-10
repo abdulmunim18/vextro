@@ -1,6 +1,11 @@
 import { Link } from "react-router-dom";
 
-function ProductCard({ product }) {
+function ProductCard({
+  product,
+  isSelected = false,
+  compareDisabled = false,
+  onToggleCompare,
+})  {
   const productName =
     product.name || "Unnamed product";
 
@@ -55,6 +60,21 @@ function ProductCard({ product }) {
             ? `Model: ${product.model}`
             : "Standardized canonical product"}
         </p>
+        <button
+  className={`mt-5 min-h-11 w-full rounded-xl border px-4 text-sm font-black transition ${
+    isSelected
+      ? "border-vextro-primary bg-vextro-primary text-white"
+      : "border-vextro-border bg-white text-vextro-ink hover:border-blue-300 hover:bg-blue-50 hover:text-vextro-primary"
+  } disabled:cursor-not-allowed disabled:opacity-40`}
+  type="button"
+  aria-pressed={isSelected}
+  disabled={compareDisabled && !isSelected}
+  onClick={() => onToggleCompare?.(product)}
+>
+  {isSelected
+    ? "✓ Added to comparison"
+    : "Add to comparison"}
+</button>
 
         <div className="mt-auto pt-7">
           <div className="rounded-2xl bg-vextro-canvas p-4">
