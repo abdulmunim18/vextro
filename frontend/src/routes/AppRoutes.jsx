@@ -1,5 +1,5 @@
 import { Route, Routes } from "react-router-dom";
-
+import ComparisonPage from "../pages/ComparisonPage";
 import MainLayout from "../layouts/MainLayout";
 import AdminPage from "../pages/AdminPage";
 import DashboardPage from "../pages/DashboardPage";
@@ -30,6 +30,10 @@ function AppRoutes() {
         <Route
           path="products/:productId"
           element={<ProductDetailPage />}
+        />
+        <Route
+          path="compare"
+          element={<ComparisonPage />}
         />
 
         {/* Guest-only routes */}
