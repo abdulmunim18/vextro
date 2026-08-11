@@ -571,8 +571,8 @@ def test_ingestion_triggers_matching_price_alert_once(
     assert alert.is_triggered is True
     assert alert.triggered_at is not None
     assert alert.last_checked_at is not None
-    assert alert.notification_count == 0
-    assert alert.last_notified_at is None
+    assert alert.notification_count == 1
+    assert alert.last_notified_at is not None
 
     second_payload = build_payload(
         acquisition_context,
@@ -605,7 +605,7 @@ def test_ingestion_triggers_matching_price_alert_once(
 
     assert refreshed_alert is not None
     assert refreshed_alert.is_triggered is True
-    assert refreshed_alert.notification_count == 0
+    assert refreshed_alert.notification_count == 1
 
 
 def test_ingestion_does_not_trigger_alert_above_target(
@@ -727,8 +727,8 @@ def test_ingestion_triggers_matching_listing_price_alert(
     assert triggered_alert.is_triggered is True
     assert triggered_alert.triggered_at is not None
     assert triggered_alert.last_checked_at is not None
-    assert triggered_alert.notification_count == 0
-    assert triggered_alert.last_notified_at is None
+    assert triggered_alert.notification_count == 1
+    assert triggered_alert.last_notified_at is not None
 
 
 def test_ingestion_detects_duplicate_capture(

@@ -1,5 +1,6 @@
 from app.models.brand import Brand
 from app.models.business_product import BusinessProduct
+from app.models.notification import Notification
 from app.models.canonical_product import CanonicalProduct
 from app.models.category import Category
 from app.models.competitor_watchlist import CompetitorWatchlist
@@ -35,6 +36,7 @@ __all__ = [
     "ProductListing",
     "ProductVariant",
     "RefreshToken",
+    "Notification",
     "Role",
     "SalesImport",
     "SalesRecord",

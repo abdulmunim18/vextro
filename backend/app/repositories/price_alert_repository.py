@@ -53,6 +53,7 @@ def list_active_price_alerts_for_capture(
             ),
         )
         .order_by(PriceAlert.id.asc())
+        .with_for_update()
     )
 
     return list(

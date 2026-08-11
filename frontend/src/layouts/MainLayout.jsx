@@ -5,6 +5,7 @@ import {
   useNavigate,
 } from "react-router-dom";
 
+import NotificationBell from "../components/NotificationBell";
 import { useAuth } from "../context/AuthContext";
 
 function getDesktopNavClass({ isActive }) {
@@ -152,6 +153,10 @@ if (
           <div className="hidden items-center gap-3 md:flex">
             {!isInitializing && isAuthenticated ? (
               <>
+                {hasRole("consumer", "admin") ? (
+                  <NotificationBell />
+                ) : null}
+
                 <NavLink
                   className="flex min-w-0 items-center gap-2 rounded-2xl border border-vextro-border bg-white p-1.5 pr-3 transition hover:border-blue-200 hover:bg-blue-50/40"
                   to="/dashboard"
@@ -201,7 +206,14 @@ if (
             ) : null}
           </div>
 
-          <button
+          <div className="ml-auto flex items-center gap-2 md:hidden">
+            {!isInitializing &&
+            isAuthenticated &&
+            hasRole("consumer", "admin") ? (
+              <NotificationBell />
+            ) : null}
+
+            <button
             className="grid size-11 place-items-center rounded-xl border border-vextro-border bg-white text-xl font-bold text-vextro-ink transition hover:bg-slate-50 md:hidden"
             type="button"
             aria-label={
@@ -216,6 +228,7 @@ if (
           >
             {isMenuOpen ? "×" : "☰"}
           </button>
+          </div>
         </div>
 
         {isMenuOpen ? (

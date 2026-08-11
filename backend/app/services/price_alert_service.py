@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from datetime import UTC, datetime
 from app.models.price_alert import PriceAlert
 from decimal import Decimal
+from app.services.notification_service import create_price_drop_notification
 from app.repositories.price_alert_repository import (
     create_price_alert,
     deactivate_price_alert,
@@ -42,6 +43,18 @@ def evaluate_price_alerts_for_capture(
         return 0
 
     checked_at = datetime.now(UTC)
+
+    product = get_active_product_target(
+        database_session,
+        canonical_product_id,
+    )
+
+    product_name = (
+        product.name
+        if product is not None
+        else "A tracked product"
+    )
+
     triggered_count = 0
 
     for alert in alerts:
@@ -55,6 +68,21 @@ def evaluate_price_alerts_for_capture(
 
         alert.is_triggered = True
         alert.triggered_at = checked_at
+
+        create_price_drop_notification(
+            database_session,
+            user_id=alert.user_id,
+            price_alert_id=alert.id,
+            canonical_product_id=canonical_product_id,
+            product_name=product_name,
+            current_price=current_price,
+            target_price=alert.target_price,
+            currency=currency,
+        )
+
+        alert.notification_count += 1
+        alert.last_notified_at = checked_at
+
         triggered_count += 1
 
     database_session.flush()
