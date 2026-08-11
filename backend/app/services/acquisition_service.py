@@ -10,7 +10,9 @@ from app.schemas.acquisition import (
     AcquisitionListingInput,
     AcquisitionListingResponse,
 )
-
+from app.services.price_alert_service import (
+    evaluate_price_alerts_for_capture,
+)
 
 class AcquisitionService:
     """Process normalized marketplace listing captures."""
@@ -242,9 +244,13 @@ class AcquisitionService:
                 )
             )
 
-            # Alert evaluation will be connected after
-            # the ingestion endpoint is operational.
-            alerts_triggered = 0
+            alerts_triggered = evaluate_price_alerts_for_capture(
+                database_session,
+                canonical_product_id=canonical_product.id,
+                listing_id=listing.id,
+                current_price=payload.current_price,
+                currency=payload.currency,
+            )
 
             database_session.commit()
 
