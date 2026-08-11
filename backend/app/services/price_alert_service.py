@@ -1,16 +1,19 @@
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from datetime import UTC, datetime
 from app.models.price_alert import PriceAlert
+from decimal import Decimal
 from app.repositories.price_alert_repository import (
     create_price_alert,
     deactivate_price_alert,
     find_active_duplicate_alert,
     get_active_product_target,
+    update_price_alert,
     get_listing_target,
     get_user_price_alert,
     list_user_price_alerts,
-    update_price_alert,
+    list_active_price_alerts_for_capture,
 )
 from app.schemas.price_intelligence import (
     PriceAlertCreate,
@@ -18,6 +21,45 @@ from app.schemas.price_intelligence import (
     PriceAlertResponse,
     PriceAlertUpdate,
 )
+def evaluate_price_alerts_for_capture(
+    database_session: Session,
+    *,
+    canonical_product_id: int,
+    listing_id: int,
+    current_price: Decimal,
+    currency: str,
+) -> int:
+    """Evaluate active alerts affected by one marketplace price capture."""
+
+    alerts = list_active_price_alerts_for_capture(
+        database_session,
+        canonical_product_id=canonical_product_id,
+        listing_id=listing_id,
+        currency=currency,
+    )
+
+    if not alerts:
+        return 0
+
+    checked_at = datetime.now(UTC)
+    triggered_count = 0
+
+    for alert in alerts:
+        alert.last_checked_at = checked_at
+
+        if alert.is_triggered:
+            continue
+
+        if current_price > alert.target_price:
+            continue
+
+        alert.is_triggered = True
+        alert.triggered_at = checked_at
+        triggered_count += 1
+
+    database_session.flush()
+
+    return triggered_count
 
 
 class PriceAlertTargetNotFoundError(Exception):

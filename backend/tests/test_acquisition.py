@@ -7,6 +7,8 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
+from app.models.price_alert import PriceAlert
+from app.models.user import User
 
 from app.core.config import settings
 from app.models.brand import Brand
@@ -206,6 +208,120 @@ def acquisition_context(
         )
         .execution_options(
             synchronize_session=False,
+        ),
+    )
+
+    database_session.commit()
+
+@pytest.fixture
+def acquisition_alert_context(
+    database_session: Session,
+    acquisition_context: dict[str, object],
+) -> Generator[dict[str, object], None, None]:
+    """Create one active product-level alert for acquisition tests."""
+
+    unique_token = str(
+        acquisition_context["token"],
+    )
+
+    user = User(
+        full_name="Acquisition Alert Test User",
+        email=(
+            f"acquisition-alert-{unique_token}"
+            "@example.com"
+        ),
+        password_hash="automated-test-password-hash",
+        is_active=True,
+        is_verified=True,
+    )
+
+    database_session.add(user)
+    database_session.flush()
+
+    alert = PriceAlert(
+        user_id=user.id,
+        canonical_product_id=int(
+            acquisition_context["product_id"],
+        ),
+        listing_id=None,
+        target_price=Decimal("125000.00"),
+        currency="PKR",
+    )
+
+    database_session.add(alert)
+    database_session.commit()
+
+    database_session.refresh(user)
+    database_session.refresh(alert)
+
+    context = {
+        "user_id": user.id,
+        "alert_id": alert.id,
+    }
+
+    yield context
+
+    database_session.rollback()
+
+    database_session.execute(
+        delete(PriceAlert).where(
+            PriceAlert.user_id == user.id,
+        ),
+    )
+
+    database_session.execute(
+        delete(User).where(
+            User.id == user.id,
+        ),
+    )
+
+    database_session.commit()
+
+
+
+@pytest.fixture
+def acquisition_alert_user(
+    database_session: Session,
+    acquisition_context: dict[str, object],
+) -> Generator[dict[str, int], None, None]:
+    """Create one temporary user for listing-level alert tests."""
+
+    unique_token = str(
+        acquisition_context["token"],
+    )
+
+    user = User(
+        full_name="Acquisition Listing Alert User",
+        email=(
+            f"acquisition-listing-alert-{unique_token}"
+            "@example.com"
+        ),
+        password_hash="automated-test-password-hash",
+        is_active=True,
+        is_verified=True,
+    )
+
+    database_session.add(user)
+    database_session.commit()
+    database_session.refresh(user)
+
+    context = {
+        "user_id": user.id,
+    }
+
+    yield context
+
+    database_session.rollback()
+
+    database_session.execute(
+        delete(PriceAlert).where(
+            PriceAlert.user_id == user.id,
+        ),
+    )
+
+    database_session.execute(
+        delete(User).where(
+            User.id == user.id,
         ),
     )
 
@@ -416,6 +532,203 @@ def test_ingestion_creates_listing_seller_and_history(
     )
 
     assert history_count == 1
+
+
+def test_ingestion_triggers_matching_price_alert_once(
+    client: TestClient,
+    database_session: Session,
+    acquisition_context: dict[str, object],
+    acquisition_alert_context: dict[str, object],
+) -> None:
+    """Trigger a matching alert once when captured price reaches target."""
+
+    first_payload = build_payload(
+        acquisition_context,
+        current_price=124999.0,
+    )
+
+    first_response = client.post(
+        ENDPOINT,
+        headers=ingestion_headers(),
+        json=first_payload,
+    )
+
+    assert first_response.status_code == 201
+
+    first_response_data = first_response.json()
+
+    assert first_response_data["alerts_triggered"] == 1
+
+    database_session.expire_all()
+
+    alert = database_session.get(
+        PriceAlert,
+        int(acquisition_alert_context["alert_id"]),
+    )
+
+    assert alert is not None
+    assert alert.is_active is True
+    assert alert.is_triggered is True
+    assert alert.triggered_at is not None
+    assert alert.last_checked_at is not None
+    assert alert.notification_count == 0
+    assert alert.last_notified_at is None
+
+    second_payload = build_payload(
+        acquisition_context,
+        captured_at=(
+            BASE_CAPTURE_TIME
+            + timedelta(minutes=30)
+        ),
+        current_price=123999.0,
+    )
+
+    second_response = client.post(
+        ENDPOINT,
+        headers=ingestion_headers(),
+        json=second_payload,
+    )
+
+    assert second_response.status_code == 200
+    assert second_response.json()["status"] == "updated"
+
+    second_response_data = second_response.json()
+
+    assert second_response_data["alerts_triggered"] == 0
+
+    database_session.expire_all()
+
+    refreshed_alert = database_session.get(
+        PriceAlert,
+        int(acquisition_alert_context["alert_id"]),
+    )
+
+    assert refreshed_alert is not None
+    assert refreshed_alert.is_triggered is True
+    assert refreshed_alert.notification_count == 0
+
+
+def test_ingestion_does_not_trigger_alert_above_target(
+    client: TestClient,
+    database_session: Session,
+    acquisition_context: dict[str, object],
+    acquisition_alert_context: dict[str, object],
+) -> None:
+    """Keep an alert pending when captured price is above its target."""
+
+    payload = build_payload(
+        acquisition_context,
+        current_price=126000.0,
+    )
+
+    response = client.post(
+        ENDPOINT,
+        headers=ingestion_headers(),
+        json=payload,
+    )
+
+    assert response.status_code == 201
+
+    response_data = response.json()
+
+    assert response_data["alerts_triggered"] == 0
+
+    database_session.expire_all()
+
+    alert = database_session.get(
+        PriceAlert,
+        int(acquisition_alert_context["alert_id"]),
+    )
+
+    assert alert is not None
+    assert alert.is_active is True
+    assert alert.is_triggered is False
+    assert alert.triggered_at is None
+    assert alert.last_checked_at is not None
+    assert alert.notification_count == 0
+    assert alert.last_notified_at is None
+
+
+
+
+def test_ingestion_triggers_matching_listing_price_alert(
+    client: TestClient,
+    database_session: Session,
+    acquisition_context: dict[str, object],
+    acquisition_alert_user: dict[str, int],
+) -> None:
+    """Trigger an alert attached to one specific marketplace listing."""
+
+    first_payload = build_payload(
+        acquisition_context,
+        current_price=126000.0,
+    )
+
+    first_response = client.post(
+        ENDPOINT,
+        headers=ingestion_headers(),
+        json=first_payload,
+    )
+
+    assert first_response.status_code == 201
+
+    listing_id = int(
+        first_response.json()["listing_id"],
+    )
+
+    alert = PriceAlert(
+        user_id=acquisition_alert_user["user_id"],
+        canonical_product_id=None,
+        listing_id=listing_id,
+        target_price=Decimal("125000.00"),
+        currency="PKR",
+    )
+
+    database_session.add(alert)
+    database_session.commit()
+    database_session.refresh(alert)
+
+    alert_id = alert.id
+
+    second_payload = build_payload(
+        acquisition_context,
+        captured_at=(
+            BASE_CAPTURE_TIME
+            + timedelta(minutes=30)
+        ),
+        current_price=124000.0,
+    )
+
+    second_response = client.post(
+        ENDPOINT,
+        headers=ingestion_headers(),
+        json=second_payload,
+    )
+
+    assert second_response.status_code == 200
+
+    second_response_data = second_response.json()
+
+    assert second_response_data["status"] == "updated"
+    assert second_response_data["listing_id"] == listing_id
+    assert second_response_data["alerts_triggered"] == 1
+
+    database_session.expire_all()
+
+    triggered_alert = database_session.get(
+        PriceAlert,
+        alert_id,
+    )
+
+    assert triggered_alert is not None
+    assert triggered_alert.canonical_product_id is None
+    assert triggered_alert.listing_id == listing_id
+    assert triggered_alert.is_active is True
+    assert triggered_alert.is_triggered is True
+    assert triggered_alert.triggered_at is not None
+    assert triggered_alert.last_checked_at is not None
+    assert triggered_alert.notification_count == 0
+    assert triggered_alert.last_notified_at is None
 
 
 def test_ingestion_detects_duplicate_capture(
