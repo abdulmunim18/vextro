@@ -6,6 +6,7 @@ from app.repositories.product_catalog_repository import (
     get_product_by_id,
     list_product_listings,
     list_products,
+    get_product_listing_summaries,
 )
 from app.schemas.product_catalog import (
     ProductDetailResponse,
@@ -24,6 +25,12 @@ def get_products(
     search: str | None = None,
     category_slug: str | None = None,
     brand_slug: str | None = None,
+    min_price=None,
+    max_price=None,
+    platform_code: str | None = None,
+    min_rating=None,
+    is_available: bool | None = None,
+    sort_by: str = "name_asc",
 ) -> ProductListResponse:
     """Return a paginated and filtered product catalog response."""
 
@@ -34,6 +41,17 @@ def get_products(
         search=search,
         category_slug=category_slug,
         brand_slug=brand_slug,
+        min_price=min_price,
+        max_price=max_price,
+        platform_code=platform_code,
+        min_rating=min_rating,
+        is_available=is_available,
+        sort_by=sort_by,
+    )
+
+    summaries = get_product_listing_summaries(
+        database_session,
+        [product.id for product in products],
     )
 
     total_pages = ceil(total / page_size) if total > 0 else 0
@@ -44,7 +62,9 @@ def get_products(
         page_size=page_size,
         total_pages=total_pages,
         items=[
-            ProductListItemResponse.model_validate(product)
+            ProductListItemResponse.model_validate(product).model_copy(
+                update=summaries.get(product.id, {}),
+            )
             for product in products
         ],
     )

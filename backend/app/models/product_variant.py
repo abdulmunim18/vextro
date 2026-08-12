@@ -23,6 +23,7 @@ from app.core.database import Base
 
 if TYPE_CHECKING:
     from app.models.canonical_product import CanonicalProduct
+    from app.models.price_forecast import PriceForecast
     from app.models.product_listing import ProductListing
 
 
@@ -124,4 +125,8 @@ class ProductVariant(Base):
     )
     listings: Mapped[list["ProductListing"]] = relationship(
         back_populates="product_variant",
+    )
+    price_forecasts: Mapped[list["PriceForecast"]] = relationship(
+        back_populates="product_variant",
+        cascade="all, delete-orphan",
     )

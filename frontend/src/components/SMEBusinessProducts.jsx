@@ -570,9 +570,13 @@ function SMEBusinessProducts({
   }, [organizationId]);
 
   useEffect(() => {
-    setEditingProductId(null);
-    setProductForm(initialProductForm);
-    loadProducts();
+    const timeoutId = window.setTimeout(() => {
+      setEditingProductId(null);
+      setProductForm(initialProductForm);
+      loadProducts();
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
   }, [loadProducts]);
 
   const statistics = useMemo(() => {

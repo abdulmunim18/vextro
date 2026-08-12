@@ -58,3 +58,9 @@ sme_or_admin = RequireRoles(
 admin_only = RequireRoles(
     "admin",
 )
+
+authenticated_role = RequireRoles(
+    "consumer",
+    "sme",
+    "admin",
+)

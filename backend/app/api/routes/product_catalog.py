@@ -6,6 +6,8 @@ from fastapi import (
     Query,
     status,
 )
+from decimal import Decimal
+from typing import Literal
 from sqlalchemy.orm import Session
 from app.schemas.product_comparison import (
     ProductComparisonResponse,
@@ -111,8 +113,47 @@ def list_products(
         max_length=255,
         description="Filter products by brand slug.",
     ),
+    min_price: Decimal | None = Query(
+        default=None,
+        ge=0,
+        description="Minimum marketplace listing price.",
+    ),
+    max_price: Decimal | None = Query(
+        default=None,
+        ge=0,
+        description="Maximum marketplace listing price.",
+    ),
+    platform_code: str | None = Query(
+        default=None,
+        pattern="^[a-z0-9-]+$",
+        max_length=50,
+    ),
+    min_rating: Decimal | None = Query(
+        default=None,
+        ge=0,
+        le=5,
+    ),
+    is_available: bool | None = Query(default=None),
+    sort_by: Literal[
+        "name_asc",
+        "name_desc",
+        "price_asc",
+        "price_desc",
+        "rating_desc",
+        "newest",
+    ] = Query(default="name_asc"),
 ) -> ProductListResponse:
     """Return active products with search, filtering, and pagination."""
+
+    if (
+        min_price is not None
+        and max_price is not None
+        and min_price > max_price
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="min_price cannot be greater than max_price.",
+        )
 
     return get_products(
         database_session,
@@ -121,6 +162,12 @@ def list_products(
         search=search,
         category_slug=category_slug,
         brand_slug=brand_slug,
+        min_price=min_price,
+        max_price=max_price,
+        platform_code=platform_code,
+        min_rating=min_rating,
+        is_available=is_available,
+        sort_by=sort_by,
     )
 
 

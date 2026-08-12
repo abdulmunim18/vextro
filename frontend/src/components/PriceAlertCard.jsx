@@ -56,7 +56,12 @@ function PriceAlertCard({
   const [localError, setLocalError] = useState("");
 
   useEffect(() => {
-    setTargetPrice(alert.target_price);
+    const timeoutId = window.setTimeout(
+      () => setTargetPrice(alert.target_price),
+      0,
+    );
+
+    return () => window.clearTimeout(timeoutId);
   }, [alert.target_price]);
 
   async function handleSaveTarget() {

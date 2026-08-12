@@ -8,6 +8,8 @@ function ProductCard({
 })  {
   const productName =
     product.name || "Unnamed product";
+  const lowestPrice = Number(product.lowest_price);
+  const highestRating = Number(product.highest_rating);
 
   return (
     <article className="group flex h-full flex-col overflow-hidden rounded-3xl border border-vextro-border bg-white shadow-sm transition duration-300 hover:-translate-y-1.5 hover:border-blue-200 hover:shadow-vextro">
@@ -60,6 +62,33 @@ function ProductCard({
             ? `Model: ${product.model}`
             : "Standardized canonical product"}
         </p>
+
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <div className="rounded-xl bg-blue-50 p-3">
+            <span className="block text-[10px] font-black uppercase tracking-wide text-blue-600">
+              From
+            </span>
+            <strong className="mt-1 block text-sm font-black text-slate-950">
+              {Number.isFinite(lowestPrice)
+                ? new Intl.NumberFormat("en-PK", {
+                    style: "currency",
+                    currency: "PKR",
+                    maximumFractionDigits: 0,
+                  }).format(lowestPrice)
+                : "No offer"}
+            </strong>
+          </div>
+          <div className="rounded-xl bg-amber-50 p-3">
+            <span className="block text-[10px] font-black uppercase tracking-wide text-amber-700">
+              Best rating
+            </span>
+            <strong className="mt-1 block text-sm font-black text-slate-950">
+              {Number.isFinite(highestRating)
+                ? `${highestRating.toFixed(1)} / 5`
+                : "Not rated"}
+            </strong>
+          </div>
+        </div>
         <button
   className={`mt-5 min-h-11 w-full rounded-xl border px-4 text-sm font-black transition ${
     isSelected

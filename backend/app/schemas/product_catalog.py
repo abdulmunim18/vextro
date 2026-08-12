@@ -117,6 +117,10 @@ class ProductListItemResponse(ORMResponse):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    lowest_price: Decimal | None = None
+    highest_rating: Decimal | None = None
+    available_listing_count: int = Field(default=0, ge=0)
+    platform_codes: list[str] = Field(default_factory=list)
 
 
 class ProductDetailResponse(ProductListItemResponse):
