@@ -679,6 +679,56 @@ def test_sme_can_manage_competitor_watchlist(
     assert list_response.status_code == 200
     assert list_response.json()["total"] == 1
 
+    intelligence_response = client.get(
+        (
+            f"{ORGANIZATIONS_ENDPOINT}/"
+            f"{organization_id}/competitor-intelligence"
+        ),
+        headers=headers,
+    )
+
+    assert intelligence_response.status_code == 200
+    intelligence = intelligence_response.json()
+    assert intelligence["summary"]["tracked_competitors"] == 1
+    assert len(intelligence["items"]) == 1
+    assert intelligence["items"][0]["price_gap"] == "-2999.00"
+
+    pricing_response = client.post(
+        (
+            f"{ORGANIZATIONS_ENDPOINT}/"
+            f"{organization_id}/pricing/scenarios"
+        ),
+        headers=headers,
+        json={
+            "business_product_id": business_product_id,
+            "baseline_units": 100,
+            "demand_sensitivity": 1,
+        },
+    )
+
+    assert pricing_response.status_code == 200
+    assert len(pricing_response.json()["scenarios"]) == 3
+
+    for report_format, content_type in (
+        ("pdf", "application/pdf"),
+        (
+            "xlsx",
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet",
+        ),
+    ):
+        report_response = client.get(
+            (
+                f"{ORGANIZATIONS_ENDPOINT}/"
+                f"{organization_id}/competitor-intelligence/report"
+            ),
+            headers=headers,
+            params={"format": report_format},
+        )
+        assert report_response.status_code == 200
+        assert report_response.headers["content-type"] == content_type
+        assert len(report_response.content) > 100
+
     watchlist_id = watchlist_entry["id"]
 
     status_response = client.patch(

@@ -47,7 +47,7 @@ This document maps each planned table to its module, priority and implementation
 |---|---|---:|---|
 | price_observations | Historical listing prices | P1 | Pending |
 | price_alerts | User-defined target-price alerts | P1 | Pending |
-| price_forecasts | AI or statistical price predictions | P2 | Pending |
+| price_forecasts | Versioned ML price predictions and evaluation metrics | P2 | Completed |
 | market_anomalies | Unusual price or availability events | P2 | Pending |
 
 ---

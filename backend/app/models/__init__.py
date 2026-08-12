@@ -1,4 +1,6 @@
 from app.models.brand import Brand
+from app.models.assistant_conversation import AssistantConversation
+from app.models.assistant_message import AssistantMessage
 from app.models.business_product import BusinessProduct
 from app.models.notification import Notification
 from app.models.canonical_product import CanonicalProduct
@@ -9,6 +11,7 @@ from app.models.organization_user import OrganizationUser
 from app.models.platform import Platform
 from app.models.price_alert import PriceAlert
 from app.models.price_history import PriceHistory
+from app.models.price_forecast import PriceForecast
 from app.models.product_image import ProductImage
 from app.models.product_listing import ProductListing
 from app.models.product_variant import ProductVariant
@@ -23,6 +26,8 @@ from app.models.user_role import user_roles
 
 __all__ = [
     "Brand",
+    "AssistantConversation",
+    "AssistantMessage",
     "BusinessProduct",
     "CanonicalProduct",
     "Category",
@@ -32,6 +37,7 @@ __all__ = [
     "Platform",
     "PriceAlert",
     "PriceHistory",
+    "PriceForecast",
     "ProductImage",
     "ProductListing",
     "ProductVariant",

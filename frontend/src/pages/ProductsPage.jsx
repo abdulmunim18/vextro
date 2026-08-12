@@ -8,6 +8,7 @@ import ProductCard from "../components/ProductCard";
 import {
   getBrands,
   getCategories,
+  getPlatforms,
   getProducts,
 } from "../services/catalogService";
 import { getApiErrorMessage } from "../utils/apiError";
@@ -18,6 +19,12 @@ const initialFilters = {
   query: "",
   categorySlug: "",
   brandSlug: "",
+  minPrice: "",
+  maxPrice: "",
+  platformCode: "",
+  minRating: "",
+  availability: "available",
+  sortBy: "name_asc",
 };
 
 function extractItems(responseData) {
@@ -51,6 +58,7 @@ const [selectedProducts, setSelectedProducts] =
 
 const [categories, setCategories] = useState([]);
 const [brands, setBrands] = useState([]);
+const [platforms, setPlatforms] = useState([]);
 
   const [page, setPage] = useState(1);
   const [reloadKey, setReloadKey] = useState(0);
@@ -72,10 +80,11 @@ const [brands, setBrands] = useState([]);
       setIsLoadingFilters(true);
 
       try {
-        const [categoryData, brandData] =
+          const [categoryData, brandData, platformData] =
           await Promise.all([
             getCategories(),
             getBrands(),
+            getPlatforms(),
           ]);
 
         if (!isMounted) {
@@ -84,6 +93,7 @@ const [brands, setBrands] = useState([]);
 
         setCategories(extractItems(categoryData));
         setBrands(extractItems(brandData));
+        setPlatforms(extractItems(platformData));
       } catch (error) {
         if (!isMounted) {
           return;
@@ -134,6 +144,29 @@ useEffect(() => {
     params.brand_slug =
       appliedFilters.brandSlug;
   }
+
+  if (appliedFilters.minPrice) {
+    params.min_price = appliedFilters.minPrice;
+  }
+
+  if (appliedFilters.maxPrice) {
+    params.max_price = appliedFilters.maxPrice;
+  }
+
+  if (appliedFilters.platformCode) {
+    params.platform_code = appliedFilters.platformCode;
+  }
+
+  if (appliedFilters.minRating) {
+    params.min_rating = appliedFilters.minRating;
+  }
+
+  if (appliedFilters.availability) {
+    params.is_available =
+      appliedFilters.availability === "available";
+  }
+
+  params.sort_by = appliedFilters.sortBy;
 
   getProducts(params)
     .then((responseData) => {
@@ -219,9 +252,8 @@ useEffect(() => {
   setPage(1);
 
   setAppliedFilters({
+    ...draftFilters,
     query: draftFilters.query.trim(),
-    categorySlug: draftFilters.categorySlug,
-    brandSlug: draftFilters.brandSlug,
   });
 }
 
@@ -302,7 +334,13 @@ const brandNameById = useMemo(
 const hasAppliedFilters = Boolean(
   appliedFilters.query ||
     appliedFilters.categorySlug ||
-    appliedFilters.brandSlug,
+    appliedFilters.brandSlug ||
+    appliedFilters.minPrice ||
+    appliedFilters.maxPrice ||
+    appliedFilters.platformCode ||
+    appliedFilters.minRating ||
+    appliedFilters.availability !== "available" ||
+    appliedFilters.sortBy !== "name_asc",
 );
 const selectedProductIds = useMemo(
   () =>
@@ -357,7 +395,7 @@ const comparisonUrl =
         </div>
 
         <form
-          className="mt-10 grid gap-4 rounded-3xl border border-vextro-border bg-white p-5 shadow-sm lg:grid-cols-[minmax(260px,1.6fr)_minmax(170px,0.7fr)_minmax(170px,0.7fr)_auto_auto] lg:items-end"
+          className="mt-10 grid gap-4 rounded-3xl border border-vextro-border bg-white p-5 shadow-sm sm:grid-cols-2 lg:grid-cols-4 lg:items-end"
           onSubmit={handleSearch}
         >
           <div className="grid gap-2">
@@ -412,6 +450,69 @@ const comparisonUrl =
     </option>
   ))}
 </select>
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-xs font-black text-vextro-ink" htmlFor="platform-filter">
+              Platform
+            </label>
+            <select id="platform-filter" name="platformCode" value={draftFilters.platformCode} onChange={handleFilterChange} className="min-h-12 rounded-xl border border-vextro-border bg-white px-4 text-sm">
+              <option value="">All platforms</option>
+              {platforms.map((platform) => (
+                <option key={platform.id} value={platform.code}>
+                  {platform.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-xs font-black text-vextro-ink" htmlFor="minimum-price">
+              Minimum price
+            </label>
+            <input id="minimum-price" name="minPrice" type="number" min="0" step="1" value={draftFilters.minPrice} onChange={handleFilterChange} placeholder="PKR 0" className="min-h-12 rounded-xl border border-vextro-border px-4 text-sm" />
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-xs font-black text-vextro-ink" htmlFor="maximum-price">
+              Maximum price
+            </label>
+            <input id="maximum-price" name="maxPrice" type="number" min="0" step="1" value={draftFilters.maxPrice} onChange={handleFilterChange} placeholder="No maximum" className="min-h-12 rounded-xl border border-vextro-border px-4 text-sm" />
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-xs font-black text-vextro-ink" htmlFor="rating-filter">
+              Minimum rating
+            </label>
+            <select id="rating-filter" name="minRating" value={draftFilters.minRating} onChange={handleFilterChange} className="min-h-12 rounded-xl border border-vextro-border bg-white px-4 text-sm">
+              <option value="">Any rating</option>
+              <option value="4">4.0 and above</option>
+              <option value="4.5">4.5 and above</option>
+            </select>
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-xs font-black text-vextro-ink" htmlFor="availability-filter">
+              Availability
+            </label>
+            <select id="availability-filter" name="availability" value={draftFilters.availability} onChange={handleFilterChange} className="min-h-12 rounded-xl border border-vextro-border bg-white px-4 text-sm">
+              <option value="available">Available offers</option>
+              <option value="unavailable">Unavailable offers</option>
+              <option value="">Any availability</option>
+            </select>
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-xs font-black text-vextro-ink" htmlFor="sort-products">
+              Sort by
+            </label>
+            <select id="sort-products" name="sortBy" value={draftFilters.sortBy} onChange={handleFilterChange} className="min-h-12 rounded-xl border border-vextro-border bg-white px-4 text-sm">
+              <option value="name_asc">Name A-Z</option>
+              <option value="newest">Newest</option>
+              <option value="price_asc">Lowest price</option>
+              <option value="price_desc">Highest price</option>
+              <option value="rating_desc">Highest rating</option>
+            </select>
           </div>
 
           <div className="grid gap-2">

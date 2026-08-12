@@ -8,7 +8,7 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session
 
-from app.api.dependencies.roles import consumer_or_admin
+from app.api.dependencies.roles import authenticated_role
 from app.core.database import get_db
 from app.models.user import User
 from app.schemas.notification import (
@@ -67,7 +67,7 @@ def list_notifications_endpoint(
         ge=0,
         description="Number of matching notifications to skip.",
     ),
-    current_user: User = Depends(consumer_or_admin),
+    current_user: User = Depends(authenticated_role),
     database_session: Session = Depends(get_db),
 ) -> NotificationListResponse:
     """Return notifications belonging to the authenticated user."""
@@ -87,7 +87,7 @@ def list_notifications_endpoint(
     status_code=status.HTTP_200_OK,
 )
 def unread_notification_count_endpoint(
-    current_user: User = Depends(consumer_or_admin),
+    current_user: User = Depends(authenticated_role),
     database_session: Session = Depends(get_db),
 ) -> NotificationUnreadCountResponse:
     """Return the authenticated user's unread notification count."""
@@ -104,7 +104,7 @@ def unread_notification_count_endpoint(
     status_code=status.HTTP_200_OK,
 )
 def mark_all_notifications_read_endpoint(
-    current_user: User = Depends(consumer_or_admin),
+    current_user: User = Depends(authenticated_role),
     database_session: Session = Depends(get_db),
 ) -> NotificationMarkAllReadResponse:
     """Mark all notifications belonging to the user as read."""
@@ -126,7 +126,7 @@ def mark_notification_read_endpoint(
         ge=1,
         description="Notification ID.",
     ),
-    current_user: User = Depends(consumer_or_admin),
+    current_user: User = Depends(authenticated_role),
     database_session: Session = Depends(get_db),
 ) -> NotificationResponse:
     """Mark one notification belonging to the user as read."""

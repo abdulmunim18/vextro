@@ -195,4 +195,9 @@ class AcquisitionListingResponse(BaseModel):
         ge=0,
     )
 
+    competitor_alerts_triggered: int = Field(
+        default=0,
+        ge=0,
+    )
+
     captured_at: datetime

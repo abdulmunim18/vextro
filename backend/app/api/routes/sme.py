@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 """API routes for SME business intelligence."""
 
 from fastapi import (
@@ -10,6 +11,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.roles import sme_or_admin
@@ -24,6 +26,7 @@ from app.schemas.sme import (
     CompetitorWatchlistListResponse,
     CompetitorWatchlistResponse,
     CompetitorWatchlistStatusUpdate,
+    CompetitorIntelligenceResponse,
     OrganizationCreate,
     OrganizationListResponse,
     OrganizationResponse,
@@ -36,8 +39,19 @@ from app.schemas.sales import (
     SalesImportResultResponse,
     SalesRecordListResponse,
 )
+from app.schemas.pricing_advisor import (
+    PricingAdvisorResponse,
+    PricingScenarioInput,
+)
+from app.services.pricing_advisor_service import (
+    PricingAdvisorService,
+)
 from app.services.sales_service import SalesService
 from app.services.sme_service import SMEService
+from app.services.competitor_report_service import (
+    build_competitor_pdf,
+    build_competitor_xlsx,
+)
 
 
 router = APIRouter(
@@ -48,6 +62,7 @@ router = APIRouter(
 
 sme_service = SMEService()
 sales_service = SalesService()
+pricing_advisor_service = PricingAdvisorService()
 
 
 @router.post(
@@ -592,4 +607,124 @@ def read_sales_analytics_endpoint(
         user_id=current_user.id,
         start_date=start_date,
         end_date=end_date,
+    )
+
+
+@router.post(
+    (
+        "/organizations/{organization_id}"
+        "/pricing/scenarios"
+    ),
+    response_model=PricingAdvisorResponse,
+    summary="Simulate SME Pricing Scenarios",
+)
+def simulate_pricing_scenarios_endpoint(
+    payload: PricingScenarioInput,
+    organization_id: int = Path(
+        ge=1,
+        description="Organization ID.",
+    ),
+    current_user: User = Depends(sme_or_admin),
+    database_session: Session = Depends(get_db),
+) -> PricingAdvisorResponse:
+    """Compare -5%, unchanged and +5% advisory scenarios."""
+
+    return pricing_advisor_service.simulate(
+        database_session,
+        organization_id=organization_id,
+        user_id=current_user.id,
+        payload=payload,
+    )
+
+
+@router.get(
+    (
+        "/organizations/{organization_id}"
+        "/competitor-intelligence"
+    ),
+    response_model=CompetitorIntelligenceResponse,
+    summary="Read SME Competitor Intelligence",
+)
+def read_competitor_intelligence_endpoint(
+    organization_id: int = Path(ge=1),
+    risk_threshold_percentage: Decimal = Query(
+        default=Decimal("5.00"),
+        gt=0,
+        le=100,
+    ),
+    current_user: User = Depends(sme_or_admin),
+    database_session: Session = Depends(get_db),
+) -> CompetitorIntelligenceResponse:
+    """Return price gaps, timelines, risks and share estimates."""
+
+    return sme_service.get_competitor_intelligence(
+        database_session,
+        organization_id=organization_id,
+        user_id=current_user.id,
+        risk_threshold_percentage=risk_threshold_percentage,
+    )
+
+
+@router.get(
+    (
+        "/organizations/{organization_id}"
+        "/competitor-intelligence/report"
+    ),
+    summary="Export SME Competitor Report",
+)
+def export_competitor_intelligence_report_endpoint(
+    organization_id: int = Path(ge=1),
+    report_format: str = Query(
+        default="pdf",
+        pattern="^(pdf|xlsx)$",
+        alias="format",
+    ),
+    risk_threshold_percentage: Decimal = Query(
+        default=Decimal("5.00"),
+        gt=0,
+        le=100,
+    ),
+    current_user: User = Depends(sme_or_admin),
+    database_session: Session = Depends(get_db),
+) -> Response:
+    """Export the authorized organization's analysis as PDF or Excel."""
+
+    organization = sme_service.read_organization(
+        database_session,
+        organization_id=organization_id,
+        user_id=current_user.id,
+    )
+    intelligence = sme_service.get_competitor_intelligence(
+        database_session,
+        organization_id=organization_id,
+        user_id=current_user.id,
+        risk_threshold_percentage=risk_threshold_percentage,
+    )
+    filename = (
+        f"vextro-{organization.slug}-competitor-report."
+        f"{report_format}"
+    )
+
+    if report_format == "xlsx":
+        content = build_competitor_xlsx(
+            organization_name=organization.name,
+            intelligence=intelligence,
+        )
+        media_type = (
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet"
+        )
+    else:
+        content = build_competitor_pdf(
+            organization_name=organization.name,
+            intelligence=intelligence,
+        )
+        media_type = "application/pdf"
+
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
     )

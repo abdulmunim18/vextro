@@ -6,6 +6,8 @@ from sqlalchemy import (
     or_,
     select,
 )
+from dataclasses import dataclass
+
 from sqlalchemy.orm import Session
 
 from app.models.business_product import BusinessProduct
@@ -16,6 +18,21 @@ from app.models.competitor_watchlist import (
 from app.models.organization import Organization
 from app.models.organization_user import OrganizationUser
 from app.models.product_listing import ProductListing
+from app.models.price_history import PriceHistory
+from app.models.platform import Platform
+from app.models.seller import Seller
+
+
+@dataclass(frozen=True)
+class CompetitorIntelligenceRecord:
+    """Joined data required for an SME competitor insight."""
+
+    watchlist: CompetitorWatchlist
+    business_product: BusinessProduct
+    listing: ProductListing
+    platform_name: str
+    seller_name: str | None
+    history: tuple[PriceHistory, ...]
 
 
 class SMERepository:
@@ -437,6 +454,7 @@ class SMERepository:
         organization_id: int,
         business_product_id: int,
         listing_id: int,
+        risk_threshold_percentage,
     ) -> CompetitorWatchlist:
         """Create a competitor watchlist entry."""
 
@@ -446,6 +464,7 @@ class SMERepository:
                 business_product_id
             ),
             listing_id=listing_id,
+            risk_threshold_percentage=risk_threshold_percentage,
             is_active=True,
         )
 
@@ -497,6 +516,122 @@ class SMERepository:
 
         entry.is_active = is_active
 
+        if is_active:
+            entry.last_risk_level = None
+
         database_session.flush()
 
         return entry
+
+    @staticmethod
+    def get_lowest_competitor_price(
+        database_session: Session,
+        *,
+        organization_id: int,
+        business_product_id: int,
+    ):
+        """Return the lowest active available monitored price."""
+
+        statement = (
+            select(func.min(ProductListing.current_price))
+            .join(
+                CompetitorWatchlist,
+                CompetitorWatchlist.listing_id
+                == ProductListing.id,
+            )
+            .where(
+                CompetitorWatchlist.organization_id
+                == organization_id,
+                CompetitorWatchlist.business_product_id
+                == business_product_id,
+                CompetitorWatchlist.is_active.is_(True),
+                ProductListing.is_available.is_(True),
+            )
+        )
+
+        return database_session.scalar(statement)
+
+    @staticmethod
+    def list_competitor_intelligence_records(
+        database_session: Session,
+        *,
+        organization_id: int,
+    ) -> list[CompetitorIntelligenceRecord]:
+        """Return active monitored listings with recent price history."""
+
+        statement = (
+            select(
+                CompetitorWatchlist,
+                BusinessProduct,
+                ProductListing,
+                Platform.name,
+                Seller.name,
+            )
+            .join(
+                BusinessProduct,
+                BusinessProduct.id
+                == CompetitorWatchlist.business_product_id,
+            )
+            .join(
+                ProductListing,
+                ProductListing.id
+                == CompetitorWatchlist.listing_id,
+            )
+            .join(
+                Platform,
+                Platform.id == ProductListing.platform_id,
+            )
+            .outerjoin(
+                Seller,
+                Seller.id == ProductListing.seller_id,
+            )
+            .where(
+                CompetitorWatchlist.organization_id
+                == organization_id,
+                CompetitorWatchlist.is_active.is_(True),
+                BusinessProduct.is_active.is_(True),
+            )
+            .order_by(
+                BusinessProduct.name.asc(),
+                ProductListing.current_price.asc(),
+            )
+        )
+
+        rows = database_session.execute(statement).all()
+        listing_ids = [row[2].id for row in rows]
+        history_by_listing: dict[int, list[PriceHistory]] = {
+            listing_id: []
+            for listing_id in listing_ids
+        }
+
+        if listing_ids:
+            history_statement = (
+                select(PriceHistory)
+                .where(
+                    PriceHistory.listing_id.in_(listing_ids),
+                )
+                .order_by(
+                    PriceHistory.listing_id.asc(),
+                    PriceHistory.captured_at.desc(),
+                )
+            )
+
+            for point in database_session.scalars(history_statement):
+                points = history_by_listing[point.listing_id]
+
+                if len(points) < 30:
+                    points.append(point)
+
+        return [
+            CompetitorIntelligenceRecord(
+                watchlist=row[0],
+                business_product=row[1],
+                listing=row[2],
+                platform_name=row[3],
+                seller_name=row[4],
+                history=tuple(
+                    reversed(history_by_listing[row[2].id])
+                ),
+            )
+            for row in rows
+        ]

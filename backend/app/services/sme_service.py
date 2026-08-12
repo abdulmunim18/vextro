@@ -2,6 +2,8 @@
 
 import re
 import unicodedata
+from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
 from math import ceil
 from typing import Any
 
@@ -24,6 +26,10 @@ from app.schemas.sme import (
     CompetitorWatchlistListResponse,
     CompetitorWatchlistResponse,
     CompetitorWatchlistStatusUpdate,
+    CompetitorInsightResponse,
+    CompetitorIntelligenceResponse,
+    CompetitorIntelligenceSummary,
+    CompetitorTimelinePoint,
     OrganizationCreate,
     OrganizationListResponse,
     OrganizationResponse,
@@ -743,6 +749,9 @@ class SMEService:
                         payload.business_product_id
                     ),
                     listing_id=payload.listing_id,
+                    risk_threshold_percentage=(
+                        payload.risk_threshold_percentage
+                    ),
                 )
             )
 
@@ -858,4 +867,200 @@ class SMEService:
 
         return CompetitorWatchlistResponse.model_validate(
             entry,
+        )
+
+    def get_competitor_intelligence(
+        self,
+        database_session: Session,
+        *,
+        organization_id: int,
+        user_id: int,
+        risk_threshold_percentage: Decimal,
+    ) -> CompetitorIntelligenceResponse:
+        """Return price gaps, timelines, risk and market-share estimates."""
+
+        self._get_accessible_organization(
+            database_session,
+            organization_id=organization_id,
+            user_id=user_id,
+        )
+        records = self.repository.list_competitor_intelligence_records(
+            database_session,
+            organization_id=organization_id,
+        )
+        records_by_product: dict[int, list[Any]] = {}
+
+        for record in records:
+            records_by_product.setdefault(
+                record.business_product.id,
+                [],
+            ).append(record)
+
+        market_share_by_product: dict[int, Decimal | None] = {}
+
+        for product_id, product_records in records_by_product.items():
+            own_price = product_records[0].business_product.selling_price
+
+            if own_price is None or own_price <= 0:
+                market_share_by_product[product_id] = None
+                continue
+
+            own_weight = Decimal("1") / own_price
+            competitor_weights = sum(
+                (
+                    Decimal("1") / record.listing.current_price
+                    for record in product_records
+                    if record.listing.current_price > 0
+                ),
+                Decimal("0"),
+            )
+            total_weight = own_weight + competitor_weights
+            market_share_by_product[product_id] = (
+                own_weight
+                / total_weight
+                * Decimal("100")
+            ).quantize(
+                Decimal("0.01"),
+                rounding=ROUND_HALF_UP,
+            )
+
+        items: list[CompetitorInsightResponse] = []
+        gap_values: list[Decimal] = []
+        at_risk_product_ids: set[int] = set()
+
+        for record in records:
+            own_price = record.business_product.selling_price
+            competitor_price = record.listing.current_price
+            gap: Decimal | None = None
+            gap_percentage: Decimal | None = None
+            risk_reasons: list[str] = []
+
+            if own_price is None:
+                position = "unknown"
+                risk_level = "medium"
+                risk_reasons.append(
+                    "Add a selling price to calculate the competitor gap."
+                )
+            else:
+                gap = (own_price - competitor_price).quantize(
+                    Decimal("0.01"),
+                    rounding=ROUND_HALF_UP,
+                )
+                gap_values.append(gap)
+                gap_percentage = (
+                    gap
+                    / competitor_price
+                    * Decimal("100")
+                ).quantize(
+                    Decimal("0.01"),
+                    rounding=ROUND_HALF_UP,
+                )
+
+                if gap > 0:
+                    position = "above_competitor"
+                elif gap < 0:
+                    position = "below_competitor"
+                else:
+                    position = "matched"
+
+                if gap_percentage >= risk_threshold_percentage:
+                    risk_level = "high"
+                    at_risk_product_ids.add(record.business_product.id)
+                    risk_reasons.append(
+                        "Own price exceeds the monitored competitor by "
+                        f"{gap_percentage}%."
+                    )
+                elif gap_percentage > 0:
+                    risk_level = "medium"
+                    risk_reasons.append(
+                        "Own price is above the competitor but below the "
+                        "configured risk threshold."
+                    )
+                else:
+                    risk_level = "low"
+
+            if not record.listing.is_available:
+                risk_reasons.append(
+                    "Competitor listing is currently unavailable."
+                )
+
+            items.append(
+                CompetitorInsightResponse(
+                    watchlist_id=record.watchlist.id,
+                    business_product_id=record.business_product.id,
+                    listing_id=record.listing.id,
+                    own_product_name=record.business_product.name,
+                    own_price=own_price,
+                    competitor_price=competitor_price,
+                    currency=record.listing.currency,
+                    platform_name=record.platform_name,
+                    seller_name=record.seller_name,
+                    price_gap=gap,
+                    price_gap_percentage=gap_percentage,
+                    price_position=position,
+                    risk_level=risk_level,
+                    risk_reasons=risk_reasons,
+                    estimated_own_market_share_percentage=(
+                        market_share_by_product[
+                            record.business_product.id
+                        ]
+                    ),
+                    timeline=[
+                        CompetitorTimelinePoint(
+                            price=point.price,
+                            is_available=point.is_available,
+                            captured_at=point.captured_at,
+                        )
+                        for point in record.history
+                    ],
+                )
+            )
+
+        market_shares = [
+            share
+            for share in market_share_by_product.values()
+            if share is not None
+        ]
+        average_gap = (
+            (
+                sum(gap_values, Decimal("0"))
+                / Decimal(len(gap_values))
+            ).quantize(
+                Decimal("0.01"),
+                rounding=ROUND_HALF_UP,
+            )
+            if gap_values
+            else None
+        )
+        average_market_share = (
+            (
+                sum(market_shares, Decimal("0"))
+                / Decimal(len(market_shares))
+            ).quantize(
+                Decimal("0.01"),
+                rounding=ROUND_HALF_UP,
+            )
+            if market_shares
+            else None
+        )
+
+        return CompetitorIntelligenceResponse(
+            organization_id=organization_id,
+            generated_at=datetime.now(timezone.utc),
+            summary=CompetitorIntelligenceSummary(
+                tracked_competitors=len(records),
+                tracked_products=len(records_by_product),
+                average_price_gap=average_gap,
+                products_at_risk=len(at_risk_product_ids),
+                estimated_average_market_share_percentage=(
+                    average_market_share
+                ),
+                risk_threshold_percentage=risk_threshold_percentage,
+                estimation_note=(
+                    "Market share is a transparent price-competitiveness "
+                    "estimate based on inverse prices, not marketplace "
+                    "sales-volume data."
+                ),
+            ),
+            items=items,
         )

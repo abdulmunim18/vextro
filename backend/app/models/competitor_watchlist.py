@@ -1,6 +1,7 @@
 """Competitor listings monitored by SME organizations."""
 
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
@@ -8,6 +9,8 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Identity,
+    Numeric,
+    String,
     UniqueConstraint,
     func,
     text,
@@ -88,4 +91,20 @@ class CompetitorWatchlist(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+    risk_threshold_percentage: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2),
+        nullable=False,
+        server_default=text("5.00"),
+    )
+
+    last_risk_level: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+    )
+
+    last_alerted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )

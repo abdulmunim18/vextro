@@ -443,9 +443,13 @@ function SMECompetitorWatchlist({
     }, [organizationId]);
 
   useEffect(() => {
-    setSelectedListingId("");
-    setSuccessMessage("");
-    loadWatchlistWorkspace();
+    const timeoutId = window.setTimeout(() => {
+      setSelectedListingId("");
+      setSuccessMessage("");
+      loadWatchlistWorkspace();
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
   }, [loadWatchlistWorkspace]);
 
   const businessProductMap = useMemo(

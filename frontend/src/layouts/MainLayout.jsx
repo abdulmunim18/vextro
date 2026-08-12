@@ -6,7 +6,7 @@ import {
 } from "react-router-dom";
 
 import NotificationBell from "../components/NotificationBell";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 
 function getDesktopNavClass({ isActive }) {
   const baseClasses =
@@ -65,6 +65,10 @@ function MainLayout() {
     navigationItems.push({
       label: "Price Alerts",
       path: "/alerts",
+    });
+    navigationItems.push({
+      label: "Assistant",
+      path: "/assistant",
     });
   }
 if (
@@ -153,7 +157,7 @@ if (
           <div className="hidden items-center gap-3 md:flex">
             {!isInitializing && isAuthenticated ? (
               <>
-                {hasRole("consumer", "admin") ? (
+                {hasRole("consumer", "sme", "admin") ? (
                   <NotificationBell />
                 ) : null}
 
@@ -209,7 +213,7 @@ if (
           <div className="ml-auto flex items-center gap-2 md:hidden">
             {!isInitializing &&
             isAuthenticated &&
-            hasRole("consumer", "admin") ? (
+            hasRole("consumer", "sme", "admin") ? (
               <NotificationBell />
             ) : null}
 

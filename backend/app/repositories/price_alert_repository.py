@@ -1,10 +1,11 @@
 from decimal import Decimal
 from sqlalchemy import or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.canonical_product import CanonicalProduct
 from app.models.price_alert import PriceAlert
 from app.models.product_listing import ProductListing
+from app.models.product_variant import ProductVariant
 
 
 def get_active_product_target(
@@ -80,6 +81,42 @@ def list_user_price_alerts(
     return list(
         database_session.scalars(query).all()
     )
+
+
+def list_user_active_alerts_for_product(
+    database_session: Session,
+    *,
+    user_id: int,
+    product_id: int,
+) -> list[PriceAlert]:
+    """Return active product/listing alerts relevant to one product."""
+
+    query = (
+        select(PriceAlert)
+        .outerjoin(
+            ProductListing,
+            PriceAlert.listing_id == ProductListing.id,
+        )
+        .outerjoin(
+            ProductVariant,
+            ProductListing.product_variant_id == ProductVariant.id,
+        )
+        .options(selectinload(PriceAlert.listing))
+        .where(
+            PriceAlert.user_id == user_id,
+            PriceAlert.is_active.is_(True),
+            or_(
+                PriceAlert.canonical_product_id == product_id,
+                ProductVariant.canonical_product_id == product_id,
+            ),
+        )
+        .order_by(
+            PriceAlert.created_at.desc(),
+            PriceAlert.id.desc(),
+        )
+    )
+
+    return list(database_session.scalars(query).unique().all())
 
 
 def get_user_price_alert(

@@ -17,12 +17,20 @@ Working modules:
 - Admin dashboard
 - Admin user, product, and marketplace-listing management
 - Backend API tests and frontend production build
+- Advanced catalog filters and side-by-side product comparison
+- Best-time-to-buy guidance with confidence, data coverage, and authenticated target-price personalization
+- Versioned ML price-forecast ingestion, persistence, evaluation metrics, and historical-vs-predicted product chart
+- In-app consumer price-drop and SME competitor-risk notifications
+- SME competitor price-gap intelligence and PDF/Excel reports
+- SME dynamic pricing scenario advisor
+- Persistent, database-grounded shopping assistant
+- Docker Compose deployment for PostgreSQL, FastAPI and React/Nginx
 
-Next development phase:
+Team-dependent modules still in development:
 
 - Daraz and PriceOye data acquisition
 - Data normalization and product matching
-- AI forecasting, sentiment, recommendations, and SME intelligence
+- AI forecasting, sentiment, recommendation-model training, demand forecasting and trust verification
 
 ## Technology Stack
 
@@ -134,9 +142,13 @@ Open `backend/.env` and update the local values.
 Main settings:
 
 ```env
-DATABASE_URL=postgresql+psycopg://vextro_app:your_local_password@localhost:5432/vextro_db
-JWT_SECRET=replace_with_a_long_random_secret
-FRONTEND_ORIGIN=http://localhost:5173
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_NAME=vextro_db
+DB_USER=vextro_app
+DB_PASSWORD=your_local_password
+JWT_SECRET_KEY=replace_with_a_long_random_secret
+CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
 Generate a JWT secret:
@@ -223,6 +235,18 @@ cd path\to\vextro\frontend
 npm run dev
 ```
 
+# Docker Startup
+
+From the repository root:
+
+```powershell
+Copy-Item .env.docker.example .env.docker
+# Replace every secret in .env.docker.
+docker compose --env-file .env.docker up --build -d
+```
+
+Open `http://localhost:8080`. See `docs/deployment-and-demo.md` for health checks, backup and demo fallbacks.
+
 # Fresh Database Note
 
 Alembic migrations create the schema and repository-controlled reference data.
@@ -245,6 +269,7 @@ Frontend:
 ```powershell
 cd frontend
 npm run build
+npm run lint
 ```
 
 Git:

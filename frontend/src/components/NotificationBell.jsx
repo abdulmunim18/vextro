@@ -109,7 +109,10 @@ function NotificationBell() {
 
 
   useEffect(() => {
-    refreshUnreadCount();
+    const initialRefreshId = window.setTimeout(
+      refreshUnreadCount,
+      0,
+    );
 
     const intervalId = window.setInterval(
       refreshUnreadCount,
@@ -139,6 +142,7 @@ function NotificationBell() {
     );
 
     return () => {
+      window.clearTimeout(initialRefreshId);
       window.clearInterval(intervalId);
 
       window.removeEventListener(

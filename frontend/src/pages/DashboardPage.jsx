@@ -7,7 +7,7 @@ import {
 import { Link } from "react-router-dom";
 
 import RouteLoadingState from "../components/RouteLoadingState";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 import { getProductById } from "../services/catalogService";
 import { getPriceAlerts } from "../services/priceAlertService";
 import { getApiErrorMessage } from "../utils/apiError";
@@ -144,7 +144,8 @@ const canUseSmeWorkspace = hasRole(
   }, [canUsePriceAlerts]);
 
   useEffect(() => {
-    loadDashboard();
+    const timeoutId = window.setTimeout(loadDashboard, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [loadDashboard]);
 
   const statistics = useMemo(() => {

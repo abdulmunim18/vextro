@@ -3,6 +3,8 @@ import SMEBusinessProducts from "../components/SMEBusinessProducts";
 import SMECompetitorWatchlist from "../components/SMECompetitorWatchlist";
 import SMESalesImport from "../components/SMESalesImport";
 import SMESalesAnalytics from "../components/SMESalesAnalytics";
+import SMECompetitorIntelligence from "../components/SMECompetitorIntelligence";
+import SMEPricingAdvisor from "../components/SMEPricingAdvisor";
 import {
   createOrganization,
   getOrganizations,
@@ -433,7 +435,8 @@ function SMEPage() {
   }, []);
 
   useEffect(() => {
-    loadOrganizations();
+    const timeoutId = window.setTimeout(loadOrganizations, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [loadOrganizations]);
 
   const selectedOrganization = useMemo(
@@ -606,6 +609,12 @@ function SMEPage() {
     <SMECompetitorWatchlist
   organizationId={selectedOrganization.id}
   organizationName={selectedOrganization.name}
+/>
+<SMECompetitorIntelligence
+  organizationId={selectedOrganization.id}
+/>
+<SMEPricingAdvisor
+  organizationId={selectedOrganization.id}
 />
 <SMESalesImport
   organizationId={selectedOrganization.id}
