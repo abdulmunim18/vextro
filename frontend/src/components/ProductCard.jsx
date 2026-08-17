@@ -1,8 +1,15 @@
 import { Link } from "react-router-dom";
 
-function ProductCard({ product }) {
+function ProductCard({
+  product,
+  isSelected = false,
+  compareDisabled = false,
+  onToggleCompare,
+})  {
   const productName =
     product.name || "Unnamed product";
+  const lowestPrice = Number(product.lowest_price);
+  const highestRating = Number(product.highest_rating);
 
   return (
     <article className="group flex h-full flex-col overflow-hidden rounded-3xl border border-vextro-border bg-white shadow-sm transition duration-300 hover:-translate-y-1.5 hover:border-blue-200 hover:shadow-vextro">
@@ -55,6 +62,48 @@ function ProductCard({ product }) {
             ? `Model: ${product.model}`
             : "Standardized canonical product"}
         </p>
+
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <div className="rounded-xl bg-blue-50 p-3">
+            <span className="block text-[10px] font-black uppercase tracking-wide text-blue-600">
+              From
+            </span>
+            <strong className="mt-1 block text-sm font-black text-slate-950">
+              {Number.isFinite(lowestPrice)
+                ? new Intl.NumberFormat("en-PK", {
+                    style: "currency",
+                    currency: "PKR",
+                    maximumFractionDigits: 0,
+                  }).format(lowestPrice)
+                : "No offer"}
+            </strong>
+          </div>
+          <div className="rounded-xl bg-amber-50 p-3">
+            <span className="block text-[10px] font-black uppercase tracking-wide text-amber-700">
+              Best rating
+            </span>
+            <strong className="mt-1 block text-sm font-black text-slate-950">
+              {Number.isFinite(highestRating)
+                ? `${highestRating.toFixed(1)} / 5`
+                : "Not rated"}
+            </strong>
+          </div>
+        </div>
+        <button
+  className={`mt-5 min-h-11 w-full rounded-xl border px-4 text-sm font-black transition ${
+    isSelected
+      ? "border-vextro-primary bg-vextro-primary text-white"
+      : "border-vextro-border bg-white text-vextro-ink hover:border-blue-300 hover:bg-blue-50 hover:text-vextro-primary"
+  } disabled:cursor-not-allowed disabled:opacity-40`}
+  type="button"
+  aria-pressed={isSelected}
+  disabled={compareDisabled && !isSelected}
+  onClick={() => onToggleCompare?.(product)}
+>
+  {isSelected
+    ? "✓ Added to comparison"
+    : "Add to comparison"}
+</button>
 
         <div className="mt-auto pt-7">
           <div className="rounded-2xl bg-vextro-canvas p-4">

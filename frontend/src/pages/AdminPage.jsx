@@ -6,7 +6,7 @@ import {
 } from "react";
 
 import RouteLoadingState from "../components/RouteLoadingState";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 import {
   getAdminDashboard,
   getAdminListings,
@@ -699,26 +699,42 @@ function AdminPage() {
   }, [appliedListingFilters, listingPage]);
 
   useEffect(() => {
-    loadDashboard();
-    loadReferenceData();
+    const timeoutId = window.setTimeout(() => {
+      loadDashboard();
+      loadReferenceData();
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
   }, [loadDashboard, loadReferenceData]);
 
   useEffect(() => {
-    if (activeTab === "users") {
-      loadUsers();
-    }
+    const timeoutId = window.setTimeout(() => {
+      if (activeTab === "users") {
+        loadUsers();
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
   }, [activeTab, loadUsers]);
 
   useEffect(() => {
-    if (activeTab === "products") {
-      loadProducts();
-    }
+    const timeoutId = window.setTimeout(() => {
+      if (activeTab === "products") {
+        loadProducts();
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
   }, [activeTab, loadProducts]);
 
   useEffect(() => {
-    if (activeTab === "listings") {
-      loadListings();
-    }
+    const timeoutId = window.setTimeout(() => {
+      if (activeTab === "listings") {
+        loadListings();
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
   }, [activeTab, loadListings]);
 
   const statistics = useMemo(

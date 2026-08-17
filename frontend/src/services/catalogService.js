@@ -51,3 +51,44 @@ export async function getProductPriceHistory(
 
   return response.data;
 }
+export async function getProductComparison(productIds) {
+  const params = new URLSearchParams();
+
+  productIds.forEach((productId) => {
+    params.append("product_ids", String(productId));
+  });
+
+  const response = await apiClient.get(
+    "/products/compare",
+    {
+      params,
+    },
+  );
+
+  return response.data;
+}
+
+export async function getProductPriceForecast(productId) {
+  const response = await apiClient.get(
+    `/products/${productId}/forecast`,
+  );
+
+  return response.data;
+}
+export async function getProductBuyGuidance(productId) {
+  const response = await apiClient.get(
+    `/products/${productId}/buy-guidance`,
+  );
+
+  return response.data;
+}
+
+export async function getPersonalizedProductBuyGuidance(
+  productId,
+) {
+  const response = await apiClient.get(
+    `/products/${productId}/personalized-buy-guidance`,
+  );
+
+  return response.data;
+}

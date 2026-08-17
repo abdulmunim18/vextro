@@ -1,12 +1,13 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.canonical_product import CanonicalProduct
 from app.models.platform import Platform
 from app.models.price_history import PriceHistory
+from app.models.price_forecast import PriceForecast
 from app.models.product_listing import ProductListing
 from app.models.product_variant import ProductVariant
 from app.models.seller import Seller
@@ -132,3 +133,94 @@ def list_product_price_history(
         )
         for listing, platform_name, seller_name in listing_rows
     ]
+
+
+def get_active_variant_for_forecast(
+    database_session: Session,
+    variant_id: int,
+) -> ProductVariant | None:
+    """Return an active variant whose canonical product is also active."""
+
+    query = (
+        select(ProductVariant)
+        .join(
+            CanonicalProduct,
+            ProductVariant.canonical_product_id == CanonicalProduct.id,
+        )
+        .where(
+            ProductVariant.id == variant_id,
+            ProductVariant.is_active.is_(True),
+            CanonicalProduct.is_active.is_(True),
+        )
+    )
+
+    return database_session.scalar(query)
+
+
+def replace_active_variant_forecast(
+    database_session: Session,
+    forecast: PriceForecast,
+) -> PriceForecast:
+    """Activate a new forecast and retire prior versions for its variant."""
+
+    database_session.execute(
+        update(PriceForecast)
+        .where(
+            PriceForecast.product_variant_id == forecast.product_variant_id,
+            PriceForecast.is_active.is_(True),
+        )
+        .values(is_active=False)
+    )
+    database_session.add(forecast)
+    database_session.flush()
+
+    return forecast
+
+
+def get_active_variant_forecast(
+    database_session: Session,
+    variant_id: int,
+) -> PriceForecast | None:
+    """Return the newest active forecast for one exact variant."""
+
+    query = (
+        select(PriceForecast)
+        .where(
+            PriceForecast.product_variant_id == variant_id,
+            PriceForecast.is_active.is_(True),
+        )
+        .order_by(
+            PriceForecast.generated_at.desc(),
+            PriceForecast.id.desc(),
+        )
+        .limit(1)
+    )
+
+    return database_session.scalar(query)
+
+
+def get_latest_product_forecast(
+    database_session: Session,
+    product_id: int,
+) -> PriceForecast | None:
+    """Return the newest active forecast across a product's variants."""
+
+    query = (
+        select(PriceForecast)
+        .join(
+            ProductVariant,
+            PriceForecast.product_variant_id == ProductVariant.id,
+        )
+        .where(
+            ProductVariant.canonical_product_id == product_id,
+            ProductVariant.is_active.is_(True),
+            PriceForecast.is_active.is_(True),
+        )
+        .order_by(
+            PriceForecast.generated_at.desc(),
+            PriceForecast.id.desc(),
+        )
+        .limit(1)
+    )
+
+    return database_session.scalar(query)

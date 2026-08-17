@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -11,7 +12,10 @@ import {
 import CreatePriceAlertCard from "../components/CreatePriceAlertCard";
 import MarketplaceListingCard from "../components/MarketplaceListingCard";
 import PriceHistoryChart from "../components/PriceHistoryChart";
+import PriceForecastCard from "../components/PriceForecastCard";
+import BuyTimeGuidanceCard from "../components/BuyTimeGuidanceCard";
 import RouteLoadingState from "../components/RouteLoadingState";
+import { useAuth } from "../context/useAuth";
 import {
   getBrands,
   getCategories,
@@ -19,6 +23,9 @@ import {
   getProductById,
   getProductListings,
   getProductPriceHistory,
+  getProductPriceForecast,
+  getProductBuyGuidance,
+  getPersonalizedProductBuyGuidance,
 } from "../services/catalogService";
 import { getApiErrorMessage } from "../utils/apiError";
 import {
@@ -41,6 +48,13 @@ function extractItems(responseData) {
 
 function ProductDetailPage() {
   const { productId } = useParams();
+  const {
+    isAuthenticated,
+    hasRole,
+  } = useAuth();
+
+  const canPersonalizeGuidance =
+    isAuthenticated && hasRole("consumer", "admin");
 
   const [product, setProduct] = useState(null);
   const [listingResponse, setListingResponse] =
@@ -48,6 +62,9 @@ function ProductDetailPage() {
 
   const [priceHistory, setPriceHistory] =
     useState(null);
+  const [priceForecast, setPriceForecast] =
+    useState(null);
+  const [buyGuidance, setBuyGuidance] = useState(null);
 
   const [platforms, setPlatforms] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -83,6 +100,8 @@ function ProductDetailPage() {
           productData,
           listingsData,
           historyData,
+          forecastData,
+          guidanceData,
           platformData,
           categoryData,
           brandData,
@@ -90,6 +109,12 @@ function ProductDetailPage() {
           getProductById(numericProductId),
           getProductListings(numericProductId),
           getProductPriceHistory(numericProductId),
+          getProductPriceForecast(numericProductId),
+          canPersonalizeGuidance
+            ? getPersonalizedProductBuyGuidance(
+                numericProductId,
+              )
+            : getProductBuyGuidance(numericProductId),
           getPlatforms(),
           getCategories(),
           getBrands(),
@@ -102,6 +127,8 @@ function ProductDetailPage() {
         setProduct(productData);
         setListingResponse(listingsData);
         setPriceHistory(historyData);
+        setPriceForecast(forecastData);
+        setBuyGuidance(guidanceData);
         setPlatforms(extractItems(platformData));
         setCategories(extractItems(categoryData));
         setBrands(extractItems(brandData));
@@ -143,7 +170,36 @@ function ProductDetailPage() {
     return () => {
       isMounted = false;
     };
-  }, [productId]);
+  }, [canPersonalizeGuidance, productId]);
+
+  const refreshPersonalizedGuidance = useCallback(
+    async () => {
+      if (!canPersonalizeGuidance) {
+        return;
+      }
+
+      const numericProductId = Number(productId);
+
+      if (
+        !Number.isInteger(numericProductId) ||
+        numericProductId < 1
+      ) {
+        return;
+      }
+
+      try {
+        const guidanceData =
+          await getPersonalizedProductBuyGuidance(
+            numericProductId,
+          );
+
+        setBuyGuidance(guidanceData);
+      } catch {
+        // Alert creation remains successful even if this optional refresh fails.
+      }
+    },
+    [canPersonalizeGuidance, productId],
+  );
 
   const listings = useMemo(
     () =>
@@ -461,11 +517,12 @@ function ProductDetailPage() {
               ) : null}
             </div>
             <CreatePriceAlertCard
-  product={product}
-  listings={listings}
-  platformNames={platformNames}
-  lowestListing={lowestListing}
-/>
+              product={product}
+              listings={listings}
+              platformNames={platformNames}
+              lowestListing={lowestListing}
+              onAlertCreated={refreshPersonalizedGuidance}
+            />
           </div>
         </div>
 
@@ -649,6 +706,13 @@ function ProductDetailPage() {
             <PriceHistoryChart history={priceHistory} />
           </div>
         </section>
+
+        <PriceForecastCard
+          history={priceHistory}
+          forecast={priceForecast}
+        />
+
+        <BuyTimeGuidanceCard guidance={buyGuidance} />
 
         {specifications.length > 0 ? (
           <section className="mt-10 rounded-3xl border border-vextro-border bg-white p-7 shadow-sm sm:p-9">

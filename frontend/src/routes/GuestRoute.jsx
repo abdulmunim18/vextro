@@ -4,7 +4,7 @@ import {
 } from "react-router-dom";
 
 import RouteLoadingState from "../components/RouteLoadingState";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 
 function getAuthenticatedDestination(user) {
   const roles = (user?.roles || []).map((role) =>

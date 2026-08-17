@@ -334,6 +334,12 @@ class CompetitorWatchlistCreate(SMEInputModel):
         ge=1,
     )
 
+    risk_threshold_percentage: Decimal = Field(
+        default=Decimal("5.00"),
+        gt=0,
+        le=100,
+    )
+
 
 class CompetitorWatchlistStatusUpdate(
     SMEInputModel,
@@ -360,6 +366,12 @@ class CompetitorWatchlistResponse(BaseModel):
 
     is_active: bool
 
+    risk_threshold_percentage: Decimal
+
+    last_risk_level: str | None
+
+    last_alerted_at: datetime | None
+
     created_at: datetime
 
     updated_at: datetime
@@ -377,5 +389,59 @@ class CompetitorWatchlistListResponse(
     items: list[
         CompetitorWatchlistResponse
     ] = Field(
+        default_factory=list,
+    )
+
+
+class CompetitorTimelinePoint(BaseModel):
+    """One historical competitor-price observation."""
+
+    price: Decimal
+    is_available: bool
+    captured_at: datetime
+
+
+class CompetitorInsightResponse(BaseModel):
+    """Actionable pricing insight for one monitored listing."""
+
+    watchlist_id: int
+    business_product_id: int
+    listing_id: int
+    own_product_name: str
+    own_price: Decimal | None
+    competitor_price: Decimal
+    currency: str
+    platform_name: str
+    seller_name: str | None
+    price_gap: Decimal | None
+    price_gap_percentage: Decimal | None
+    price_position: str
+    risk_level: str
+    risk_reasons: list[str] = Field(default_factory=list)
+    estimated_own_market_share_percentage: Decimal | None
+    timeline: list[CompetitorTimelinePoint] = Field(
+        default_factory=list,
+    )
+
+
+class CompetitorIntelligenceSummary(BaseModel):
+    """Headline SME competitor-monitoring metrics."""
+
+    tracked_competitors: int = Field(ge=0)
+    tracked_products: int = Field(ge=0)
+    average_price_gap: Decimal | None
+    products_at_risk: int = Field(ge=0)
+    estimated_average_market_share_percentage: Decimal | None
+    risk_threshold_percentage: Decimal
+    estimation_note: str
+
+
+class CompetitorIntelligenceResponse(BaseModel):
+    """Complete competitor dashboard response."""
+
+    organization_id: int
+    generated_at: datetime
+    summary: CompetitorIntelligenceSummary
+    items: list[CompetitorInsightResponse] = Field(
         default_factory=list,
     )

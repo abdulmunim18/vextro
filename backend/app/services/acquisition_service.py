@@ -10,7 +10,12 @@ from app.schemas.acquisition import (
     AcquisitionListingInput,
     AcquisitionListingResponse,
 )
-
+from app.services.price_alert_service import (
+    evaluate_price_alerts_for_capture,
+)
+from app.services.competitor_alert_service import (
+    evaluate_competitor_risk_alerts,
+)
 
 class AcquisitionService:
     """Process normalized marketplace listing captures."""
@@ -242,9 +247,21 @@ class AcquisitionService:
                 )
             )
 
-            # Alert evaluation will be connected after
-            # the ingestion endpoint is operational.
-            alerts_triggered = 0
+            alerts_triggered = evaluate_price_alerts_for_capture(
+                database_session,
+                canonical_product_id=canonical_product.id,
+                listing_id=listing.id,
+                current_price=payload.current_price,
+                currency=payload.currency,
+            )
+            competitor_alerts_triggered = (
+                evaluate_competitor_risk_alerts(
+                    database_session,
+                    listing_id=listing.id,
+                    competitor_price=payload.current_price,
+                    currency=payload.currency,
+                )
+            )
 
             database_session.commit()
 
@@ -272,6 +289,9 @@ class AcquisitionService:
                 seller_created=seller_created,
                 price_history_created=True,
                 alerts_triggered=alerts_triggered,
+                competitor_alerts_triggered=(
+                    competitor_alerts_triggered
+                ),
                 captured_at=price_history.captured_at,
             )
 

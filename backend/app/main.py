@@ -12,6 +12,11 @@ from app.api.routes.admin import router as admin_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.catalog import router as catalog_router
 from app.api.routes.acquisition import router as acquisition_router
+from app.api.routes.forecast_integration import router as forecast_integration_router
+from app.api.routes.notifications import (
+    router as notifications_router,
+)
+from app.api.routes.assistant import router as assistant_router
 from app.api.routes.sme import router as sme_router
 from app.api.routes.admin_catalog import (
     router as admin_catalog_router,
@@ -33,10 +38,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -51,6 +53,13 @@ app.include_router(product_catalog_router)
 app.include_router(price_alerts_router)
 app.include_router(price_intelligence_router)
 app.include_router(ingest.router, prefix="/api/v1")
+app.include_router(admin_router)
+app.include_router(admin_catalog_router)
+app.include_router(acquisition_router)
+app.include_router(forecast_integration_router)
+app.include_router(sme_router)
+app.include_router(notifications_router)
+app.include_router(assistant_router)
 
 @app.get("/", tags=["Root"])
 def root() -> dict[str, str]:

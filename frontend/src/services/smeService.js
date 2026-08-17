@@ -193,3 +193,55 @@ export async function getSalesImportRecords(
 
   return response.data;
 }
+export const getSalesAnalytics = async (
+  organizationId,
+  params = {},
+) => {
+  const response = await apiClient.get(
+    `/sme/organizations/${organizationId}/sales/analytics`,
+    {
+      params,
+    },
+  );
+
+  return response.data;
+};
+
+export async function getCompetitorIntelligence(
+  organizationId,
+  params = {},
+) {
+  const response = await apiClient.get(
+    `/sme/organizations/${organizationId}/competitor-intelligence`,
+    { params },
+  );
+
+  return response.data;
+}
+
+export async function downloadCompetitorReport(
+  organizationId,
+  reportFormat,
+) {
+  const response = await apiClient.get(
+    `/sme/organizations/${organizationId}/competitor-intelligence/report`,
+    {
+      params: { format: reportFormat },
+      responseType: "blob",
+    },
+  );
+
+  return response;
+}
+
+export async function simulatePricingScenarios(
+  organizationId,
+  payload,
+) {
+  const response = await apiClient.post(
+    `/sme/organizations/${organizationId}/pricing/scenarios`,
+    payload,
+  );
+
+  return response.data;
+}

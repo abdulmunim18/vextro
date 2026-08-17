@@ -1,13 +1,14 @@
 import {
-  useCallback,
   useEffect,
   useMemo,
   useState,
 } from "react";
+import { Link } from "react-router-dom";
 import ProductCard from "../components/ProductCard";
 import {
   getBrands,
   getCategories,
+  getPlatforms,
   getProducts,
 } from "../services/catalogService";
 import { getApiErrorMessage } from "../utils/apiError";
@@ -16,8 +17,14 @@ const PAGE_SIZE = 12;
 
 const initialFilters = {
   query: "",
-  categoryId: "",
-  brandId: "",
+  categorySlug: "",
+  brandSlug: "",
+  minPrice: "",
+  maxPrice: "",
+  platformCode: "",
+  minRating: "",
+  availability: "available",
+  sortBy: "name_asc",
 };
 
 function extractItems(responseData) {
@@ -45,11 +52,16 @@ function ProductsPage() {
     initialFilters,
   );
 
-  const [products, setProducts] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [brands, setBrands] = useState([]);
+const [products, setProducts] = useState([]);
+const [selectedProducts, setSelectedProducts] =
+  useState([]);
+
+const [categories, setCategories] = useState([]);
+const [brands, setBrands] = useState([]);
+const [platforms, setPlatforms] = useState([]);
 
   const [page, setPage] = useState(1);
+  const [reloadKey, setReloadKey] = useState(0);
   const [totalItems, setTotalItems] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
 
@@ -68,10 +80,11 @@ function ProductsPage() {
       setIsLoadingFilters(true);
 
       try {
-        const [categoryData, brandData] =
+          const [categoryData, brandData, platformData] =
           await Promise.all([
             getCategories(),
             getBrands(),
+            getPlatforms(),
           ]);
 
         if (!isMounted) {
@@ -80,6 +93,7 @@ function ProductsPage() {
 
         setCategories(extractItems(categoryData));
         setBrands(extractItems(brandData));
+        setPlatforms(extractItems(platformData));
       } catch (error) {
         if (!isMounted) {
           return;
@@ -105,38 +119,63 @@ function ProductsPage() {
     };
   }, []);
 
-  const loadProducts = useCallback(async () => {
-    setIsLoadingProducts(true);
-    setErrorMessage("");
+useEffect(() => {
+  let isCancelled = false;
 
-    const params = {
-      page,
-      page_size: PAGE_SIZE,
-    };
+  const params = {
+    page,
+    page_size: PAGE_SIZE,
+  };
 
-    const normalizedQuery =
-      appliedFilters.query.trim();
+  const normalizedQuery =
+    appliedFilters.query.trim();
 
-    if (normalizedQuery) {
-      params.q = normalizedQuery;
-      params.search = normalizedQuery;
-    }
+  if (normalizedQuery) {
+    params.q = normalizedQuery;
+    params.search = normalizedQuery;
+  }
 
-    if (appliedFilters.categoryId) {
-      params.category_id = Number(
-        appliedFilters.categoryId,
-      );
-    }
+  if (appliedFilters.categorySlug) {
+    params.category_slug =
+      appliedFilters.categorySlug;
+  }
 
-    if (appliedFilters.brandId) {
-      params.brand_id = Number(
-        appliedFilters.brandId,
-      );
-    }
+  if (appliedFilters.brandSlug) {
+    params.brand_slug =
+      appliedFilters.brandSlug;
+  }
 
-    try {
-      const responseData = await getProducts(params);
-      const responseItems = extractItems(responseData);
+  if (appliedFilters.minPrice) {
+    params.min_price = appliedFilters.minPrice;
+  }
+
+  if (appliedFilters.maxPrice) {
+    params.max_price = appliedFilters.maxPrice;
+  }
+
+  if (appliedFilters.platformCode) {
+    params.platform_code = appliedFilters.platformCode;
+  }
+
+  if (appliedFilters.minRating) {
+    params.min_rating = appliedFilters.minRating;
+  }
+
+  if (appliedFilters.availability) {
+    params.is_available =
+      appliedFilters.availability === "available";
+  }
+
+  params.sort_by = appliedFilters.sortBy;
+
+  getProducts(params)
+    .then((responseData) => {
+      if (isCancelled) {
+        return;
+      }
+
+      const responseItems =
+        extractItems(responseData);
 
       const responseTotalItems = Number(
         responseData?.total_items ??
@@ -147,7 +186,9 @@ function ProductsPage() {
       const responseTotalPages = Number(
         responseData?.total_pages ??
           responseData?.pages ??
-          Math.ceil(responseTotalItems / PAGE_SIZE),
+          Math.ceil(
+            responseTotalItems / PAGE_SIZE,
+          ),
       );
 
       setProducts(responseItems);
@@ -164,7 +205,12 @@ function ProductsPage() {
           ? responseTotalPages
           : 1,
       );
-    } catch (error) {
+    })
+    .catch((error) => {
+      if (isCancelled) {
+        return;
+      }
+
       setProducts([]);
       setTotalItems(0);
       setTotalPages(1);
@@ -175,14 +221,19 @@ function ProductsPage() {
           "Unable to load marketplace products.",
         ),
       );
-    } finally {
-      setIsLoadingProducts(false);
-    }
-  }, [appliedFilters, page]);
+    })
+    .finally(() => {
+      if (!isCancelled) {
+        setIsLoadingProducts(false);
+      }
+    });
 
-  useEffect(() => {
-    loadProducts();
-  }, [loadProducts]);
+  return () => {
+    isCancelled = true;
+  };
+}, [appliedFilters, page, reloadKey]);
+
+
 
   function handleFilterChange(event) {
     const { name, value } = event.target;
@@ -193,32 +244,71 @@ function ProductsPage() {
     }));
   }
 
-  function handleSearch(event) {
-    event.preventDefault();
+ function handleSearch(event) {
+  event.preventDefault();
 
-    setPage(1);
+  setIsLoadingProducts(true);
+  setErrorMessage("");
+  setPage(1);
 
-    setAppliedFilters({
-      query: draftFilters.query.trim(),
-      categoryId: draftFilters.categoryId,
-      brandId: draftFilters.brandId,
-    });
-  }
+  setAppliedFilters({
+    ...draftFilters,
+    query: draftFilters.query.trim(),
+  });
+}
 
-  function handleReset() {
-    setDraftFilters(initialFilters);
-    setAppliedFilters(initialFilters);
-    setPage(1);
-  }
+function handleReset() {
+  setIsLoadingProducts(true);
+  setErrorMessage("");
+  setDraftFilters(initialFilters);
+  setAppliedFilters(initialFilters);
+  setPage(1);
+}
 
-  function changePage(nextPage) {
-    setPage(nextPage);
+function handleRetry() {
+  setIsLoadingProducts(true);
+  setErrorMessage("");
+  setReloadKey((currentKey) => currentKey + 1);
+}
 
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
-  }
+function changePage(nextPage) {
+  setIsLoadingProducts(true);
+  setErrorMessage("");
+  setPage(nextPage);
+
+  window.scrollTo({
+    top: 0,
+    behavior: "smooth",
+  });
+}
+function handleToggleCompare(product) {
+  setSelectedProducts((currentProducts) => {
+    const isAlreadySelected =
+      currentProducts.some(
+        (selectedProduct) =>
+          selectedProduct.id === product.id,
+      );
+
+    if (isAlreadySelected) {
+      return currentProducts.filter(
+        (selectedProduct) =>
+          selectedProduct.id !== product.id,
+      );
+    }
+
+    if (currentProducts.length >= 3) {
+      return currentProducts;
+    }
+
+    return [
+      ...currentProducts,
+      product,
+    ];
+  });
+}
+function handleClearComparison() {
+  setSelectedProducts([]);
+}
 
 const categoryNameById = useMemo(
   () =>
@@ -241,14 +331,34 @@ const brandNameById = useMemo(
     ),
   [brands],
 );
-  const hasAppliedFilters = Boolean(
-    appliedFilters.query ||
-      appliedFilters.categoryId ||
-      appliedFilters.brandId,
-  );
-
+const hasAppliedFilters = Boolean(
+  appliedFilters.query ||
+    appliedFilters.categorySlug ||
+    appliedFilters.brandSlug ||
+    appliedFilters.minPrice ||
+    appliedFilters.maxPrice ||
+    appliedFilters.platformCode ||
+    appliedFilters.minRating ||
+    appliedFilters.availability !== "available" ||
+    appliedFilters.sortBy !== "name_asc",
+);
+const selectedProductIds = useMemo(
+  () =>
+    new Set(
+      selectedProducts.map(
+        (selectedProduct) => selectedProduct.id,
+      ),
+    ),
+  [selectedProducts],
+);
+const comparisonUrl =
+  selectedProducts.length >= 2
+    ? `/compare?ids=${selectedProducts
+        .map((product) => product.id)
+        .join(",")}`
+    : "";
   return (
-    <section className="relative min-h-[calc(100vh-145px)] overflow-hidden bg-vextro-canvas py-14 sm:py-18 lg:py-20">
+    <section className="relative min-h-[calc(100vh-145px)] overflow-x-hidden bg-vextro-canvas py-14 sm:py-18 lg:py-20">
       <div className="pointer-events-none absolute -right-48 top-0 size-[460px] rounded-full bg-blue-300/15 blur-3xl" />
 
       <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
@@ -285,7 +395,7 @@ const brandNameById = useMemo(
         </div>
 
         <form
-          className="mt-10 grid gap-4 rounded-3xl border border-vextro-border bg-white p-5 shadow-sm lg:grid-cols-[minmax(260px,1.6fr)_minmax(170px,0.7fr)_minmax(170px,0.7fr)_auto_auto] lg:items-end"
+          className="mt-10 grid gap-4 rounded-3xl border border-vextro-border bg-white p-5 shadow-sm sm:grid-cols-2 lg:grid-cols-4 lg:items-end"
           onSubmit={handleSearch}
         >
           <div className="grid gap-2">
@@ -322,23 +432,86 @@ const brandNameById = useMemo(
             </label>
 
             <select
-              id="category-filter"
-              className="min-h-12 w-full cursor-pointer rounded-xl border border-vextro-border bg-white px-4 text-sm text-vextro-ink outline-none transition focus:border-vextro-primary focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
-              name="categoryId"
-              value={draftFilters.categoryId}
-              onChange={handleFilterChange}
-              disabled={isLoadingFilters}
-            >
-              <option value="">All categories</option>
+  id="category-filter"
+  className="min-h-12 w-full cursor-pointer rounded-xl border border-vextro-border bg-white px-4 text-sm text-vextro-ink outline-none transition focus:border-vextro-primary focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+  name="categorySlug"
+  value={draftFilters.categorySlug}
+  onChange={handleFilterChange}
+  disabled={isLoadingFilters}
+>
+  <option value="">All categories</option>
 
-              {categories.map((category) => (
-                <option
-                  key={category.id}
-                  value={category.id}
-                >
-                  {category.name}
+  {categories.map((category) => (
+    <option
+      key={category.id}
+      value={category.slug}
+    >
+      {category.name}
+    </option>
+  ))}
+</select>
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-xs font-black text-vextro-ink" htmlFor="platform-filter">
+              Platform
+            </label>
+            <select id="platform-filter" name="platformCode" value={draftFilters.platformCode} onChange={handleFilterChange} className="min-h-12 rounded-xl border border-vextro-border bg-white px-4 text-sm">
+              <option value="">All platforms</option>
+              {platforms.map((platform) => (
+                <option key={platform.id} value={platform.code}>
+                  {platform.name}
                 </option>
               ))}
+            </select>
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-xs font-black text-vextro-ink" htmlFor="minimum-price">
+              Minimum price
+            </label>
+            <input id="minimum-price" name="minPrice" type="number" min="0" step="1" value={draftFilters.minPrice} onChange={handleFilterChange} placeholder="PKR 0" className="min-h-12 rounded-xl border border-vextro-border px-4 text-sm" />
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-xs font-black text-vextro-ink" htmlFor="maximum-price">
+              Maximum price
+            </label>
+            <input id="maximum-price" name="maxPrice" type="number" min="0" step="1" value={draftFilters.maxPrice} onChange={handleFilterChange} placeholder="No maximum" className="min-h-12 rounded-xl border border-vextro-border px-4 text-sm" />
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-xs font-black text-vextro-ink" htmlFor="rating-filter">
+              Minimum rating
+            </label>
+            <select id="rating-filter" name="minRating" value={draftFilters.minRating} onChange={handleFilterChange} className="min-h-12 rounded-xl border border-vextro-border bg-white px-4 text-sm">
+              <option value="">Any rating</option>
+              <option value="4">4.0 and above</option>
+              <option value="4.5">4.5 and above</option>
+            </select>
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-xs font-black text-vextro-ink" htmlFor="availability-filter">
+              Availability
+            </label>
+            <select id="availability-filter" name="availability" value={draftFilters.availability} onChange={handleFilterChange} className="min-h-12 rounded-xl border border-vextro-border bg-white px-4 text-sm">
+              <option value="available">Available offers</option>
+              <option value="unavailable">Unavailable offers</option>
+              <option value="">Any availability</option>
+            </select>
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-xs font-black text-vextro-ink" htmlFor="sort-products">
+              Sort by
+            </label>
+            <select id="sort-products" name="sortBy" value={draftFilters.sortBy} onChange={handleFilterChange} className="min-h-12 rounded-xl border border-vextro-border bg-white px-4 text-sm">
+              <option value="name_asc">Name A-Z</option>
+              <option value="newest">Newest</option>
+              <option value="price_asc">Lowest price</option>
+              <option value="price_desc">Highest price</option>
+              <option value="rating_desc">Highest rating</option>
             </select>
           </div>
 
@@ -351,24 +524,24 @@ const brandNameById = useMemo(
             </label>
 
             <select
-              id="brand-filter"
-              className="min-h-12 w-full cursor-pointer rounded-xl border border-vextro-border bg-white px-4 text-sm text-vextro-ink outline-none transition focus:border-vextro-primary focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
-              name="brandId"
-              value={draftFilters.brandId}
-              onChange={handleFilterChange}
-              disabled={isLoadingFilters}
-            >
-              <option value="">All brands</option>
+  id="brand-filter"
+  className="min-h-12 w-full cursor-pointer rounded-xl border border-vextro-border bg-white px-4 text-sm text-vextro-ink outline-none transition focus:border-vextro-primary focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+  name="brandSlug"
+  value={draftFilters.brandSlug}
+  onChange={handleFilterChange}
+  disabled={isLoadingFilters}
+>
+  <option value="">All brands</option>
 
-              {brands.map((brand) => (
-                <option
-                  key={brand.id}
-                  value={brand.id}
-                >
-                  {brand.name}
-                </option>
-              ))}
-            </select>
+  {brands.map((brand) => (
+    <option
+      key={brand.id}
+      value={brand.slug}
+    >
+      {brand.name}
+    </option>
+  ))}
+</select>
           </div>
 
           <button
@@ -409,7 +582,7 @@ const brandNameById = useMemo(
             <button
               className="min-h-10 rounded-xl border border-red-200 bg-white px-4 text-xs font-black text-red-700 transition hover:bg-red-100"
               type="button"
-              onClick={loadProducts}
+              onClick={handleRetry}
             >
               Try again
             </button>
@@ -468,18 +641,24 @@ const brandNameById = useMemo(
           <div className="mt-5 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
             {products.map((product) => (
   <ProductCard
-    key={product.id}
-    product={{
-      ...product,
-      brand_name:
-        brandNameById.get(product.brand_id) ||
-        "Unbranded",
-      category_name:
-        categoryNameById.get(
-          product.category_id,
-        ) || "General",
-    }}
-  />
+  key={product.id}
+  product={{
+    ...product,
+    brand_name:
+      brandNameById.get(product.brand_id) ||
+      "Unbranded",
+    category_name:
+      categoryNameById.get(
+        product.category_id,
+      ) || "General",
+  }}
+  isSelected={selectedProductIds.has(product.id)}
+  compareDisabled={
+    selectedProducts.length >= 3 &&
+    !selectedProductIds.has(product.id)
+  }
+  onToggleCompare={handleToggleCompare}
+/>
 ))}
           </div>
         ) : null}
@@ -549,6 +728,62 @@ const brandNameById = useMemo(
           </nav>
         ) : null}
       </div>
+
+        {selectedProducts.length > 0 ? (
+          <div className="fixed inset-x-0 bottom-0 z-50 border-t border-vextro-border bg-white/95 px-4 py-4 shadow-[0_-12px_35px_rgba(15,23,42,0.12)] backdrop-blur">
+            <div className="mx-auto flex max-w-7xl flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-3">
+                  <strong className="text-sm font-black text-vextro-ink">
+                    Compare products
+                  </strong>
+
+                  <span className="rounded-full bg-blue-50 px-3 py-1 text-[10px] font-black text-vextro-primary">
+                    {selectedProducts.length}/3 selected
+                  </span>
+                </div>
+
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {selectedProducts.map((product) => (
+                    <span
+                      className="max-w-52 truncate rounded-lg bg-vextro-canvas px-3 py-2 text-xs font-bold text-vextro-ink"
+                      key={product.id}
+                    >
+                      {product.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex shrink-0 items-center gap-3">
+                <button
+                  className="min-h-11 rounded-xl border border-vextro-border bg-white px-4 text-sm font-black text-vextro-muted transition hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+                  type="button"
+                  onClick={handleClearComparison}
+                >
+                  Clear
+                </button>
+
+                {selectedProducts.length >= 2 ? (
+                  <Link
+                    className="inline-flex min-h-11 items-center justify-center rounded-xl bg-vextro-primary px-5 text-sm font-black text-white shadow-lg shadow-blue-500/20 transition hover:bg-vextro-primary-dark"
+                    to={comparisonUrl}
+                  >
+                    Compare {selectedProducts.length} Products →
+                  </Link>
+                ) : (
+                  <button
+                    className="min-h-11 cursor-not-allowed rounded-xl bg-slate-200 px-5 text-sm font-black text-slate-500"
+                    type="button"
+                    disabled
+                  >
+                    Select 1 more product
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : null}
     </section>
   );
 }

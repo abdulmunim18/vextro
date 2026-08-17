@@ -1,4 +1,6 @@
-from sqlalchemy import func, or_, select
+from decimal import Decimal
+
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.brand import Brand
@@ -6,6 +8,7 @@ from app.models.canonical_product import CanonicalProduct
 from app.models.category import Category
 from app.models.product_listing import ProductListing
 from app.models.product_variant import ProductVariant
+from app.models.platform import Platform
 
 
 def list_products(
@@ -16,6 +19,12 @@ def list_products(
     search: str | None = None,
     category_slug: str | None = None,
     brand_slug: str | None = None,
+    min_price: Decimal | None = None,
+    max_price: Decimal | None = None,
+    platform_code: str | None = None,
+    min_rating: Decimal | None = None,
+    is_available: bool | None = None,
+    sort_by: str = "name_asc",
 ) -> tuple[list[CanonicalProduct], int]:
     """Return active products with pagination and optional filters."""
 
@@ -66,26 +75,188 @@ def list_products(
                 )
             )
 
+    listing_conditions = [
+        ProductVariant.canonical_product_id
+        == CanonicalProduct.id,
+        ProductVariant.is_active.is_(True),
+    ]
+
+    if min_price is not None:
+        listing_conditions.append(
+            ProductListing.current_price >= min_price,
+        )
+
+    if max_price is not None:
+        listing_conditions.append(
+            ProductListing.current_price <= max_price,
+        )
+
+    if min_rating is not None:
+        listing_conditions.append(
+            ProductListing.rating >= min_rating,
+        )
+
+    if is_available is not None:
+        listing_conditions.append(
+            ProductListing.is_available == is_available,
+        )
+
+    listing_filter_query = (
+        select(ProductListing.id)
+        .join(
+            ProductVariant,
+            ProductVariant.id
+            == ProductListing.product_variant_id,
+        )
+    )
+
+    if platform_code:
+        listing_filter_query = listing_filter_query.join(
+            Platform,
+            Platform.id == ProductListing.platform_id,
+        )
+        listing_conditions.append(
+            Platform.code == platform_code,
+        )
+
+    if any(
+        value is not None
+        for value in (
+            min_price,
+            max_price,
+            platform_code,
+            min_rating,
+            is_available,
+        )
+    ):
+        filters.append(
+            exists(
+                listing_filter_query.where(*listing_conditions)
+            )
+        )
+
     total = database_session.scalar(
         count_query.where(*filters)
     ) or 0
 
     offset = (page - 1) * page_size
 
+    price_sort = (
+        select(func.min(ProductListing.current_price))
+        .join(
+            ProductVariant,
+            ProductVariant.id
+            == ProductListing.product_variant_id,
+        )
+        .where(
+            ProductVariant.canonical_product_id
+            == CanonicalProduct.id,
+            ProductListing.is_available.is_(True),
+        )
+        .correlate(CanonicalProduct)
+        .scalar_subquery()
+    )
+    rating_sort = (
+        select(func.max(ProductListing.rating))
+        .join(
+            ProductVariant,
+            ProductVariant.id
+            == ProductListing.product_variant_id,
+        )
+        .where(
+            ProductVariant.canonical_product_id
+            == CanonicalProduct.id,
+        )
+        .correlate(CanonicalProduct)
+        .scalar_subquery()
+    )
+    order_map = {
+        "name_asc": (CanonicalProduct.name.asc(),),
+        "name_desc": (CanonicalProduct.name.desc(),),
+        "price_asc": (price_sort.asc().nulls_last(),),
+        "price_desc": (price_sort.desc().nulls_last(),),
+        "rating_desc": (rating_sort.desc().nulls_last(),),
+        "newest": (CanonicalProduct.created_at.desc(),),
+    }
     products = list(
         database_session.scalars(
             products_query
             .where(*filters)
-            .order_by(
-                CanonicalProduct.name.asc(),
-                CanonicalProduct.id.asc(),
-            )
+            .order_by(*order_map[sort_by], CanonicalProduct.id.asc())
             .offset(offset)
             .limit(page_size)
         ).all()
     )
 
     return products, total
+
+
+def get_product_listing_summaries(
+    database_session: Session,
+    product_ids: list[int],
+) -> dict[int, dict[str, object]]:
+    """Return compact marketplace metrics for catalog cards."""
+
+    if not product_ids:
+        return {}
+
+    statement = (
+        select(
+            ProductVariant.canonical_product_id,
+            ProductListing.current_price,
+            ProductListing.rating,
+            ProductListing.is_available,
+            Platform.code,
+        )
+        .join(
+            ProductListing,
+            ProductListing.product_variant_id
+            == ProductVariant.id,
+        )
+        .join(
+            Platform,
+            Platform.id == ProductListing.platform_id,
+        )
+        .where(
+            ProductVariant.canonical_product_id.in_(product_ids),
+            ProductVariant.is_active.is_(True),
+        )
+    )
+    summaries: dict[int, dict[str, object]] = {
+        product_id: {
+            "lowest_price": None,
+            "highest_rating": None,
+            "available_listing_count": 0,
+            "platform_codes": set(),
+        }
+        for product_id in product_ids
+    }
+
+    for product_id, price, rating, available, code in (
+        database_session.execute(statement)
+    ):
+        summary = summaries[product_id]
+        summary["platform_codes"].add(code)
+
+        if rating is not None and (
+            summary["highest_rating"] is None
+            or rating > summary["highest_rating"]
+        ):
+            summary["highest_rating"] = rating
+
+        if available:
+            summary["available_listing_count"] += 1
+
+            if (
+                summary["lowest_price"] is None
+                or price < summary["lowest_price"]
+            ):
+                summary["lowest_price"] = price
+
+    for summary in summaries.values():
+        summary["platform_codes"] = sorted(summary["platform_codes"])
+
+    return summaries
 
 
 def get_product_by_id(
