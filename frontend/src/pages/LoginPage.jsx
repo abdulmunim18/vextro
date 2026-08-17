@@ -5,7 +5,7 @@ import {
   useNavigate,
 } from "react-router-dom";
 
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 import { getApiErrorMessage } from "../utils/apiError";
 
 function LoginPage() {

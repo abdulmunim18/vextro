@@ -1,11 +1,10 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
 } from "react";
+import AuthContext from "./auth-context";
 
 import {
   getCurrentUser,
@@ -13,8 +12,6 @@ import {
   logoutUser,
   registerUser,
 } from "../services/authService";
-
-const AuthContext = createContext(null);
 
 const STORAGE_KEYS = {
   accessToken: "vextro_access_token",
@@ -185,16 +182,4 @@ export function AuthProvider({ children }) {
       {children}
     </AuthContext.Provider>
   );
-}
-
-export function useAuth() {
-  const context = useContext(AuthContext);
-
-  if (!context) {
-    throw new Error(
-      "useAuth must be used inside AuthProvider.",
-    );
-  }
-
-  return context;
 }

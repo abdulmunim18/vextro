@@ -134,7 +134,8 @@ function PriceAlertsPage() {
   }, []);
 
   useEffect(() => {
-    loadAlerts();
+    const timeoutId = window.setTimeout(loadAlerts, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [loadAlerts]);
 
   const statistics = useMemo(() => {

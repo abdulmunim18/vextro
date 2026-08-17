@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 import { createPriceAlert } from "../services/priceAlertService";
 import { getApiErrorMessage } from "../utils/apiError";
 import {
@@ -14,6 +14,7 @@ function CreatePriceAlertCard({
   listings,
   platformNames,
   lowestListing,
+  onAlertCreated,
 }) {
   const location = useLocation();
 
@@ -56,15 +57,14 @@ function CreatePriceAlertCard({
     const preferredListing =
       lowestListing || normalizedListings[0];
 
-    if (preferredListing) {
-      setSelectedListingId(
-        String(preferredListing.id),
-      );
+    const timeoutId = window.setTimeout(() => {
+      if (preferredListing) {
+        setSelectedListingId(String(preferredListing.id));
+        setCurrency(preferredListing.currency || "PKR");
+      }
+    }, 0);
 
-      setCurrency(
-        preferredListing.currency || "PKR",
-      );
-    }
+    return () => window.clearTimeout(timeoutId);
   }, [lowestListing, normalizedListings]);
 
   const selectedListing =
@@ -161,6 +161,12 @@ function CreatePriceAlertCard({
 
       setCreatedAlert(responseData);
       setTargetPrice("");
+
+      if (onAlertCreated) {
+        await Promise.resolve(
+          onAlertCreated(responseData),
+        ).catch(() => undefined);
+      }
     } catch (error) {
       setErrorMessage(
         getApiErrorMessage(

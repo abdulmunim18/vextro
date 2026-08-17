@@ -7,7 +7,7 @@ import {
 import { Link } from "react-router-dom";
 
 import RouteLoadingState from "../components/RouteLoadingState";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 import { getProductById } from "../services/catalogService";
 import { getPriceAlerts } from "../services/priceAlertService";
 import { getApiErrorMessage } from "../utils/apiError";
@@ -53,9 +53,12 @@ function DashboardPage() {
     "consumer",
     "admin",
   );
+const isAdmin = hasRole("admin");
 
-  const isAdmin = hasRole("admin");
-  const isSme = hasRole("sme");
+const canUseSmeWorkspace = hasRole(
+  "sme",
+  "admin",
+);
 
   const [alerts, setAlerts] = useState([]);
   const [productNames, setProductNames] = useState(
@@ -141,7 +144,8 @@ function DashboardPage() {
   }, [canUsePriceAlerts]);
 
   useEffect(() => {
-    loadDashboard();
+    const timeoutId = window.setTimeout(loadDashboard, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [loadDashboard]);
 
   const statistics = useMemo(() => {
@@ -256,6 +260,14 @@ function DashboardPage() {
                 Manage Alerts
               </Link>
             ) : null}
+            {canUseSmeWorkspace ? (
+  <Link
+    className="inline-flex min-h-12 items-center justify-center rounded-xl border border-violet-200 bg-violet-50 px-6 text-sm font-black text-violet-700 transition hover:-translate-y-0.5 hover:border-violet-300 hover:bg-violet-100"
+    to="/sme"
+  >
+    SME Workspace
+  </Link>
+) : null}
           </div>
         </div>
 
@@ -553,12 +565,12 @@ function DashboardPage() {
                     status: "Available",
                   },
                   {
-                    title:
-                      "Competitor Monitoring",
-                    description:
-                      "Business-product and competitor tracking will be connected in the SME module.",
-                    status: "Next Module",
-                  },
+                  title:
+                    "Competitor Monitoring",
+                 description:
+                   "Manage business products and tracked marketplace competitors from your SME workspace.",
+                  status: "Available",
+                },
                   {
                     title:
                       "Demand and Inventory Forecasting",
@@ -704,19 +716,15 @@ function DashboardPage() {
                   </Link>
                 ) : null}
 
-                {isSme ? (
-                  <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-                    <strong className="text-sm font-black">
-                      SME Intelligence
-                    </strong>
-
-                    <p className="mt-2 text-xs leading-5 text-slate-300">
-                      Competitor, inventory and demand
-                      modules will connect to this
-                      workspace next.
-                    </p>
-                  </div>
-                ) : null}
+               {canUseSmeWorkspace ? (
+  <Link
+    className="flex min-h-12 items-center justify-between rounded-xl bg-violet-500/20 px-4 text-sm font-black text-violet-100 transition hover:bg-violet-500/30"
+    to="/sme"
+  >
+    Open SME Workspace
+    <span>→</span>
+  </Link>
+) : null}
               </div>
             </section>
           </div>

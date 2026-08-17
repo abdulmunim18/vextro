@@ -1,21 +1,27 @@
+import { lazy, Suspense } from "react";
 import { Route, Routes } from "react-router-dom";
-
 import MainLayout from "../layouts/MainLayout";
-import HomePage from "../pages/HomePage";
-import LoginPage from "../pages/LoginPage";
-import NotFoundPage from "../pages/NotFoundPage";
-import PlaceholderPage from "../pages/PlaceholderPage";
-import ProductDetailPage from "../pages/ProductDetailPage";
-import ProductsPage from "../pages/ProductsPage";
-import RegisterPage from "../pages/RegisterPage";
-import UnauthorizedPage from "../pages/UnauthorizedPage";
+import RouteLoadingState from "../components/RouteLoadingState";
 import GuestRoute from "./GuestRoute";
 import ProtectedRoute from "./ProtectedRoute";
-import PriceAlertsPage from "../pages/PriceAlertsPage";
-import DashboardPage from "../pages/DashboardPage";
+
+const AdminPage = lazy(() => import("../pages/AdminPage"));
+const AssistantPage = lazy(() => import("../pages/AssistantPage"));
+const ComparisonPage = lazy(() => import("../pages/ComparisonPage"));
+const DashboardPage = lazy(() => import("../pages/DashboardPage"));
+const HomePage = lazy(() => import("../pages/HomePage"));
+const LoginPage = lazy(() => import("../pages/LoginPage"));
+const NotFoundPage = lazy(() => import("../pages/NotFoundPage"));
+const PriceAlertsPage = lazy(() => import("../pages/PriceAlertsPage"));
+const ProductDetailPage = lazy(() => import("../pages/ProductDetailPage"));
+const ProductsPage = lazy(() => import("../pages/ProductsPage"));
+const RegisterPage = lazy(() => import("../pages/RegisterPage"));
+const SMEPage = lazy(() => import("../pages/SMEPage"));
+const UnauthorizedPage = lazy(() => import("../pages/UnauthorizedPage"));
 
 function AppRoutes() {
   return (
+    <Suspense fallback={<RouteLoadingState message="Loading VEXTRO..." />}>
     <Routes>
       <Route element={<MainLayout />}>
         {/* Public routes */}
@@ -29,6 +35,10 @@ function AppRoutes() {
         <Route
           path="products/:productId"
           element={<ProductDetailPage />}
+        />
+        <Route
+          path="compare"
+          element={<ComparisonPage />}
         />
 
         {/* Guest-only routes */}
@@ -56,10 +66,10 @@ function AppRoutes() {
             />
           }
         >
-        <Route
-       path="dashboard"
-        element={<DashboardPage />}
-        />
+          <Route
+            path="dashboard"
+            element={<DashboardPage />}
+          />
         </Route>
 
         {/* Consumer and Admin routes */}
@@ -77,6 +87,27 @@ function AppRoutes() {
             path="alerts"
             element={<PriceAlertsPage />}
           />
+          <Route
+            path="assistant"
+            element={<AssistantPage />}
+          />
+        </Route>
+
+        {/* SME and Admin routes */}
+        <Route
+          element={
+            <ProtectedRoute
+              allowedRoles={[
+                "sme",
+                "admin",
+              ]}
+            />
+          }
+        >
+          <Route
+            path="sme"
+            element={<SMEPage />}
+          />
         </Route>
 
         {/* Admin-only routes */}
@@ -89,13 +120,7 @@ function AppRoutes() {
         >
           <Route
             path="admin"
-            element={
-              <PlaceholderPage
-                eyebrow="Administration"
-                title="VEXTRO Admin Panel"
-                description="Manage users, products, marketplace listings and system activity."
-              />
-            }
+            element={<AdminPage />}
           />
         </Route>
 
@@ -111,6 +136,7 @@ function AppRoutes() {
         />
       </Route>
     </Routes>
+    </Suspense>
   );
 }
 
