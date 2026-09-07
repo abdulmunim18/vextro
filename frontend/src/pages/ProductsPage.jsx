@@ -3,7 +3,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import ProductCard from "../components/ProductCard";
 import {
   getBrands,
@@ -43,13 +43,19 @@ function extractItems(responseData) {
   return [];
 }
 
-function ProductsPage() {
+function ProductsCatalog({ searchParams }) {
+  const routeFilters = {
+    ...initialFilters,
+    query: searchParams.get("q")?.trim() || "",
+    categorySlug: searchParams.get("category")?.trim() || "",
+  };
+
   const [draftFilters, setDraftFilters] = useState(
-    initialFilters,
+    routeFilters,
   );
 
   const [appliedFilters, setAppliedFilters] = useState(
-    initialFilters,
+    routeFilters,
   );
 
 const [products, setProducts] = useState([]);
@@ -785,6 +791,17 @@ const comparisonUrl =
           </div>
         ) : null}
     </section>
+  );
+}
+
+function ProductsPage() {
+  const [searchParams] = useSearchParams();
+
+  return (
+    <ProductsCatalog
+      key={searchParams.toString()}
+      searchParams={searchParams}
+    />
   );
 }
 

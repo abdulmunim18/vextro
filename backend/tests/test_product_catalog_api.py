@@ -140,6 +140,15 @@ def test_list_products_supports_pagination_search_and_filters(
         is_active=False,
     )
 
+    primary_image = ProductImage(
+        canonical_product_id=first_product.id,
+        image_url="https://example.com/images/alpha-phone-x.jpg",
+        alt_text="Alpha Phone X",
+        is_primary=True,
+        sort_order=0,
+    )
+    database_session.add(primary_image)
+
     database_session.commit()
 
     paginated_response = client.get(
@@ -179,6 +188,9 @@ def test_list_products_supports_pagination_search_and_filters(
     assert len(filtered_body["items"]) == 1
     assert filtered_body["items"][0]["id"] == first_product.id
     assert filtered_body["items"][0]["name"] == "Alpha Phone X"
+    assert filtered_body["items"][0]["primary_image_url"] == (
+        "https://example.com/images/alpha-phone-x.jpg"
+    )
 def test_get_product_detail_includes_variants_and_images(
     client: TestClient,
     database_session: Session,
@@ -229,11 +241,11 @@ def test_get_product_detail_includes_variants_and_images(
     assert body["images"][0]["is_primary"] is True
 
 
-def test_get_product_listings_returns_available_items_by_price(
+def test_get_product_listings_returns_available_then_unavailable_items(
     client: TestClient,
     database_session: Session,
 ) -> None:
-    """Listings should be available only and sorted by lowest price."""
+    """Show every marketplace link, with available prices first."""
 
     category, brand, platform = create_reference_data(
         database_session
@@ -333,21 +345,17 @@ def test_get_product_listings_returns_available_items_by_price(
 
     assert body["product_id"] == product.id
     assert body["product_name"] == "Listing Test Smartphone"
-    assert body["total"] == 2
-    assert len(items) == 2
+    assert body["total"] == 3
+    assert len(items) == 3
 
     assert items[0]["id"] == cheaper_listing.id
     assert items[1]["id"] == expensive_listing.id
+    assert items[2]["id"] == unavailable_listing.id
 
     assert Decimal(items[0]["current_price"]) == Decimal("85000.00")
     assert Decimal(items[1]["current_price"]) == Decimal("95000.00")
+    assert items[2]["is_available"] is False
 
-    returned_ids = {
-        item["id"]
-        for item in items
-    }
-
-    assert unavailable_listing.id not in returned_ids
     assert items[0]["seller"]["name"] == "Verified API Seller"
     assert len(items[0]["images"]) == 1
 

@@ -121,6 +121,7 @@ class ProductListItemResponse(ORMResponse):
     highest_rating: Decimal | None = None
     available_listing_count: int = Field(default=0, ge=0)
     platform_codes: list[str] = Field(default_factory=list)
+    primary_image_url: str | None = None
 
 
 class ProductDetailResponse(ProductListItemResponse):

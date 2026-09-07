@@ -12,6 +12,105 @@ class PriceoyeSpider(scrapy.Spider):
         'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
 
+    @staticmethod
+    def extract_specifications(response):
+        """Extract label/value specs across PriceOye's current layouts."""
+
+        specifications = {}
+        containers = response.css(
+            '#specifications, .specifications, .specification, '
+            '.product-specifications, .product-specs, .specs'
+        )
+
+        for container in containers:
+            for row in container.css('tr'):
+                cells = [
+                    ' '.join(cell.css('::text').getall()).strip()
+                    for cell in row.css('th, td')
+                ]
+                cells = [cell for cell in cells if cell]
+                if len(cells) >= 2:
+                    specifications[cells[0]] = ' '.join(cells[1:])
+
+            terms = container.css('dt')
+            for term in terms:
+                label = ' '.join(term.css('::text').getall()).strip()
+                value = ' '.join(
+                    term.xpath('following-sibling::dd[1]//text()').getall()
+                ).strip()
+                if label and value:
+                    specifications[label] = value
+
+            for row in container.css('li, .spec-row, .spec-item'):
+                label = ' '.join(
+                    row.css(
+                        '.label::text, .title::text, '
+                        '.spec-name::text, strong:first-child::text'
+                    ).getall()
+                ).strip(' :')
+                value = ' '.join(
+                    row.css(
+                        '.value::text, .detail::text, '
+                        '.spec-value::text, span:last-child::text'
+                    ).getall()
+                ).strip()
+                if label and value and label != value:
+                    specifications[label] = value
+
+        return specifications
+
+    @staticmethod
+    def extract_availability(response):
+        """Read PriceOye's embedded variant data before text fallbacks."""
+
+        page_source = response.text
+        structured_availability = re.findall(
+            r'"product_availability"\s*:\s*"([^"]+)"',
+            page_source,
+            re.I,
+        )
+        structured_availability.extend(
+            re.findall(
+                r'"(?:schema_status|availability)"\s*:\s*"'
+                r'(?:https?\\?/\\?/schema\.org\\?/)?([^"]+)"',
+                page_source,
+                re.I,
+            )
+        )
+
+        if structured_availability:
+            return any(
+                value.replace('\\/', '/').lower().endswith('instock')
+                or value.strip().lower() == 'in stock'
+                for value in structured_availability
+            )
+
+        purchase_control = response.xpath(
+            '//*[self::button or self::a][contains('
+            'translate(normalize-space(.), '
+            '"ABCDEFGHIJKLMNOPQRSTUVWXYZ", '
+            '"abcdefghijklmnopqrstuvwxyz"), "add to cart") or contains('
+            'translate(normalize-space(.), '
+            '"ABCDEFGHIJKLMNOPQRSTUVWXYZ", '
+            '"abcdefghijklmnopqrstuvwxyz"), "buy now") or contains('
+            'translate(normalize-space(.), '
+            '"ABCDEFGHIJKLMNOPQRSTUVWXYZ", '
+            '"abcdefghijklmnopqrstuvwxyz"), "checkout")]'
+        )
+        page_text = ' '.join(
+            text.strip().lower()
+            for text in response.css('body ::text').getall()
+            if text.strip()
+        )
+        explicitly_unavailable = any(
+            marker in page_text
+            for marker in (
+                'currently unavailable',
+                'discontinued',
+            )
+        )
+        return bool(purchase_control) and not explicitly_unavailable
+
     def parse(self, response):
         phones = response.css('div.productBox')
         
@@ -39,9 +138,19 @@ class PriceoyeSpider(scrapy.Spider):
 
 
     def parse_product(self, response):
-        import re
-        
         item = response.meta['item']
+
+        item['brand'] = (
+            response.css(
+                '[itemprop="brand"]::attr(content), '
+                '[itemprop="brand"] ::text, '
+                '.product-brand ::text, '
+                '.brand-name ::text'
+            ).get()
+            or response.css(
+                'meta[property="product:brand"]::attr(content)'
+            ).get()
+        )
         
         # 1. Clean Price: Extract ONLY the first price matching pattern "Rs X,XXX" or "Rs XX,XXX"
         price_raw = response.css('div.product-price ::text').getall()
@@ -67,11 +176,28 @@ class PriceoyeSpider(scrapy.Spider):
             item['variant'] = 'Standard'
 
         # 4. Availability
-        in_stock = response.css('button.btn-checkout, a.btn-checkout, button#add-to-cart-btn')
-        item['availability'] = 'In Stock' if in_stock else 'Out of Stock'
+        item['availability'] = (
+            'In Stock'
+            if self.extract_availability(response)
+            else 'Out of Stock'
+        )
 
         # 5. Warranty: Set clean default unless explicitly found
         warranty_text = response.xpath('//table//td[contains(text(), "Warranty")]/following-sibling::td/text()').get()
         item['warranty'] = warranty_text.strip() if warranty_text else 'Official Brand Warranty'
+
+        # PriceOye's current product gallery uses full-size main-product-img
+        # elements. OpenGraph is retained as a fallback for markup changes.
+        image_urls = response.css('img.main-product-img::attr(src)').getall()
+        if not image_urls:
+            image_urls = response.css(
+                'meta[property="og:image"]::attr(content)'
+            ).getall()
+        item['image_urls'] = [
+            response.urljoin(image_url)
+            for image_url in image_urls
+            if image_url
+        ]
+        item['specifications'] = self.extract_specifications(response)
         
         yield item

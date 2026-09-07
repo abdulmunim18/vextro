@@ -19,5 +19,7 @@ class SmartphoneItem(scrapy.Item):
     # NLP & Operational Data
     platform = scrapy.Field()     # 'Daraz' or 'PriceOye'
     product_url = scrapy.Field()
+    image_urls = scrapy.Field()   # Ordered product gallery URLs
+    specifications = scrapy.Field() # Normalized label/value technical data
     scrape_timestamp = scrapy.Field()
     raw_html_path = scrapy.Field() # Link to where the raw snapshot is saved
