@@ -67,8 +67,13 @@ class PriceoyeSpider(scrapy.Spider):
             item['variant'] = 'Standard'
 
         # 4. Availability
-        in_stock = response.css('button.btn-checkout, a.btn-checkout, button#add-to-cart-btn')
-        item['availability'] = 'In Stock' if in_stock else 'Out of Stock'
+        # PriceOye frequently changes checkout button classes. 
+        # Safest heuristic: if it has a price, it's usually available to buy.
+        in_stock = response.css('button.btn-checkout, a.btn-checkout, button#add-to-cart-btn, button.btn-add-to-cart')
+        if item.get('price') or in_stock:
+            item['availability'] = 'In Stock'
+        else:
+            item['availability'] = 'Out of Stock'
 
         # 5. Warranty: Set clean default unless explicitly found
         warranty_text = response.xpath('//table//td[contains(text(), "Warranty")]/following-sibling::td/text()').get()
