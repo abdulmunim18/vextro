@@ -10,6 +10,7 @@ import {
 
 import { getProductComparison } from "../services/catalogService";
 import { getApiErrorMessage } from "../utils/apiError";
+import { getMarketplaceDestination } from "../utils/marketplaceDestination";
 
 
 function parseProductIds(value) {
@@ -531,7 +532,15 @@ function ComparisonPage() {
                     item.listings.items.map((listing) => (
                       <a
                         className="rounded-2xl border border-vextro-border p-4 transition hover:border-blue-200 hover:bg-blue-50/40"
-                        href={listing.product_url}
+                        href={
+                          getMarketplaceDestination(
+                            listing,
+                            getPlatformName(
+                              item,
+                              listing.platform_id,
+                            ),
+                          ).url
+                        }
                         key={listing.id}
                         rel="noreferrer"
                         target="_blank"

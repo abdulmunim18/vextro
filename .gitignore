@@ -23,6 +23,10 @@ Thumbs.db
 
 # Logs
 *.log
+.runtime/
+
+# Local fallback PostgreSQL cluster
+.local-postgres-data/
 
 # Machine-learning model files
 *.joblib

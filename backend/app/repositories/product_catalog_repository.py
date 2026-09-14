@@ -28,7 +28,9 @@ def list_products(
 ) -> tuple[list[CanonicalProduct], int]:
     """Return active products with pagination and optional filters."""
 
-    products_query = select(CanonicalProduct)
+    products_query = select(CanonicalProduct).options(
+        selectinload(CanonicalProduct.images)
+    )
     count_query = select(func.count(CanonicalProduct.id))
 
     filters = [
@@ -284,7 +286,7 @@ def list_product_listings(
     database_session: Session,
     product_id: int,
 ) -> list[ProductListing]:
-    """Return available marketplace listings for one canonical product."""
+    """Return all marketplace listings, with available offers first."""
 
     query = (
         select(ProductListing)
@@ -299,9 +301,9 @@ def list_product_listings(
         .where(
             ProductVariant.canonical_product_id == product_id,
             ProductVariant.is_active.is_(True),
-            ProductListing.is_available.is_(True),
         )
         .order_by(
+            ProductListing.is_available.desc(),
             ProductListing.current_price.asc(),
             ProductListing.id.asc(),
         )

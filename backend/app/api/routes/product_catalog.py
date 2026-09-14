@@ -55,13 +55,13 @@ def compare_products(
 
     if any(product_id < 1 for product_id in product_ids):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Product IDs must be positive integers.",
         )
 
     if len(set(product_ids)) != len(product_ids):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Duplicate product IDs are not allowed.",
         )
 
@@ -151,7 +151,7 @@ def list_products(
         and min_price > max_price
     ):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="min_price cannot be greater than max_price.",
         )
 
@@ -213,7 +213,7 @@ def read_product_listings(
     ),
     database_session: Session = Depends(get_db),
 ) -> ProductListingsResponse:
-    """Return available marketplace listings for one product."""
+    """Return marketplace listings for one product."""
 
     result = get_product_listings_response(
         database_session,

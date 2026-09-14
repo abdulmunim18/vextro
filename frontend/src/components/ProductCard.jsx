@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 
 function ProductCard({
@@ -6,6 +7,7 @@ function ProductCard({
   compareDisabled = false,
   onToggleCompare,
 })  {
+  const [imageFailed, setImageFailed] = useState(false);
   const productName =
     product.name || "Unnamed product";
   const lowestPrice = Number(product.lowest_price);
@@ -18,15 +20,26 @@ function ProductCard({
         to={`/products/${product.id}`}
         aria-label={`View ${productName}`}
       >
-        <div className="flex flex-col items-center gap-4">
-          <span className="grid size-24 place-items-center rounded-[30px] bg-gradient-to-br from-vextro-primary to-violet-600 text-4xl font-black text-white shadow-lg shadow-blue-500/20 transition duration-300 group-hover:scale-105">
-            {productName.charAt(0).toUpperCase()}
-          </span>
+        {product.primary_image_url && !imageFailed ? (
+          <img
+            className="h-full w-full object-contain p-6 transition duration-300 group-hover:scale-105"
+            src={product.primary_image_url}
+            alt={productName}
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            onError={() => setImageFailed(true)}
+          />
+        ) : (
+          <div className="flex flex-col items-center gap-4">
+            <span className="grid size-24 place-items-center rounded-[30px] bg-gradient-to-br from-vextro-primary to-emerald-600 text-4xl font-black text-white shadow-lg shadow-emerald-500/20 transition duration-300 group-hover:scale-105">
+              {productName.charAt(0).toUpperCase()}
+            </span>
 
-          <small className="text-xs font-bold text-vextro-muted">
-            Marketplace comparison product
-          </small>
-        </div>
+            <small className="text-xs font-bold text-vextro-muted">
+              Product image unavailable
+            </small>
+          </div>
+        )}
 
         <span
           className={`absolute right-4 top-4 rounded-full px-3 py-1.5 text-[10px] font-black ${

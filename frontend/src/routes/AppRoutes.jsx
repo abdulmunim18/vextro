@@ -6,17 +6,25 @@ import GuestRoute from "./GuestRoute";
 import ProtectedRoute from "./ProtectedRoute";
 
 const AdminPage = lazy(() => import("../pages/AdminPage"));
+const AboutPage = lazy(() => import("../pages/AboutPage"));
 const AssistantPage = lazy(() => import("../pages/AssistantPage"));
 const ComparisonPage = lazy(() => import("../pages/ComparisonPage"));
+const ContactPage = lazy(() => import("../pages/ContactPage"));
 const DashboardPage = lazy(() => import("../pages/DashboardPage"));
 const HomePage = lazy(() => import("../pages/HomePage"));
+const HowItWorksPage = lazy(() => import("../pages/HowItWorksPage"));
 const LoginPage = lazy(() => import("../pages/LoginPage"));
 const NotFoundPage = lazy(() => import("../pages/NotFoundPage"));
 const PriceAlertsPage = lazy(() => import("../pages/PriceAlertsPage"));
+const PriceAlertsInfoPage = lazy(() => import("../pages/PriceAlertsInfoPage"));
+const PrivacyPage = lazy(() => import("../pages/PrivacyPage"));
 const ProductDetailPage = lazy(() => import("../pages/ProductDetailPage"));
 const ProductsPage = lazy(() => import("../pages/ProductsPage"));
 const RegisterPage = lazy(() => import("../pages/RegisterPage"));
+const ForBusinessesPage = lazy(() => import("../pages/ForBusinessesPage"));
 const SMEPage = lazy(() => import("../pages/SMEPage"));
+const TermsPage = lazy(() => import("../pages/TermsPage"));
+const SupportPage = lazy(() => import("../pages/SupportPage"));
 const UnauthorizedPage = lazy(() => import("../pages/UnauthorizedPage"));
 
 function AppRoutes() {
@@ -40,6 +48,14 @@ function AppRoutes() {
           path="compare"
           element={<ComparisonPage />}
         />
+        <Route path="about" element={<AboutPage />} />
+        <Route path="how-it-works" element={<HowItWorksPage />} />
+        <Route path="for-businesses" element={<ForBusinessesPage />} />
+        <Route path="privacy" element={<PrivacyPage />} />
+        <Route path="terms" element={<TermsPage />} />
+        <Route path="price-alerts" element={<PriceAlertsInfoPage />} />
+        <Route path="support" element={<SupportPage />} />
+        <Route path="contact" element={<ContactPage />} />
 
         {/* Guest-only routes */}
         <Route element={<GuestRoute />}>

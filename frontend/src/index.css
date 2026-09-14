@@ -1,9 +1,9 @@
 @import "tailwindcss";
 
 @theme {
-  --color-vextro-primary: #3157d5;
-  --color-vextro-primary-dark: #2443aa;
-  --color-vextro-accent: #0fba83;
+  --color-vextro-primary: #0a9b72;
+  --color-vextro-primary-dark: #08795b;
+  --color-vextro-accent: #f05a28;
   --color-vextro-ink: #172033;
   --color-vextro-muted: #697386;
   --color-vextro-border: #dfe5ef;

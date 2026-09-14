@@ -56,17 +56,42 @@ def get_products(
 
     total_pages = ceil(total / page_size) if total > 0 else 0
 
+    items: list[ProductListItemResponse] = []
+
+    for product in products:
+        summary = summaries.get(product.id, {}).copy()
+        primary_image = next(
+            (
+                image
+                for image in product.images
+                if image.is_primary
+            ),
+            None,
+        )
+
+        if primary_image is None and product.images:
+            primary_image = min(
+                product.images,
+                key=lambda image: (image.sort_order, image.id),
+            )
+
+        summary["primary_image_url"] = (
+            primary_image.image_url
+            if primary_image is not None
+            else None
+        )
+        items.append(
+            ProductListItemResponse.model_validate(product).model_copy(
+                update=summary,
+            )
+        )
+
     return ProductListResponse(
         total=total,
         page=page,
         page_size=page_size,
         total_pages=total_pages,
-        items=[
-            ProductListItemResponse.model_validate(product).model_copy(
-                update=summaries.get(product.id, {}),
-            )
-            for product in products
-        ],
+        items=items,
     )
 
 
@@ -91,7 +116,7 @@ def get_product_listings_response(
     database_session: Session,
     product_id: int,
 ) -> ProductListingsResponse | None:
-    """Return available marketplace listings for one active product."""
+    """Return marketplace listings for one active product."""
 
     product = get_product_by_id(
         database_session,

@@ -1,0 +1,4 @@
+APScheduler==3.11.1
+Scrapy==2.18.0
+requests==2.34.2
+pytest==9.1.1

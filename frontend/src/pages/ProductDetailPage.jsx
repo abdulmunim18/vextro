@@ -14,12 +14,14 @@ import MarketplaceListingCard from "../components/MarketplaceListingCard";
 import PriceHistoryChart from "../components/PriceHistoryChart";
 import PriceForecastCard from "../components/PriceForecastCard";
 import BuyTimeGuidanceCard from "../components/BuyTimeGuidanceCard";
+import RelatedProductCard from "../components/RelatedProductCard";
 import RouteLoadingState from "../components/RouteLoadingState";
 import { useAuth } from "../context/useAuth";
 import {
   getBrands,
   getCategories,
   getPlatforms,
+  getProducts,
   getProductById,
   getProductListings,
   getProductPriceHistory,
@@ -33,6 +35,7 @@ import {
   formatPrice,
   toFiniteNumber,
 } from "../utils/productDisplay";
+import { getMarketplaceDestination } from "../utils/marketplaceDestination";
 
 function extractItems(responseData) {
   if (Array.isArray(responseData)) {
@@ -44,6 +47,205 @@ function extractItems(responseData) {
   }
 
   return [];
+}
+
+function collectProductImages(productData, listingsData) {
+  const canonicalImages = Array.isArray(productData?.images)
+    ? productData.images
+    : [];
+  const listingImages = extractItems(listingsData).flatMap(
+    (listing) =>
+      Array.isArray(listing?.images) ? listing.images : [],
+  );
+  const seenUrls = new Set();
+
+  return [...canonicalImages, ...listingImages]
+    .filter((image) => {
+      if (!image?.image_url || seenUrls.has(image.image_url)) {
+        return false;
+      }
+
+      seenUrls.add(image.image_url);
+      return true;
+    })
+    .sort(
+      (firstImage, secondImage) =>
+        Number(secondImage.is_primary) -
+          Number(firstImage.is_primary) ||
+        firstImage.sort_order - secondImage.sort_order,
+    );
+}
+
+function formatSpecificationValue(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map(formatSpecificationValue)
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  if (value && typeof value === "object") {
+    return Object.entries(value)
+      .map(
+        ([key, nestedValue]) =>
+          `${formatAttributeLabel(key)}: ${formatSpecificationValue(nestedValue)}`,
+      )
+      .join(" · ");
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+
+  return value === null || value === undefined
+    ? ""
+    : String(value).trim();
+}
+
+function buildSpecifications(productData) {
+  const variants = Array.isArray(productData?.variants)
+    ? productData.variants
+    : [];
+  const entries = new Map(
+    Object.entries(productData?.specifications || {}),
+  );
+
+  const addVariantSpecification = (
+    key,
+    values,
+    formatter = (value) => value,
+  ) => {
+    if (entries.has(key)) {
+      return;
+    }
+
+    const uniqueValues = [
+      ...new Set(
+        values
+          .filter(
+            (value) =>
+              value !== null &&
+              value !== undefined &&
+              value !== "",
+          )
+          .map(formatter),
+      ),
+    ];
+
+    if (uniqueValues.length > 0) {
+      entries.set(key, uniqueValues.join(", "));
+    }
+  };
+
+  addVariantSpecification(
+    "color",
+    variants.map((variant) => variant.color),
+  );
+  addVariantSpecification(
+    "ram",
+    variants.map((variant) => variant.ram_gb),
+    (value) => `${value} GB`,
+  );
+  addVariantSpecification(
+    "storage_capacity",
+    variants.map((variant) => variant.storage_gb),
+    (value) => `${value} GB`,
+  );
+
+  variants.forEach((variant) => {
+    Object.entries(variant.variant_attributes || {}).forEach(
+      ([key, value]) => {
+        if (!entries.has(key)) {
+          entries.set(key, value);
+        }
+      },
+    );
+  });
+
+  const priority = [
+    "color",
+    "ram",
+    "storage_capacity",
+    "display",
+    "processor",
+    "battery_capacity",
+    "battery",
+    "front_camera",
+    "main_camera",
+    "rear_camera",
+    "operating_system",
+    "network",
+    "refresh_rate",
+    "security",
+    "warranty",
+  ];
+  const priorityIndex = new Map(
+    priority.map((key, index) => [key, index]),
+  );
+
+  return [...entries]
+    .map(([key, value]) => [
+      key,
+      formatSpecificationValue(value),
+    ])
+    .filter(([, value]) => value)
+    .sort(
+      ([firstKey], [secondKey]) =>
+        (priorityIndex.get(firstKey) ?? priority.length) -
+        (priorityIndex.get(secondKey) ?? priority.length),
+    );
+}
+
+function buildProductHighlights(specifications) {
+  const explicitFeatureKeys = new Set([
+    "key_features",
+    "features",
+    "highlights",
+  ]);
+  const explicitFeatures = specifications
+    .filter(([key]) => explicitFeatureKeys.has(key))
+    .flatMap(([, value]) =>
+      String(value)
+        .split(/\r?\n|\s*[|•]\s*/)
+        .map((feature) =>
+          feature.replace(/^[-–—]\s*/, "").trim(),
+        )
+        .filter(Boolean),
+    );
+
+  if (explicitFeatures.length > 0) {
+    return explicitFeatures.slice(0, 10).map((feature) => {
+      const separatorIndex = feature.indexOf(":");
+
+      if (separatorIndex < 1) {
+        return {
+          label: "",
+          value: feature,
+        };
+      }
+
+      return {
+        label: feature.slice(0, separatorIndex).trim(),
+        value: feature.slice(separatorIndex + 1).trim(),
+      };
+    });
+  }
+
+  const excludedKeys = new Set([
+    "key_features",
+    "features",
+    "highlights",
+    "raw_variant",
+    "variant",
+  ]);
+
+  return specifications
+    .filter(([key]) => !excludedKeys.has(key))
+    .slice(0, 10)
+    .map(([key, value]) => ({
+      label: formatAttributeLabel(key),
+      value,
+    }));
 }
 
 function ProductDetailPage() {
@@ -69,6 +271,10 @@ function ProductDetailPage() {
   const [platforms, setPlatforms] = useState([]);
   const [categories, setCategories] = useState([]);
   const [brands, setBrands] = useState([]);
+  const [relatedProducts, setRelatedProducts] =
+    useState([]);
+  const [isLoadingRelated, setIsLoadingRelated] =
+    useState(false);
 
   const [selectedImage, setSelectedImage] =
     useState("");
@@ -133,11 +339,10 @@ function ProductDetailPage() {
         setCategories(extractItems(categoryData));
         setBrands(extractItems(brandData));
 
-        const productImages = Array.isArray(
-          productData?.images,
-        )
-          ? productData.images
-          : [];
+        const productImages = collectProductImages(
+          productData,
+          listingsData,
+        );
 
         const primaryImage =
           productImages.find(
@@ -220,6 +425,20 @@ function ProductDetailPage() {
     [platforms],
   );
 
+  const missingMarketplacePlatforms = useMemo(() => {
+    const listingPlatformIds = new Set(
+      listings.map((listing) => listing.platform_id),
+    );
+
+    return platforms.filter((platform) => {
+      const platformCode = platform.code?.toLowerCase();
+      return (
+        ["daraz", "priceoye"].includes(platformCode) &&
+        !listingPlatformIds.has(platform.id)
+      );
+    });
+  }, [listings, platforms]);
+
   const brandName =
     brands.find(
       (brand) => brand.id === product?.brand_id,
@@ -230,6 +449,72 @@ function ProductDetailPage() {
       (category) =>
         category.id === product?.category_id,
     )?.name || "General";
+
+  const categorySlug = categories.find(
+    (category) =>
+      category.id === product?.category_id,
+  )?.slug;
+
+  useEffect(() => {
+    if (!product?.id || !categorySlug) {
+      return undefined;
+    }
+
+    let isMounted = true;
+
+    async function loadRelatedProducts() {
+      setIsLoadingRelated(true);
+
+      try {
+        const relatedData = await getProducts({
+          category_slug: categorySlug,
+          page: 1,
+          page_size: 9,
+          sort_by: "price_asc",
+        });
+
+        if (!isMounted) {
+          return;
+        }
+
+        const relatedItems = extractItems(relatedData)
+          .filter((item) => item.id !== product.id)
+          .sort(
+            (firstItem, secondItem) =>
+              Number(
+                secondItem.brand_id === product.brand_id,
+              ) -
+              Number(
+                firstItem.brand_id === product.brand_id,
+              ),
+          )
+          .slice(0, 4)
+          .map((item) => ({
+            ...item,
+            brand_name:
+              brands.find(
+                (brand) => brand.id === item.brand_id,
+              )?.name || "Unbranded",
+          }));
+
+        setRelatedProducts(relatedItems);
+      } catch {
+        if (isMounted) {
+          setRelatedProducts([]);
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingRelated(false);
+        }
+      }
+    }
+
+    loadRelatedProducts();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [brands, categorySlug, product?.brand_id, product?.id]);
 
   const availableListings = listings.filter(
     (listing) =>
@@ -288,12 +573,14 @@ function ProductDetailPage() {
     ? product.variants
     : [];
 
-  const productImages = Array.isArray(product?.images)
-    ? product.images
-    : [];
+  const productImages = useMemo(
+    () => collectProductImages(product, listingResponse),
+    [product, listingResponse],
+  );
 
-  const specifications = Object.entries(
-    product?.specifications || {},
+  const specifications = buildSpecifications(product);
+  const productHighlights = buildProductHighlights(
+    specifications,
   );
 
   if (isLoading) {
@@ -328,6 +615,11 @@ function ProductDetailPage() {
       </section>
     );
   }
+
+  const displayModel =
+    product.model && product.model.length <= 80
+      ? product.model
+      : product.name;
 
   return (
     <section className="relative overflow-hidden bg-vextro-canvas py-12 sm:py-16 lg:py-20">
@@ -366,6 +658,8 @@ function ProductDetailPage() {
                   className="max-h-[390px] w-full object-contain"
                   src={selectedImage}
                   alt={product.name}
+                  referrerPolicy="no-referrer"
+                  onError={() => setSelectedImage("")}
                 />
               ) : (
                 <div className="flex flex-col items-center gap-4 text-vextro-muted">
@@ -400,6 +694,8 @@ function ProductDetailPage() {
                     <img
                       className="h-full w-full object-contain"
                       src={image.image_url}
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
                       alt={
                         image.alt_text ||
                         product.name
@@ -438,9 +734,9 @@ function ProductDetailPage() {
               {product.name}
             </h1>
 
-            {product.model ? (
+            {displayModel ? (
               <p className="mt-3 text-base font-bold text-vextro-primary">
-                Model: {product.model}
+                Model: {displayModel}
               </p>
             ) : null}
 
@@ -596,7 +892,8 @@ function ProductDetailPage() {
             </div>
 
             <span className="rounded-full border border-vextro-border bg-white px-4 py-2 text-xs font-black text-vextro-muted">
-              {listingResponse?.total || 0} offers
+              {listingResponse?.total || 0}{" "}
+              {listingResponse?.total === 1 ? "offer" : "offers"}
             </span>
           </div>
 
@@ -628,6 +925,54 @@ function ProductDetailPage() {
                     }
                   />
                 ))}
+
+              {missingMarketplacePlatforms.map((platform) => {
+                const destination = getMarketplaceDestination(
+                  {
+                    title: product.name,
+                    product_url: "",
+                  },
+                  platform.name,
+                );
+
+                return (
+                  <article
+                    className="rounded-3xl border border-dashed border-slate-300 bg-white p-6 shadow-sm sm:p-8"
+                    key={platform.id}
+                  >
+                    <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-slate-100 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-vextro-muted">
+                            {platform.name}
+                          </span>
+                          <span className="rounded-full bg-amber-50 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-amber-700">
+                            No exact offer found
+                          </span>
+                        </div>
+
+                        <h3 className="mt-4 text-lg font-black text-vextro-ink">
+                          {product.name} is not currently matched on {platform.name}
+                        </h3>
+
+                        <p className="mt-2 text-sm leading-6 text-vextro-muted">
+                          VEXTRO did not find the same model in the latest {platform.name} catalog. You can still search the marketplace directly.
+                        </p>
+                      </div>
+
+                      <a
+                        className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-vextro-border bg-white px-5 text-sm font-black text-vextro-primary transition hover:border-blue-200 hover:bg-blue-50"
+                        href={destination.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Search on {platform.name}
+                        <span>↗</span>
+                      </a>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           ) : (
             <div className="mt-7 rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center">
@@ -715,7 +1060,7 @@ function ProductDetailPage() {
         <BuyTimeGuidanceCard guidance={buyGuidance} />
 
         {specifications.length > 0 ? (
-          <section className="mt-10 rounded-3xl border border-vextro-border bg-white p-7 shadow-sm sm:p-9">
+          <section className="mt-10">
             <span className="text-xs font-black uppercase tracking-[0.18em] text-vextro-primary">
               Product Information
             </span>
@@ -724,21 +1069,19 @@ function ProductDetailPage() {
               Specifications
             </h2>
 
-            <dl className="mt-7 grid gap-px overflow-hidden rounded-2xl border border-vextro-border bg-vextro-border sm:grid-cols-2">
+            <dl className="mt-7 grid gap-px overflow-hidden rounded-2xl border border-vextro-border bg-vextro-border md:grid-cols-2">
               {specifications.map(
                 ([attribute, value]) => (
                   <div
-                    className="flex items-center justify-between gap-5 bg-white p-5"
+                    className="grid min-h-16 grid-cols-[minmax(105px,0.65fr)_minmax(0,1.35fr)] items-start gap-4 bg-white p-4 sm:grid-cols-[minmax(150px,0.75fr)_minmax(0,1.25fr)]"
                     key={attribute}
                   >
-                    <dt className="text-sm font-bold text-vextro-muted">
+                    <dt className="text-sm font-medium text-vextro-muted">
                       {formatAttributeLabel(attribute)}
                     </dt>
 
-                    <dd className="text-right text-sm font-black text-vextro-ink">
-                      {typeof value === "object"
-                        ? JSON.stringify(value)
-                        : String(value)}
+                    <dd className="min-w-0 text-sm font-semibold leading-6 text-vextro-ink">
+                      {value}
                     </dd>
                   </div>
                 ),
@@ -746,6 +1089,94 @@ function ProductDetailPage() {
             </dl>
           </section>
         ) : null}
+
+        <section className="mt-12">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <span className="text-xs font-black uppercase tracking-[0.18em] text-vextro-primary">
+                You may also like
+              </span>
+
+              <h2 className="mt-2 text-3xl font-black tracking-tight text-vextro-ink">
+                Related products
+              </h2>
+            </div>
+
+            <Link
+              className="text-sm font-black text-vextro-primary transition hover:text-emerald-700"
+              to={
+                categorySlug
+                  ? `/products?category=${categorySlug}`
+                  : "/products"
+              }
+            >
+              View all {categoryName} →
+            </Link>
+          </div>
+
+          {isLoadingRelated ? (
+            <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {[0, 1, 2, 3].map((item) => (
+                <div
+                  className="h-80 animate-pulse rounded-2xl border border-vextro-border bg-white"
+                  key={item}
+                />
+              ))}
+            </div>
+          ) : relatedProducts.length > 0 ? (
+            <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {relatedProducts.map((relatedProduct) => (
+                <RelatedProductCard
+                  key={relatedProduct.id}
+                  product={relatedProduct}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="mt-6 rounded-2xl border border-dashed border-vextro-border bg-white px-6 py-10 text-center text-sm font-semibold text-vextro-muted">
+              More products from this category will appear here as they are added.
+            </div>
+          )}
+        </section>
+
+        <section className="mt-12">
+            <h2 className="text-2xl font-black tracking-tight text-vextro-ink">
+              About {product.name}
+            </h2>
+
+            <div className="mt-5 rounded-2xl border border-vextro-border bg-white p-6 shadow-sm sm:p-8">
+              <p className={`${productHighlights.length > 0 ? "mb-6" : ""} max-w-5xl text-sm font-medium leading-7 text-vextro-muted`}>
+                {product.description ||
+                  `${product.name} is listed in VEXTRO's normalized catalog. Current availability, marketplace offers and price history are shown above so you can compare before buying.`}
+              </p>
+
+              {productHighlights.length > 0 ? (
+                <div>
+                  <h3 className="text-sm font-black text-vextro-ink">
+                    Key Features:
+                  </h3>
+
+                  <ul className="mt-4 space-y-2.5 pl-5 text-sm leading-6 text-slate-700">
+                    {productHighlights.map(
+                      ({ label, value }, index) => (
+                        <li
+                          className="list-disc marker:text-vextro-primary"
+                          key={`${label}-${value}-${index}`}
+                        >
+                          {label ? (
+                            <strong className="font-black text-vextro-ink">
+                              {label}: {" "}
+                            </strong>
+                          ) : null}
+                          <span>{value}</span>
+                        </li>
+                      ),
+                    )}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+        </section>
       </div>
     </section>
   );

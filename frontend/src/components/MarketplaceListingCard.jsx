@@ -3,6 +3,7 @@ import {
   formatPrice,
   toFiniteNumber,
 } from "../utils/productDisplay";
+import { getMarketplaceDestination } from "../utils/marketplaceDestination";
 
 function MarketplaceListingCard({
   listing,
@@ -39,6 +40,9 @@ function MarketplaceListingCard({
     )?.image_url ||
     listing.images?.[0]?.image_url ||
     "";
+
+  const marketplaceDestination =
+    getMarketplaceDestination(listing, platformName);
 
   return (
     <article
@@ -173,17 +177,14 @@ function MarketplaceListingCard({
             </div>
 
             <a
-              className={`inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-5 text-sm font-black transition ${
-                listing.is_available
-                  ? "bg-vextro-primary text-white shadow-lg shadow-blue-500/20 hover:-translate-y-0.5 hover:bg-vextro-primary-dark"
-                  : "pointer-events-none bg-slate-100 text-slate-400"
-              }`}
-              href={listing.product_url}
+              className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-vextro-primary px-5 text-sm font-black text-white shadow-lg shadow-blue-500/20 transition hover:-translate-y-0.5 hover:bg-vextro-primary-dark"
+              href={marketplaceDestination.url}
               target="_blank"
               rel="noreferrer"
-              aria-disabled={!listing.is_available}
             >
-              Visit {platformName}
+              {marketplaceDestination.isSearchFallback
+                ? `Search on ${platformName}`
+                : `View on ${platformName}`}
               <span>↗</span>
             </a>
           </div>

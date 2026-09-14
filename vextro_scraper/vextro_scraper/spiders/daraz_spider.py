@@ -15,6 +15,40 @@ class DarazSpider(scrapy.Spider):
         'DOWNLOAD_DELAY': 2, # Respectful scraping
     }
 
+    @staticmethod
+    def extract_specifications(item_data):
+        """Normalize attribute payloads included in Daraz list responses."""
+
+        raw_attributes = (
+            item_data.get('attributes')
+            or item_data.get('specifications')
+            or item_data.get('productAttributes')
+            or {}
+        )
+        specifications = {}
+
+        if isinstance(raw_attributes, dict):
+            specifications.update(raw_attributes)
+        elif isinstance(raw_attributes, list):
+            for attribute in raw_attributes:
+                if not isinstance(attribute, dict):
+                    continue
+
+                label = (
+                    attribute.get('name')
+                    or attribute.get('label')
+                    or attribute.get('key')
+                )
+                value = (
+                    attribute.get('value')
+                    or attribute.get('values')
+                    or attribute.get('text')
+                )
+                if label and value not in (None, ''):
+                    specifications[str(label)] = value
+
+        return specifications
+
     def parse(self, response):
         try:
             data = json.loads(response.text)
@@ -38,7 +72,38 @@ class DarazSpider(scrapy.Spider):
                 
                 # Get Title and Price
                 item['model'] = item_data.get('name', '')
+                item['brand'] = (
+                    item_data.get('brandName')
+                    or item_data.get('brand')
+                    or item_data.get('brand_name')
+                )
                 item['price'] = item_data.get('price', '0')
+
+                # Daraz currently exposes the primary catalog image on each
+                # AJAX list item. Keep fallbacks for payload variants seen on
+                # category pages and normalize protocol-relative URLs.
+                raw_images = (
+                    item_data.get('images')
+                    or item_data.get('image')
+                    or item_data.get('imageUrl')
+                    or item_data.get('thumbUrl')
+                    or []
+                )
+                if isinstance(raw_images, str):
+                    raw_images = [raw_images]
+                elif isinstance(raw_images, dict):
+                    raw_images = list(raw_images.values())
+
+                item['image_urls'] = [
+                    ('https:' + image_url)
+                    if image_url.startswith('//')
+                    else image_url
+                    for image_url in raw_images
+                    if isinstance(image_url, str) and image_url
+                ]
+                item['specifications'] = self.extract_specifications(
+                    item_data
+                )
                 
                 # Availability
                 in_stock = item_data.get('inStock', False)
