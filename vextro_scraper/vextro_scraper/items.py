@@ -23,3 +23,12 @@ class SmartphoneItem(scrapy.Item):
     specifications = scrapy.Field() # Normalized label/value technical data
     scrape_timestamp = scrapy.Field()
     raw_html_path = scrapy.Field() # Link to where the raw snapshot is saved
+
+
+class ReviewBatchItem(scrapy.Item):
+    """A bounded review collection tied to a known marketplace listing."""
+
+    platform = scrapy.Field()
+    external_listing_id = scrapy.Field()
+    source_url = scrapy.Field()
+    reviews = scrapy.Field()

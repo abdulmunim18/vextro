@@ -86,12 +86,12 @@ class AcquisitionListingInput(BaseModel):
     product_url: HttpUrl
 
     current_price: Decimal = Field(
-        ge=0,
+        gt=0,
     )
 
     original_price: Decimal | None = Field(
         default=None,
-        ge=0,
+        gt=0,
     )
 
     currency: str = Field(

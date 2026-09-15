@@ -89,6 +89,29 @@ try {
         throw "VEXTRO backend did not become healthy within 60 seconds."
     }
 
+    # Read the same environment-backed key as FastAPI without printing it.
+    # An explicitly supplied scraper key remains authoritative.
+    if (-not $env:INGESTION_API_KEY) {
+        Push-Location $backendDirectory
+        try {
+            $env:INGESTION_API_KEY = & $pythonPath -c `
+                "from app.core.config import settings; print(settings.ingestion_api_key or '')"
+        }
+        finally {
+            Pop-Location
+        }
+    }
+
+    if (-not $env:INGESTION_API_KEY) {
+        throw "INGESTION_API_KEY is required for secure scraper delivery."
+    }
+
+    if (-not $env:VEXTRO_API_URL) {
+        $env:VEXTRO_API_URL = "http://127.0.0.1:8000"
+    }
+
+    $env:VEXTRO_SCRAPE_TRIGGER = "scheduler"
+
     & $pythonPath -u $scraperScheduler `
         *>> (Join-Path $runtimeDirectory "scheduler.log")
 }

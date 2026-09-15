@@ -1,3 +1,9 @@
+"""Legacy ingestion API retained for compatibility.
+
+The active Daraz and PriceOye scraper uses the authenticated internal
+acquisition routes instead. New acquisition clients must not use this module.
+"""
+
 from fastapi import APIRouter, Depends, HTTPException, status
 import re
 from sqlalchemy import func
@@ -23,7 +29,11 @@ from app.services.cross_marketplace_matching import (
 )
 
 # Create the router for the ingestion URL
-router = APIRouter(prefix="/ingest", tags=["Data Ingestion"])
+router = APIRouter(
+    prefix="/ingest",
+    tags=["Data Ingestion"],
+    deprecated=True,
+)
 
 # Define the exact data structure we expect from Scrapy
 class ScrapedItemPayload(BaseModel):
@@ -32,7 +42,7 @@ class ScrapedItemPayload(BaseModel):
     model: str
     brand: Optional[str] = None
     product_url: str
-    price: float
+    price: float = Field(gt=0, allow_inf_nan=False)
     currency: str = "PKR"
     color: Optional[str] = "N/A"
     variant: Optional[str] = "Standard"

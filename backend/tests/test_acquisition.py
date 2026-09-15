@@ -244,7 +244,7 @@ def acquisition_alert_context(
             acquisition_context["product_id"],
         ),
         listing_id=None,
-        target_price=Decimal("125000.00"),
+        target_price=Decimal("115000.00"),
         currency="PKR",
     )
 
@@ -432,6 +432,130 @@ def test_ingestion_rejects_invalid_key(
     )
 
 
+@pytest.mark.parametrize(
+    "invalid_price",
+    [
+        "",
+        "N/A",
+        "abc123",
+        "NaN",
+        "Infinity",
+        0,
+        0.0,
+        -1,
+        -999,
+    ],
+)
+def test_invalid_capture_does_not_overwrite_or_create_history_or_alert(
+    client: TestClient,
+    database_session: Session,
+    acquisition_context: dict[str, object],
+    acquisition_alert_context: dict[str, object],
+    invalid_price: object,
+) -> None:
+    """Reject bad prices before persistence or alert evaluation."""
+
+    first_payload = build_payload(
+        acquisition_context,
+        current_price=120000.0,
+    )
+    first_response = client.post(
+        ENDPOINT,
+        headers=ingestion_headers(),
+        json=first_payload,
+    )
+
+    assert first_response.status_code == 201
+    assert first_response.json()["alerts_triggered"] == 0
+
+    invalid_payload = build_payload(
+        acquisition_context,
+        captured_at=BASE_CAPTURE_TIME + timedelta(hours=12),
+    )
+    invalid_payload["current_price"] = invalid_price
+
+    invalid_response = client.post(
+        ENDPOINT,
+        headers=ingestion_headers(),
+        json=invalid_payload,
+    )
+
+    assert invalid_response.status_code == 422
+
+    database_session.expire_all()
+
+    listing = database_session.scalar(
+        select(ProductListing).where(
+            ProductListing.external_id
+            == acquisition_context["external_id"],
+        ),
+    )
+    assert listing is not None
+    assert listing.current_price == Decimal("120000.00")
+
+    history_count = database_session.scalar(
+        select(func.count(PriceHistory.id)).where(
+            PriceHistory.listing_id == listing.id,
+        ),
+    )
+    assert history_count == 1
+
+    alert = database_session.get(
+        PriceAlert,
+        int(acquisition_alert_context["alert_id"]),
+    )
+    assert alert is not None
+    assert alert.is_triggered is False
+    assert alert.notification_count == 0
+
+
+def test_ingestion_rejects_missing_current_price_without_persistence(
+    client: TestClient,
+    database_session: Session,
+    acquisition_context: dict[str, object],
+) -> None:
+    """Require a marketplace price before acquisition starts."""
+
+    payload = build_payload(acquisition_context)
+    payload.pop("current_price")
+
+    response = client.post(
+        ENDPOINT,
+        headers=ingestion_headers(),
+        json=payload,
+    )
+
+    assert response.status_code == 422
+
+    listing = database_session.scalar(
+        select(ProductListing).where(
+            ProductListing.external_id
+            == acquisition_context["external_id"],
+        ),
+    )
+    assert listing is None
+
+
+@pytest.mark.parametrize("invalid_original_price", [0, -1, "NaN"])
+def test_ingestion_rejects_invalid_original_price(
+    client: TestClient,
+    acquisition_context: dict[str, object],
+    invalid_original_price: object,
+) -> None:
+    """Apply the same positive-price rule to an optional original price."""
+
+    payload = build_payload(acquisition_context)
+    payload["original_price"] = invalid_original_price
+
+    response = client.post(
+        ENDPOINT,
+        headers=ingestion_headers(),
+        json=payload,
+    )
+
+    assert response.status_code == 422
+
+
 def test_ingestion_rejects_unknown_variant(
     client: TestClient,
     acquisition_context: dict[str, object],
@@ -540,11 +664,11 @@ def test_ingestion_triggers_matching_price_alert_once(
     acquisition_context: dict[str, object],
     acquisition_alert_context: dict[str, object],
 ) -> None:
-    """Trigger a matching alert once when captured price reaches target."""
+    """Trigger a matching alert once after price crosses its target."""
 
     first_payload = build_payload(
         acquisition_context,
-        current_price=124999.0,
+        current_price=120000.0,
     )
 
     first_response = client.post(
@@ -557,7 +681,7 @@ def test_ingestion_triggers_matching_price_alert_once(
 
     first_response_data = first_response.json()
 
-    assert first_response_data["alerts_triggered"] == 1
+    assert first_response_data["alerts_triggered"] == 0
 
     database_session.expire_all()
 
@@ -568,11 +692,11 @@ def test_ingestion_triggers_matching_price_alert_once(
 
     assert alert is not None
     assert alert.is_active is True
-    assert alert.is_triggered is True
-    assert alert.triggered_at is not None
+    assert alert.is_triggered is False
+    assert alert.triggered_at is None
     assert alert.last_checked_at is not None
-    assert alert.notification_count == 1
-    assert alert.last_notified_at is not None
+    assert alert.notification_count == 0
+    assert alert.last_notified_at is None
 
     second_payload = build_payload(
         acquisition_context,
@@ -580,7 +704,7 @@ def test_ingestion_triggers_matching_price_alert_once(
             BASE_CAPTURE_TIME
             + timedelta(minutes=30)
         ),
-        current_price=123999.0,
+        current_price=112000.0,
     )
 
     second_response = client.post(
@@ -594,7 +718,7 @@ def test_ingestion_triggers_matching_price_alert_once(
 
     second_response_data = second_response.json()
 
-    assert second_response_data["alerts_triggered"] == 0
+    assert second_response_data["alerts_triggered"] == 1
 
     database_session.expire_all()
 
@@ -606,6 +730,25 @@ def test_ingestion_triggers_matching_price_alert_once(
     assert refreshed_alert is not None
     assert refreshed_alert.is_triggered is True
     assert refreshed_alert.notification_count == 1
+    assert refreshed_alert.last_notified_at is not None
+
+    third_payload = build_payload(
+        acquisition_context,
+        captured_at=(
+            BASE_CAPTURE_TIME
+            + timedelta(minutes=60)
+        ),
+        current_price=110000.0,
+    )
+
+    third_response = client.post(
+        ENDPOINT,
+        headers=ingestion_headers(),
+        json=third_payload,
+    )
+
+    assert third_response.status_code == 200
+    assert third_response.json()["alerts_triggered"] == 0
 
 
 def test_ingestion_does_not_trigger_alert_above_target(
@@ -1133,7 +1276,7 @@ def test_product_match_to_ingestion_to_price_intelligence_e2e(
     # Step 2: Pass the matcher result into acquisition ingestion.
     ingestion_payload = build_payload(
         acquisition_context,
-        current_price=124999.0,
+        current_price=120000.0,
     )
 
     ingestion_payload[
@@ -1206,25 +1349,25 @@ def test_product_match_to_ingestion_to_price_intelligence_e2e(
 
     assert Decimal(
         str(summary["current_price"])
-    ) == Decimal("124999.00")
+    ) == Decimal("120000.00")
 
     assert Decimal(
         str(summary["lowest_price"])
-    ) == Decimal("124999.00")
+    ) == Decimal("120000.00")
 
     assert Decimal(
         str(summary["highest_price"])
-    ) == Decimal("124999.00")
+    ) == Decimal("120000.00")
 
     assert Decimal(
         str(summary["average_price"])
-    ) == Decimal("124999.00")
+    ) == Decimal("120000.00")
 
     assert len(listing["points"]) == 1
 
     assert Decimal(
         str(listing["points"][0]["price"])
-    ) == Decimal("124999.00")
+    ) == Decimal("120000.00")
 
     # Step 4: Simulate a later scraper run with a changed price.
     second_capture_time = (
@@ -1235,7 +1378,7 @@ def test_product_match_to_ingestion_to_price_intelligence_e2e(
     second_payload = build_payload(
         acquisition_context,
         captured_at=second_capture_time,
-        current_price=119999.0,
+        current_price=115000.0,
     )
 
     # The scraper must keep using the ID returned by matching.
@@ -1313,19 +1456,19 @@ def test_product_match_to_ingestion_to_price_intelligence_e2e(
 
     assert Decimal(
         str(updated_summary["current_price"])
-    ) == Decimal("119999.00")
+    ) == Decimal("115000.00")
 
     assert Decimal(
         str(updated_summary["lowest_price"])
-    ) == Decimal("119999.00")
+    ) == Decimal("115000.00")
 
     assert Decimal(
         str(updated_summary["highest_price"])
-    ) == Decimal("124999.00")
+    ) == Decimal("120000.00")
 
     assert Decimal(
         str(updated_summary["average_price"])
-    ) == Decimal("122499.00")
+    ) == Decimal("117500.00")
 
     returned_prices = [
         Decimal(str(point["price"]))
@@ -1333,8 +1476,8 @@ def test_product_match_to_ingestion_to_price_intelligence_e2e(
     ]
 
     assert returned_prices == [
-        Decimal("124999.00"),
-        Decimal("119999.00"),
+        Decimal("120000.00"),
+        Decimal("115000.00"),
     ]
 
     # Step 6: Sending the same capture again must be idempotent.

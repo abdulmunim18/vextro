@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from app.models.seller import Seller
     from app.models.product_image import ProductImage
     from app.models.price_history import PriceHistory
+    from app.models.raw_review import RawReview
 
 
 class ProductListing(Base):
@@ -44,12 +45,12 @@ class ProductListing(Base):
             name="uq_product_listings_platform_external_id",
         ),
         CheckConstraint(
-            "current_price >= 0",
-            name="ck_product_listings_current_price_non_negative",
+            "current_price > 0",
+            name="ck_product_listings_current_price_positive",
         ),
         CheckConstraint(
-            "original_price IS NULL OR original_price >= 0",
-            name="ck_product_listings_original_price_non_negative",
+            "original_price IS NULL OR original_price > 0",
+            name="ck_product_listings_original_price_positive",
         ),
         CheckConstraint(
             "rating IS NULL OR (rating >= 0 AND rating <= 5)",
@@ -186,4 +187,10 @@ class ProductListing(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
         order_by="PriceHistory.captured_at",
+    )
+    reviews: Mapped[list["RawReview"]] = relationship(
+        back_populates="product_listing",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="RawReview.reviewed_at",
     )

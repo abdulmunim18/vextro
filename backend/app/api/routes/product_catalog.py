@@ -9,6 +9,8 @@ from fastapi import (
 from decimal import Decimal
 from typing import Literal
 from sqlalchemy.orm import Session
+from app.api.dependencies.auth import get_current_user
+from app.models.user import User
 from app.schemas.product_comparison import (
     ProductComparisonResponse,
 )
@@ -19,6 +21,9 @@ from app.schemas.product_catalog import (
     ProductListResponse,
     ProductListingsResponse,
 )
+from app.schemas.reviews import ProductReviewsResponse
+from app.schemas.review_analysis import ProductReviewAnalysisResponse, ReviewAnalysisResponse
+from app.schemas.seller_trust import SellerTrustResponse
 from app.services.product_catalog_service import (
     get_product_detail,
     get_product_listings_response,
@@ -27,12 +32,19 @@ from app.services.product_catalog_service import (
 from app.services.product_comparison_service import (
     get_product_comparison_response,
 )
+from app.services.review_service import ReviewService
+from app.services.review_analysis_service import ReviewAnalysisService
+from app.services.seller_trust_service import SellerTrustService
+from app.models.product_listing import ProductListing
 
 
 router = APIRouter(
     prefix="/api/v1/products",
     tags=["products"],
 )
+review_service = ReviewService()
+review_analysis_service = ReviewAnalysisService()
+seller_trust_service = SellerTrustService()
 
 @router.get(
     "/compare",
@@ -227,3 +239,108 @@ def read_product_listings(
         )
 
     return result
+
+
+@router.get(
+    "/{product_id}/reviews",
+    response_model=ProductReviewsResponse,
+    status_code=status.HTTP_200_OK,
+)
+def read_product_reviews(
+    product_id: int = Path(..., ge=1),
+    listing_id: int | None = Query(default=None, ge=1),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    database_session: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_user),
+) -> ProductReviewsResponse:
+    """Return persisted reviews and factual rating aggregates."""
+
+    return review_service.get_product_reviews(
+        database_session,
+        product_id=product_id,
+        listing_id=listing_id,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/{product_id}/review-analysis", response_model=ProductReviewAnalysisResponse)
+def read_product_review_analysis(
+    product_id: int = Path(..., ge=1),
+    listing_id: int | None = Query(default=None, ge=1),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    database_session: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_user),
+) -> ProductReviewAnalysisResponse:
+    """Read persisted suspicion evidence; scores are not fraud labels."""
+    return review_analysis_service.product_summary(
+        database_session, product_id=product_id, listing_id=listing_id,
+        page=page, page_size=page_size,
+    )
+
+
+@router.post("/{product_id}/review-analysis/run", response_model=ProductReviewAnalysisResponse)
+def rerun_product_review_analysis(
+    product_id: int = Path(..., ge=1),
+    listing_id: int = Query(..., ge=1),
+    database_session: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_user),
+) -> ProductReviewAnalysisResponse:
+    """Recalculate one product listing, including reviews predating v1."""
+    from app.repositories.review_repository import ReviewRepository
+
+    repository = ReviewRepository()
+    if repository.get_product(database_session, product_id) is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if not repository.listing_belongs_to_product(database_session, listing_id=listing_id, product_id=product_id):
+        raise HTTPException(status_code=404, detail="Listing not found for this product")
+    try:
+        review_analysis_service.analyze_listing(database_session, listing_id)
+        listing = database_session.get(ProductListing, listing_id)
+        if listing is not None and listing.seller_id is not None:
+            seller_trust_service.recalculate(database_session, listing.seller_id)
+        database_session.commit()
+    except Exception:
+        database_session.rollback()
+        raise
+    return review_analysis_service.product_summary(
+        database_session, product_id=product_id, listing_id=listing_id,
+        page=1, page_size=20,
+    )
+
+
+@router.get("/{product_id}/reviews/{review_id}/analysis", response_model=ReviewAnalysisResponse)
+def read_review_analysis(
+    product_id: int = Path(..., ge=1),
+    review_id: int = Path(..., ge=1),
+    database_session: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_user),
+) -> ReviewAnalysisResponse:
+    """Read versioned evidence for one review belonging to a product."""
+    return review_analysis_service.product_review_result(
+        database_session, product_id=product_id, review_id=review_id,
+    )
+
+
+@router.get("/{product_id}/listings/{listing_id}/seller-trust", response_model=SellerTrustResponse)
+def read_listing_seller_trust(
+    product_id: int = Path(..., ge=1),
+    listing_id: int = Path(..., ge=1),
+    database_session: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_user),
+) -> SellerTrustResponse:
+    """Return seller trust indicators or explain why seller evidence is unavailable."""
+    from app.repositories.review_repository import ReviewRepository
+
+    repository = ReviewRepository()
+    if repository.get_product(database_session, product_id) is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if not repository.listing_belongs_to_product(database_session, listing_id=listing_id, product_id=product_id):
+        raise HTTPException(status_code=404, detail="Listing not found for this product")
+    listing = database_session.get(ProductListing, listing_id)
+    assert listing is not None
+    if listing.seller_id is None:
+        return seller_trust_service.unavailable(None, "Seller identity is not available for this marketplace listing.")
+    return seller_trust_service.result(database_session, listing.seller_id)

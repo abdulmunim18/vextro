@@ -1,10 +1,20 @@
 import scrapy
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from vextro_scraper.items import SmartphoneItem
+
+
+class DarazParserError(ValueError):
+    """A Daraz response could not be parsed as the expected JSON payload."""
+
+    error_type = "invalid_marketplace_response"
+    error_stage = "parse"
+
 
 class DarazSpider(scrapy.Spider):
     name = "daraz_smartphones"
+    platform_code = "daraz"
+    parser_version = "daraz-v1"
     allowed_domains = ["daraz.pk"]
     
     # We use the internal AJAX API for reliable scraping
@@ -77,7 +87,7 @@ class DarazSpider(scrapy.Spider):
                     or item_data.get('brand')
                     or item_data.get('brand_name')
                 )
-                item['price'] = item_data.get('price', '0')
+                item['price'] = item_data.get('price')
 
                 # Daraz currently exposes the primary catalog image on each
                 # AJAX list item. Keep fallbacks for payload variants seen on
@@ -115,7 +125,7 @@ class DarazSpider(scrapy.Spider):
                 item['color'] = 'N/A'
                 item['warranty'] = 'Standard Warranty'
                 
-                item['scrape_timestamp'] = datetime.now().isoformat()
+                item['scrape_timestamp'] = datetime.now(timezone.utc).isoformat()
                 
                 yield item
 
@@ -128,5 +138,8 @@ class DarazSpider(scrapy.Spider):
                 next_page_url = f"https://www.daraz.pk/smartphones/?ajax=true&page={page + 1}"
                 yield scrapy.Request(url=next_page_url, callback=self.parse)
                 
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
             self.logger.error("Failed to parse JSON response from Daraz API.")
+            raise DarazParserError(
+                "Daraz returned malformed JSON."
+            ) from exc

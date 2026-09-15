@@ -27,6 +27,7 @@ from app.api.routes.price_intelligence import (
 from app.api.routes.price_alerts import (
     router as price_alerts_router,
 )
+from app.api.routes.seller_trust import router as seller_trust_router
 
 app = FastAPI(
     title=settings.app_name,
@@ -60,6 +61,7 @@ app.include_router(forecast_integration_router)
 app.include_router(sme_router)
 app.include_router(notifications_router)
 app.include_router(assistant_router)
+app.include_router(seller_trust_router)
 
 @app.get("/", tags=["Root"])
 def root() -> dict[str, str]:

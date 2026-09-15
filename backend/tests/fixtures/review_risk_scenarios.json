@@ -1,0 +1,19 @@
+{
+  "description": "Artificial, sanitized scenarios for deterministic review-risk tests; not marketplace or labelled fraud data.",
+  "normal": [
+    "Battery lasted all day during travel and the display stayed readable outdoors.",
+    "Packaging was secure and delivery arrived on the expected afternoon.",
+    "The camera handles indoor lighting reasonably well for this price range.",
+    "Setup took about fifteen minutes and the included instructions were clear.",
+    "I would prefer a smaller charger but the phone itself works reliably."
+  ],
+  "near_duplicate": [
+    "Excellent phone. Battery timing is very good and charging is quick.",
+    "Excellent phone, battery timing is very good and charging is quick!",
+    "Excellent phone battery timing very good and charging is quick."
+  ],
+  "mismatch": [
+    "Excellent product, absolutely perfect for my daily use.",
+    "Terrible device, completely useless after two days of use."
+  ]
+}

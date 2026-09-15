@@ -16,10 +16,15 @@ from app.models.product_image import ProductImage
 from app.models.product_listing import ProductListing
 from app.models.product_variant import ProductVariant
 from app.models.refresh_token import RefreshToken
+from app.models.raw_review import RawReview
+from app.models.review_analysis import ReviewAnalysis
 from app.models.role import Role
 from app.models.sales_import import SalesImport
 from app.models.sales_record import SalesRecord
+from app.models.scrape_error import ScrapeError
+from app.models.scrape_run import ScrapeRun
 from app.models.seller import Seller
+from app.models.seller_trust_analysis import SellerTrustAnalysis
 from app.models.user import User
 from app.models.user_role import user_roles
 
@@ -42,11 +47,16 @@ __all__ = [
     "ProductListing",
     "ProductVariant",
     "RefreshToken",
+    "RawReview",
+    "ReviewAnalysis",
     "Notification",
     "Role",
     "SalesImport",
     "SalesRecord",
+    "ScrapeError",
+    "ScrapeRun",
     "Seller",
+    "SellerTrustAnalysis",
     "User",
     "user_roles",
 ]

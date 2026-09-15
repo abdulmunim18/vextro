@@ -634,23 +634,47 @@ Responses: `201` published, `401` invalid integration key, `404` inactive or unk
 
 ## GET `/api/v1/products/{product_id}/reviews`
 
-**Access:** Public  
-**Purpose:** Return paginated product reviews.
+**Access:** Authenticated application user
+**Purpose:** Return persisted product reviews and factual rating aggregates.
 
 ### Query Parameters
 
 ```text
-sentiment
-rating
-platform
+listing_id (optional; must belong to the product)
 page
-page_size
+page_size (maximum 100)
 ```
+
+### Response — 200
+
+```json
+{
+  "product_id": 100,
+  "listing_id": null,
+  "total": 3,
+  "page": 1,
+  "page_size": 20,
+  "total_pages": 1,
+  "average_rating": 4.0,
+  "rating_distribution": {
+    "1": 0,
+    "2": 0,
+    "3": 1,
+    "4": 1,
+    "5": 1
+  },
+  "items": []
+}
+```
+
+No sentiment, suspicious-review classification, or seller-trust result is
+returned by this foundation endpoint.
 
 ---
 
 ## GET `/api/v1/products/{product_id}/review-insights`
 
+**Status:** Planned; not implemented by the review-data foundation.
 **Access:** Public  
 **Purpose:** Return sentiment and review summary.
 
@@ -682,6 +706,7 @@ page_size
 
 ## GET `/api/v1/sellers/{seller_id}/trust-score`
 
+**Status:** Planned; not implemented by the review-data foundation.
 **Access:** Public  
 **Purpose:** Return explainable seller trust information.
 

@@ -21,6 +21,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.models.product_listing import ProductListing
+    from app.models.raw_review import RawReview
 
 
 class Seller(Base):
@@ -113,5 +118,8 @@ class Seller(Base):
     )
 
     listings: Mapped[list["ProductListing"]] = relationship(
+        back_populates="seller",
+    )
+    reviews: Mapped[list["RawReview"]] = relationship(
         back_populates="seller",
     )

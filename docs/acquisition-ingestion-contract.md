@@ -4,15 +4,27 @@
 
 This contract defines how the VEXTRO scraper sends a normalized Daraz or PriceOye marketplace listing to the FastAPI backend.
 
-The scraper is responsible for collecting permitted marketplace data, parsing platform-specific responses, cleaning prices and basic fields, and providing a matched VEXTRO product variant ID.
+The scraper is responsible for collecting permitted marketplace data, parsing platform-specific responses, cleaning prices and basic fields, obtaining a safe match through the existing product-matching endpoint, and providing that matched VEXTRO product variant ID to listing ingestion.
 
 The backend is responsible for authenticating the ingestion request, verifying the platform and product variant, creating or updating the seller and marketplace listing, creating a historical price observation, evaluating applicable price alerts, and returning an ingestion summary.
 
 ## Endpoint
 
+The active scraper first resolves a canonical variant:
+
+```http
+POST /api/v1/internal/acquisition/match-product
+```
+
+It then submits the normalized listing:
+
 ```http
 POST /api/v1/internal/acquisition/listings
 ```
+
+Both requests use the authentication header below. The older
+`/api/v1/ingest/{platform}` API remains deprecated for compatibility and is
+not the active Daraz/PriceOye delivery path.
 
 ## Authentication
 
@@ -21,6 +33,11 @@ X-Ingestion-Key: <configured-secret>
 ```
 
 The ingestion key must be stored in environment variables and must never be committed to Git.
+
+The scraper reads the shared `INGESTION_API_KEY` environment variable. Its
+backend base URL can be overridden with `VEXTRO_API_URL`; local development
+defaults to `http://127.0.0.1:8000`. `VEXTRO_API_TIMEOUT` optionally controls
+the HTTP timeout in seconds.
 
 ## Request Body
 
@@ -79,7 +96,8 @@ The ingestion key must be stored in environment variables and must never be comm
 
 - Supported platforms: `daraz` and `priceoye`
 - `product_variant_id` must exist
-- Current and original price must be zero or greater
+- Current price must be finite and greater than zero
+- Original price, when supplied, must be finite and greater than zero
 - Currency must contain exactly three uppercase letters
 - Ratings must be between `0` and `5`
 - Review counts must be zero or greater
@@ -156,6 +174,51 @@ duplicate
 
 Seller, listing, and price-history changes must run in one database transaction. Any failure must roll back the complete ingestion request.
 
+## Persistent Scrape Monitoring
+
+Every normal Daraz and PriceOye spider execution creates one authenticated
+`scrape_runs` record through:
+
+```http
+POST /api/v1/internal/acquisition/runs
+```
+
+The run starts as `running`. Item outcomes are persisted as follows:
+
+- `discovered`: an item reached a terminal pipeline outcome.
+- `ingested`: secure acquisition completed successfully, including an
+  idempotent duplicate response.
+- `rejected`: the item was intentionally dropped because its data was invalid.
+- `failed`: processing, matching, delivery, or spider execution failed.
+
+`completed` means the spider closed normally without rejections or failures.
+`partial` means it closed normally with at least one rejection or failure.
+`failed` means Scrapy reported an abnormal close reason. Every finalized run
+receives `finished_at`.
+
+Meaningful errors are written through:
+
+```http
+POST /api/v1/internal/acquisition/runs/{run_id}/errors
+```
+
+Supported stages are `fetch`, `parse`, `validation`, `matching`, `delivery`,
+and `ingestion`. Error text and metadata are bounded, and known credential
+fields are redacted. `daraz-v1` and `priceoye-v2-reviews` identify the current
+parsers.
+The scheduler records `trigger_type=scheduler`; direct `scrapy crawl` commands
+default to `manual`.
+
+Recent evidence can be inspected with the same `X-Ingestion-Key` using:
+
+```http
+GET /api/v1/internal/acquisition/runs
+GET /api/v1/internal/acquisition/runs/{run_id}
+```
+
+If the backend itself is unavailable, neither acquisition nor monitoring can
+be persisted; the existing console/file logs remain the fallback evidence.
+
 ## Initial Implementation Files
 
 ```text
@@ -166,3 +229,13 @@ backend/app/api/dependencies/ingestion.py
 backend/app/api/routes/acquisition.py
 backend/tests/test_acquisition.py
 ```
+
+## Review acquisition
+
+Review batches use `POST /api/v1/internal/acquisition/reviews` with the same
+`X-Ingestion-Key` as listing acquisition. Each bounded request identifies a
+supported platform and marketplace external listing ID; the backend resolves
+the exact existing listing, derives its seller, normalizes review fields, and
+deduplicates using an external review ID or deterministic SHA-256 fingerprint.
+See `docs/review-data-foundation.md` for the schema, source capability matrix,
+limits, read endpoint, monitoring behavior, and known marketplace limitations.

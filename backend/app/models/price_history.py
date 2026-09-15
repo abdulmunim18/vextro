@@ -32,12 +32,12 @@ class PriceHistory(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "price >= 0",
-            name="ck_price_history_price_non_negative",
+            "price > 0",
+            name="ck_price_history_price_positive",
         ),
         CheckConstraint(
-            "original_price IS NULL OR original_price >= 0",
-            name="ck_price_history_original_price_non_negative",
+            "original_price IS NULL OR original_price > 0",
+            name="ck_price_history_original_price_positive",
         ),
         CheckConstraint(
             "char_length(currency) = 3",

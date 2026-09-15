@@ -36,8 +36,8 @@ This document maps each planned table to its module, priority and implementation
 
 | Table | Purpose | Priority | Status |
 |---|---|---:|---|
-| scrape_runs | Data-collection run status and statistics | P1 | Pending |
-| scrape_errors | Detailed collection failures | P1 | Pending |
+| scrape_runs | Data-collection run status and statistics | P1 | Implemented |
+| scrape_errors | Detailed collection failures | P1 | Implemented |
 
 ---
 
@@ -56,7 +56,7 @@ This document maps each planned table to its module, priority and implementation
 
 | Table | Purpose | Priority | Status |
 |---|---|---:|---|
-| raw_reviews | Original collected review data | P1 | Pending |
+| raw_reviews | Normalized collected review evidence | P1 | Implemented |
 | sentiment_results | Positive, neutral and negative results | P1 | Pending |
 | aspect_sentiments | Aspect-level review insights | P2 | Pending |
 | review_summaries | Product-level review summaries | P2 | Pending |
