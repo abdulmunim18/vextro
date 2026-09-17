@@ -208,28 +208,62 @@ import logging
 
 class VextroApiIngestionPipeline:
     def __init__(self):
-        # Base URL, the platform will be appended dynamically
         self.base_api_url = 'http://localhost:8000/api/v1/ingest/'
+        self.warehouse_url = 'http://localhost:8000/api/v1/warehouse/scrape-runs'
+        self.run_id = None
+        self.items_scraped = 0
+        self.items_failed = 0
+
+    def open_spider(self, spider):
+        platform_name = getattr(spider, 'platform', spider.name.capitalize())
+        try:
+            res = requests.post(
+                f"{self.warehouse_url}/start",
+                json={'platform': platform_name, 'triggered_by': 'PIPELINE'},
+                timeout=5,
+            )
+            if res.status_code in [200, 201]:
+                data = res.json()
+                self.run_id = data.get('id')
+                logging.info(f"📊 Registered Warehouse ScrapeRun #{self.run_id} for {platform_name}")
+        except requests.exceptions.RequestException as e:
+            logging.warning(f"⚠️ Could not register ScrapeRun: {e}")
+
+    def close_spider(self, spider):
+        if not self.run_id:
+            return
+        status_str = "SUCCESS" if self.items_failed == 0 else "FAILED"
+        try:
+            requests.post(
+                f"{self.warehouse_url}/{self.run_id}/finish",
+                json={
+                    'status': status_str,
+                    'items_scraped': self.items_scraped,
+                    'items_failed': self.items_failed,
+                    'error_message': None if self.items_failed == 0 else f"{self.items_failed} items failed during ingestion",
+                },
+                timeout=5,
+            )
+            logging.info(f"🏁 Finished Warehouse ScrapeRun #{self.run_id} ({self.items_scraped} scraped, {self.items_failed} failed)")
+        except requests.exceptions.RequestException as e:
+            logging.warning(f"⚠️ Could not update ScrapeRun #{self.run_id}: {e}")
 
     def process_item(self, item, spider):
-        # Convert Scrapy item to a standard dictionary
         payload = dict(item)
-        
         platform_code = payload.get('platform', 'unknown').lower()
         api_url = f"{self.base_api_url}{platform_code}"
 
         try:
-            # Fire the data to the backend via POST request
             response = requests.post(api_url, json=payload, timeout=5)
-
-            # Log success or failure directly in your VS Code terminal
             if response.status_code in [200, 201]:
+                self.items_scraped += 1
                 logging.info(f"✅ Successfully ingested: {payload.get('model')}")
             else:
+                self.items_failed += 1
                 logging.error(f"❌ Failed to ingest {payload.get('model')}. Status: {response.status_code}")
-        
         except requests.exceptions.RequestException as e:
-            # This triggers if your FastAPI server isn't running yet
+            self.items_failed += 1
             logging.warning(f"⚠️ Backend offline or unreachable: {e}")
 
         return item
+

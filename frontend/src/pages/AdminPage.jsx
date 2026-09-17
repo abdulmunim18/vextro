@@ -6,6 +6,7 @@ import {
 } from "react";
 
 import RouteLoadingState from "../components/RouteLoadingState";
+import WarehouseMonitoring from "../components/WarehouseMonitoring";
 import { useAuth } from "../context/useAuth";
 import {
   getAdminDashboard,
@@ -31,6 +32,10 @@ const TABS = [
     label: "Overview",
   },
   {
+    id: "warehouse",
+    label: "Data Warehouse",
+  },
+  {
     id: "users",
     label: "Users",
   },
@@ -43,6 +48,7 @@ const TABS = [
     label: "Listings",
   },
 ];
+
 
 const initialUserFilters = {
   query: "",
@@ -1297,7 +1303,14 @@ function AdminPage() {
           </>
         ) : null}
 
+        {activeTab === "warehouse" ? (
+          <div className="mt-8">
+            <WarehouseMonitoring />
+          </div>
+        ) : null}
+
         {activeTab === "users" ? (
+
           <section className="mt-8 overflow-hidden rounded-3xl border border-vextro-border bg-white shadow-sm">
             <div className="border-b border-vextro-border p-6 sm:p-8">
               <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">

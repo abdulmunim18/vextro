@@ -19,6 +19,7 @@ from app.models.refresh_token import RefreshToken
 from app.models.role import Role
 from app.models.sales_import import SalesImport
 from app.models.sales_record import SalesRecord
+from app.models.scrape_run import ScrapeRun
 from app.models.seller import Seller
 from app.models.user import User
 from app.models.user_role import user_roles
@@ -46,7 +47,9 @@ __all__ = [
     "Role",
     "SalesImport",
     "SalesRecord",
+    "ScrapeRun",
     "Seller",
     "User",
     "user_roles",
 ]
+

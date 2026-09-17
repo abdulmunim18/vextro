@@ -27,6 +27,7 @@ from app.api.routes.price_intelligence import (
 from app.api.routes.price_alerts import (
     router as price_alerts_router,
 )
+from app.api.routes.warehouse import router as warehouse_router
 
 app = FastAPI(
     title=settings.app_name,
@@ -53,6 +54,7 @@ app.include_router(product_catalog_router)
 app.include_router(price_alerts_router)
 app.include_router(price_intelligence_router)
 app.include_router(ingest.router, prefix="/api/v1")
+app.include_router(warehouse_router, prefix="/api/v1")
 app.include_router(admin_router)
 app.include_router(admin_catalog_router)
 app.include_router(acquisition_router)
@@ -66,3 +68,4 @@ def root() -> dict[str, str]:
     return {
         "message": "Welcome to VEXTRO API",
     }
+

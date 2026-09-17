@@ -33,3 +33,7 @@ Thumbs.db
 *.pkl
 *.pt
 *.h5
+
+# Backups
+backups/*.sql
+
