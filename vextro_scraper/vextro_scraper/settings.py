@@ -102,6 +102,9 @@ INGESTION_API_KEY = os.getenv("INGESTION_API_KEY")
 VEXTRO_API_TIMEOUT = float(
     os.getenv("VEXTRO_API_TIMEOUT", "5"),
 )
+VEXTRO_INGESTION_BATCH_SIZE = int(
+    os.getenv("VEXTRO_INGESTION_BATCH_SIZE", "25")
+)
 VEXTRO_SCRAPE_TRIGGER = os.getenv(
     "VEXTRO_SCRAPE_TRIGGER",
     "manual",

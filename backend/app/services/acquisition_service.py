@@ -1,6 +1,7 @@
 """Business logic for marketplace acquisition ingestion."""
 
 from fastapi import HTTPException, status
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.repositories.acquisition_repository import (
@@ -9,6 +10,9 @@ from app.repositories.acquisition_repository import (
 from app.schemas.acquisition import (
     AcquisitionListingInput,
     AcquisitionListingResponse,
+    AcquisitionBulkInput,
+    AcquisitionBulkItemResponse,
+    AcquisitionBulkResponse,
 )
 from app.services.price_alert_service import (
     evaluate_price_alerts_for_capture,
@@ -302,3 +306,120 @@ class AcquisitionService:
         except Exception:
             database_session.rollback()
             raise
+
+    @staticmethod
+    def _http_error_code(error: HTTPException) -> str:
+        detail = str(error.detail).lower()
+        if "platform" in detail:
+            return "platform_unavailable"
+        if "variant" in detail and "not found" in detail:
+            return "product_variant_not_found"
+        if "inactive" in detail:
+            return "product_inactive"
+        if "currency" in detail:
+            return "unsupported_currency"
+        return "listing_ingestion_rejected"
+
+    def ingest_bulk(
+        self,
+        database_session: Session,
+        payload: AcquisitionBulkInput,
+    ) -> AcquisitionBulkResponse:
+        """Process each item independently through the single-item service."""
+
+        results: list[AcquisitionBulkItemResponse] = []
+        succeeded = duplicates = rejected = failed = 0
+
+        for index, raw_item in enumerate(payload.items):
+            platform_code = raw_item.get("platform_code")
+            external_id = raw_item.get("external_id")
+            safe_platform = (
+                platform_code
+                if platform_code in {"daraz", "priceoye"}
+                else None
+            )
+            safe_external_id = (
+                str(external_id)[:150]
+                if external_id is not None
+                else None
+            )
+
+            try:
+                item = AcquisitionListingInput.model_validate(raw_item)
+            except ValidationError:
+                database_session.rollback()
+                rejected += 1
+                results.append(
+                    AcquisitionBulkItemResponse(
+                        index=index,
+                        status="rejected",
+                        platform_code=safe_platform,
+                        external_id=safe_external_id,
+                        error_code="invalid_listing_data",
+                        error_stage="validation",
+                        message="Listing validation failed.",
+                    )
+                )
+                continue
+
+            try:
+                result = self.ingest_listing(database_session, item)
+            except HTTPException as error:
+                database_session.rollback()
+                failed += 1
+                results.append(
+                    AcquisitionBulkItemResponse(
+                        index=index,
+                        status="failed",
+                        platform_code=item.platform_code,
+                        external_id=item.external_id,
+                        error_code=self._http_error_code(error),
+                        error_stage="ingestion",
+                        message=str(error.detail),
+                    )
+                )
+                continue
+            except Exception:
+                database_session.rollback()
+                failed += 1
+                results.append(
+                    AcquisitionBulkItemResponse(
+                        index=index,
+                        status="failed",
+                        platform_code=item.platform_code,
+                        external_id=item.external_id,
+                        error_code="listing_ingestion_failed",
+                        error_stage="ingestion",
+                        message="Listing ingestion failed unexpectedly.",
+                    )
+                )
+                continue
+
+            if result.status == "duplicate":
+                duplicates += 1
+            else:
+                succeeded += 1
+            results.append(
+                AcquisitionBulkItemResponse(
+                    index=index,
+                    status=result.status,
+                    platform_code=result.platform_code,
+                    external_id=item.external_id,
+                    listing_id=result.listing_id,
+                    price_history_id=result.price_history_id,
+                    price_history_created=result.price_history_created,
+                    alerts_triggered=result.alerts_triggered,
+                    competitor_alerts_triggered=(
+                        result.competitor_alerts_triggered
+                    ),
+                )
+            )
+
+        return AcquisitionBulkResponse(
+            received=len(payload.items),
+            succeeded=succeeded,
+            duplicates=duplicates,
+            rejected=rejected,
+            failed=failed,
+            results=results,
+        )

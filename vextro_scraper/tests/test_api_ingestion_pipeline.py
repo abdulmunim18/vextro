@@ -16,6 +16,9 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.schemas.acquisition import AcquisitionListingInput
 from vextro_scraper.pipelines import (
     AcquisitionDeliveryError,
+    BULK_ITEM_DELIVERED,
+    BULK_ITEM_FAILED,
+    BULK_ITEM_QUEUED,
     VextroApiIngestionPipeline,
 )
 
@@ -43,6 +46,19 @@ class RecordingSession:
         if isinstance(response, Exception):
             raise response
         return response
+
+
+class RecordingSignals:
+    def __init__(self):
+        self.events = []
+
+    def send_catch_log(self, signal, **kwargs):
+        self.events.append((signal, kwargs))
+
+
+class FakeCrawler:
+    def __init__(self):
+        self.signals = RecordingSignals()
 
 
 def build_clean_item():
@@ -75,7 +91,26 @@ def build_pipeline(session):
         ingestion_key='test-ingestion-key',
         request_timeout=7,
         session=session,
+        batch_size=1,
     )
+
+
+def bulk_result(*, listing_id=90, status='created'):
+    return {
+        'received': 1,
+        'succeeded': int(status in {'created', 'updated'}),
+        'duplicates': int(status == 'duplicate'),
+        'rejected': 0,
+        'failed': 0,
+        'results': [{
+            'index': 0,
+            'status': status,
+            'listing_id': listing_id,
+            'price_history_created': status != 'duplicate',
+            'alerts_triggered': 0,
+            'competitor_alerts_triggered': 0,
+        }],
+    }
 
 
 def test_pipeline_requires_environment_backed_ingestion_key():
@@ -108,13 +143,7 @@ def test_pipeline_matches_then_uses_secure_listing_contract():
             'canonical_product_id': 7,
             'reason': 'matched',
         }),
-        FakeResponse(201, {
-            'status': 'created',
-            'listing_id': 90,
-            'price_history_created': True,
-            'alerts_triggered': 0,
-            'competitor_alerts_triggered': 0,
-        }),
+        FakeResponse(200, bulk_result()),
     )
     pipeline = build_pipeline(session)
     item = build_clean_item()
@@ -123,7 +152,7 @@ def test_pipeline_matches_then_uses_secure_listing_contract():
 
     assert [call[0] for call in session.calls] == [
         'http://backend.test/api/v1/internal/acquisition/match-product',
-        'http://backend.test/api/v1/internal/acquisition/listings',
+        'http://backend.test/api/v1/internal/acquisition/listings/bulk',
     ]
     assert all(
         '/api/v1/ingest/' not in call[0]
@@ -146,7 +175,7 @@ def test_pipeline_matches_then_uses_secure_listing_contract():
         'color': 'Black',
     }
 
-    listing_payload = session.calls[1][1]['json']
+    listing_payload = session.calls[1][1]['json']['items'][0]
     validated = AcquisitionListingInput.model_validate(listing_payload)
 
     assert validated.platform_code == 'daraz'
@@ -167,13 +196,7 @@ def test_valid_priceoye_price_uses_secure_listing_contract():
             'canonical_product_id': 8,
             'reason': 'matched',
         }),
-        FakeResponse(201, {
-            'status': 'created',
-            'listing_id': 91,
-            'price_history_created': True,
-            'alerts_triggered': 0,
-            'competitor_alerts_triggered': 0,
-        }),
+        FakeResponse(200, bulk_result(listing_id=91)),
     )
     item = {
         **build_clean_item(),
@@ -185,7 +208,7 @@ def test_valid_priceoye_price_uses_secure_listing_contract():
 
     build_pipeline(session).process_item(item, spider=None)
 
-    listing_payload = session.calls[1][1]['json']
+    listing_payload = session.calls[1][1]['json']['items'][0]
     validated = AcquisitionListingInput.model_validate(listing_payload)
     assert validated.platform_code == 'priceoye'
     assert validated.product_variant_id == 43
@@ -287,6 +310,102 @@ def test_pipeline_delivers_review_batch_without_product_matching():
     assert len(session.calls) == 1
     assert session.calls[0][0].endswith('/acquisition/reviews')
     assert session.calls[0][1]['json']['platform_code'] == 'priceoye'
+
+
+def test_listing_buffer_submits_three_three_and_final_one():
+    responses = []
+    next_listing_id = 100
+    for item_index in range(7):
+        responses.append(FakeResponse(200, {
+            'matched': True,
+            'confidence': 95,
+            'product_variant_id': 42,
+            'canonical_product_id': 7,
+            'reason': 'matched',
+        }))
+        if item_index in {2, 5}:
+            responses.append(FakeResponse(200, {
+                'received': 3,
+                'succeeded': 3,
+                'duplicates': 0,
+                'rejected': 0,
+                'failed': 0,
+                'results': [
+                    {
+                        'index': index,
+                        'status': 'created',
+                        'listing_id': next_listing_id + index,
+                    }
+                    for index in range(3)
+                ],
+            }))
+            next_listing_id += 3
+    responses.append(FakeResponse(200, bulk_result(listing_id=106)))
+    session = RecordingSession(*responses)
+    pipeline = VextroApiIngestionPipeline(
+        base_api_url='http://backend.test',
+        ingestion_key='test-ingestion-key',
+        request_timeout=7,
+        session=session,
+        batch_size=3,
+    )
+
+    for index in range(7):
+        item = {**build_clean_item(), 'external_id': f'buffered-{index}'}
+        assert pipeline.process_item(item, spider=None) is item
+    pipeline.close_spider(spider=None)
+
+    bulk_calls = [
+        call for call in session.calls
+        if call[0].endswith('/acquisition/listings/bulk')
+    ]
+    assert [len(call[1]['json']['items']) for call in bulk_calls] == [3, 3, 1]
+    assert pipeline.listing_buffer == []
+
+
+def test_whole_bulk_http_failure_emits_failure_for_every_item():
+    session = RecordingSession(
+        FakeResponse(200, {
+            'matched': True,
+            'confidence': 95,
+            'product_variant_id': 42,
+            'canonical_product_id': 7,
+            'reason': 'matched',
+        }),
+        FakeResponse(200, {
+            'matched': True,
+            'confidence': 95,
+            'product_variant_id': 42,
+            'canonical_product_id': 7,
+            'reason': 'matched',
+        }),
+        FakeResponse(500, {'detail': 'internal failure'}),
+    )
+    crawler = FakeCrawler()
+    pipeline = VextroApiIngestionPipeline(
+        base_api_url='http://backend.test',
+        ingestion_key='test-ingestion-key',
+        session=session,
+        batch_size=2,
+        crawler=crawler,
+    )
+    items = [
+        {**build_clean_item(), 'external_id': f'failed-bulk-{index}'}
+        for index in range(2)
+    ]
+    for item in items:
+        assert pipeline.process_item(item, spider=None) is item
+
+    signals = [event[0] for event in crawler.signals.events]
+    assert signals.count(BULK_ITEM_QUEUED) == 2
+    assert signals.count(BULK_ITEM_FAILED) == 2
+    assert BULK_ITEM_DELIVERED not in signals
+    failures = [
+        event[1]['exception']
+        for event in crawler.signals.events
+        if event[0] is BULK_ITEM_FAILED
+    ]
+    assert all(error.error_type == 'backend_server_error' for error in failures)
 
 
 @pytest.mark.parametrize('status_code', [404, 422, 500])

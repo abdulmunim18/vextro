@@ -251,3 +251,65 @@ def test_extension_records_review_ingestion_failure_context():
     assert error_payload['product_url'].endswith('/reviews')
     assert error_payload['error_type'] == 'review_listing_unresolved'
     assert error_payload['error_stage'] == 'ingestion'
+
+
+def test_bulk_outcomes_count_items_not_http_requests():
+    session = RecordingSession(
+        FakeResponse(201, {'id': 60, 'status': 'running'}),
+        FakeResponse(200, {'id': 60, 'items_ingested': 1}),
+        FakeResponse(201, {'id': 5, 'error_type': 'invalid_listing_data'}),
+        FakeResponse(201, {'id': 6, 'error_type': 'listing_ingestion_failed'}),
+    )
+    extension = build_extension(session)
+    spider = SimpleNamespace(
+        name='priceoye_smartphones',
+        platform_code='priceoye',
+        parser_version='priceoye-v2-reviews',
+    )
+    extension.spider_opened(spider)
+    items = [
+        {
+            'external_id': f'bulk-{index}',
+            'product_url': f'https://priceoye.pk/bulk-{index}',
+        }
+        for index in range(3)
+    ]
+    for item in items:
+        extension.bulk_item_queued(item, spider)
+        extension.item_scraped(item, None, spider)
+
+    extension.bulk_item_delivered(
+        items[0], {'index': 0, 'status': 'created'}, spider
+    )
+    extension.bulk_item_failed(
+        items[1],
+        AcquisitionDeliveryError(
+            'Listing validation failed.',
+            error_type='invalid_listing_data',
+            error_stage='validation',
+            outcome='rejected',
+            metadata={'batch_index': 1, 'platform': 'priceoye'},
+        ),
+        spider,
+    )
+    extension.bulk_item_failed(
+        items[2],
+        AcquisitionDeliveryError(
+            'Listing ingestion failed.',
+            error_type='listing_ingestion_failed',
+            error_stage='ingestion',
+            metadata={'batch_index': 2, 'platform': 'priceoye'},
+        ),
+        spider,
+    )
+
+    assert extension.counters == {
+        'items_discovered': 3,
+        'items_ingested': 1,
+        'items_rejected': 1,
+        'items_failed': 1,
+        'error_count': 2,
+    }
+    assert len(session.calls) == 4
+    assert session.calls[2][2]['json']['metadata']['batch_index'] == 1
+    assert session.calls[3][2]['json']['metadata']['batch_index'] == 2

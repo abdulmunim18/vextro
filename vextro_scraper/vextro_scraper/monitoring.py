@@ -6,7 +6,12 @@ import requests
 from itemadapter import ItemAdapter
 from scrapy import signals
 
-from vextro_scraper.pipelines import InvalidMarketplacePriceError
+from vextro_scraper.pipelines import (
+    BULK_ITEM_DELIVERED,
+    BULK_ITEM_FAILED,
+    BULK_ITEM_QUEUED,
+    InvalidMarketplacePriceError,
+)
 
 
 class ScrapeMonitoringExtension:
@@ -35,6 +40,7 @@ class ScrapeMonitoringExtension:
             'items_failed': 0,
             'error_count': 0,
         }
+        self.bulk_item_ids = set()
 
     @classmethod
     def from_crawler(cls, crawler):
@@ -59,6 +65,9 @@ class ScrapeMonitoringExtension:
         crawler.signals.connect(extension.item_error, signals.item_error)
         crawler.signals.connect(extension.spider_error, signals.spider_error)
         crawler.signals.connect(extension.spider_closed, signals.spider_closed)
+        crawler.signals.connect(extension.bulk_item_queued, BULK_ITEM_QUEUED)
+        crawler.signals.connect(extension.bulk_item_delivered, BULK_ITEM_DELIVERED)
+        crawler.signals.connect(extension.bulk_item_failed, BULK_ITEM_FAILED)
         return extension
 
     @property
@@ -167,12 +176,35 @@ class ScrapeMonitoringExtension:
 
     def item_scraped(self, item, response, spider):
         self.counters['items_discovered'] += 1
+        if id(item) in self.bulk_item_ids:
+            return
         self.counters['items_ingested'] += 1
         if self.run_id is not None:
             self._request(
                 'POST',
                 f'{self.RUNS_PATH}/{self.run_id}/items/ingested',
             )
+
+    def bulk_item_queued(self, item, spider):
+        self.bulk_item_ids.add(id(item))
+
+    def bulk_item_delivered(self, item, result, spider):
+        self.counters['items_ingested'] += 1
+        if self.run_id is not None:
+            self._request(
+                'POST',
+                f'{self.RUNS_PATH}/{self.run_id}/items/ingested',
+            )
+
+    def bulk_item_failed(self, item, exception, spider):
+        self._record_error(
+            outcome=getattr(exception, 'outcome', 'failed'),
+            item=item,
+            exception=exception,
+            item_discovered=False,
+            default_type='listing_ingestion_failed',
+            default_stage='ingestion',
+        )
 
     def _record_error(
         self,
@@ -226,7 +258,10 @@ class ScrapeMonitoringExtension:
         )
 
     def item_dropped(self, item, response, exception, spider):
-        rejected = isinstance(exception, InvalidMarketplacePriceError)
+        rejected = (
+            isinstance(exception, InvalidMarketplacePriceError)
+            or getattr(exception, 'outcome', None) == 'rejected'
+        )
         self._record_error(
             outcome='rejected' if rejected else 'failed',
             item=item,

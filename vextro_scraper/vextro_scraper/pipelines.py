@@ -10,6 +10,11 @@ from itemadapter import ItemAdapter
 from scrapy.exceptions import DropItem
 
 
+BULK_ITEM_QUEUED = object()
+BULK_ITEM_DELIVERED = object()
+BULK_ITEM_FAILED = object()
+
+
 BRAND_ALIASES = (
     ('Samsung', ('samsung', 'galaxy')),
     ('Apple', ('apple', 'iphone')),
@@ -358,15 +363,18 @@ class AcquisitionDeliveryError(DropItem):
         error_type='delivery_failure',
         error_stage='delivery',
         metadata=None,
+        outcome='failed',
     ):
         super().__init__(message)
         self.error_type = error_type
         self.error_stage = error_stage
         self.metadata = metadata or {}
+        self.outcome = outcome
 
 class VextroApiIngestionPipeline:
     MATCH_PATH = '/api/v1/internal/acquisition/match-product'
     LISTINGS_PATH = '/api/v1/internal/acquisition/listings'
+    BULK_LISTINGS_PATH = '/api/v1/internal/acquisition/listings/bulk'
     REVIEWS_PATH = '/api/v1/internal/acquisition/reviews'
 
     def __init__(
@@ -375,11 +383,16 @@ class VextroApiIngestionPipeline:
         ingestion_key,
         request_timeout=5,
         session=None,
+        batch_size=25,
+        crawler=None,
     ):
         self.base_api_url = str(base_api_url).rstrip('/')
         self.ingestion_key = ingestion_key
         self.request_timeout = float(request_timeout)
         self.session = session or requests.Session()
+        self.batch_size = max(1, min(int(batch_size), 100))
+        self.crawler = crawler
+        self.listing_buffer = []
 
     @classmethod
     def from_crawler(cls, crawler):
@@ -399,6 +412,11 @@ class VextroApiIngestionPipeline:
                 'VEXTRO_API_TIMEOUT',
                 5,
             ),
+            batch_size=crawler.settings.getint(
+                'VEXTRO_INGESTION_BATCH_SIZE',
+                25,
+            ),
+            crawler=crawler,
         )
 
     @property
@@ -511,6 +529,120 @@ class VextroApiIngestionPipeline:
             )
 
         return response_payload
+
+    def _send_signal(self, signal, **kwargs):
+        if self.crawler is not None:
+            self.crawler.signals.send_catch_log(signal, **kwargs)
+
+    def _emit_bulk_failure(self, record, error, spider):
+        metadata = {
+            **getattr(error, 'metadata', {}),
+            'batch_index': record['batch_index'],
+            'platform': record['payload'].get('platform_code'),
+            'external_listing_id': record['payload'].get('external_id'),
+        }
+        item_error = AcquisitionDeliveryError(
+            str(error),
+            error_type=getattr(error, 'error_type', 'delivery_failure'),
+            error_stage=getattr(error, 'error_stage', 'delivery'),
+            metadata=metadata,
+            outcome=getattr(error, 'outcome', 'failed'),
+        )
+        self._send_signal(
+            BULK_ITEM_FAILED,
+            item=record['item'],
+            exception=item_error,
+            spider=spider,
+        )
+
+    def _flush_listing_buffer(self, spider):
+        if not self.listing_buffer:
+            return
+
+        records = self.listing_buffer
+        self.listing_buffer = []
+        context = f'bulk_size={len(records)}'
+        request_payload = {
+            'items': [record['payload'] for record in records],
+        }
+        try:
+            response = self._post_json(
+                self.BULK_LISTINGS_PATH,
+                request_payload,
+                context,
+            )
+        except AcquisitionDeliveryError as exc:
+            for record in records:
+                self._emit_bulk_failure(record, exc, spider)
+            return
+
+        results = response.get('results')
+        if (
+            response.get('received') != len(records)
+            or not isinstance(results, list)
+            or len(results) != len(records)
+        ):
+            error = AcquisitionDeliveryError(
+                f'Secure bulk acquisition returned an invalid body ({context}).',
+                error_type='malformed_backend_response',
+                error_stage='delivery',
+            )
+            for record in records:
+                self._emit_bulk_failure(record, error, spider)
+            return
+
+        results_by_index = {
+            result.get('index'): result
+            for result in results
+            if isinstance(result, dict)
+        }
+        for record in records:
+            result = results_by_index.get(record['batch_index'])
+            if result is None:
+                self._emit_bulk_failure(
+                    record,
+                    AcquisitionDeliveryError(
+                        'Bulk acquisition omitted an item result.',
+                        error_type='malformed_backend_response',
+                        error_stage='delivery',
+                    ),
+                    spider,
+                )
+                continue
+            item_status = result.get('status')
+            if item_status in {'created', 'updated', 'duplicate'}:
+                self._send_signal(
+                    BULK_ITEM_DELIVERED,
+                    item=record['item'],
+                    result=result,
+                    spider=spider,
+                )
+                continue
+            outcome = 'rejected' if item_status == 'rejected' else 'failed'
+            self._emit_bulk_failure(
+                record,
+                AcquisitionDeliveryError(
+                    str(result.get('message') or 'Bulk listing ingestion failed.'),
+                    error_type=str(result.get('error_code') or 'listing_ingestion_failed'),
+                    error_stage=str(result.get('error_stage') or 'ingestion'),
+                    outcome=outcome,
+                ),
+                spider,
+            )
+
+        logging.info(
+            'Secure bulk acquisition delivered batch '
+            '(received=%s, succeeded=%s, duplicates=%s, rejected=%s, failed=%s).',
+            response.get('received'),
+            response.get('succeeded'),
+            response.get('duplicates'),
+            response.get('rejected'),
+            response.get('failed'),
+        )
+
+    def close_spider(self, spider):
+        """Deliver the final partial batch during normal pipeline shutdown."""
+        self._flush_listing_buffer(spider)
 
     @staticmethod
     def _build_match_payload(payload):
@@ -686,38 +818,18 @@ class VextroApiIngestionPipeline:
             payload,
             product_variant_id,
         )
-        ingestion_result = self._post_json(
-            self.LISTINGS_PATH,
-            listing_payload,
-            context,
+        batch_index = len(self.listing_buffer)
+        self.listing_buffer.append({
+            'item': item,
+            'payload': listing_payload,
+            'batch_index': batch_index,
+        })
+        self._send_signal(
+            BULK_ITEM_QUEUED,
+            item=item,
+            spider=spider,
         )
-
-        if (
-            ingestion_result.get('status')
-            not in {'created', 'updated', 'duplicate'}
-            or not ingestion_result.get('listing_id')
-        ):
-            logging.error(
-                'Secure acquisition returned an invalid ingestion result '
-                '(%s).',
-                context,
-            )
-            raise AcquisitionDeliveryError(
-                f'Secure acquisition result was invalid ({context}).',
-                error_type='malformed_backend_response',
-                error_stage='ingestion',
-            )
-
-        logging.info(
-            'Secure acquisition delivered item '
-            '(%s, status=%s, listing_id=%s, history_created=%s, '
-            'alerts_triggered=%s, competitor_alerts_triggered=%s).',
-            context,
-            ingestion_result.get('status'),
-            ingestion_result.get('listing_id'),
-            ingestion_result.get('price_history_created'),
-            ingestion_result.get('alerts_triggered', 0),
-            ingestion_result.get('competitor_alerts_triggered', 0),
-        )
+        if len(self.listing_buffer) >= self.batch_size:
+            self._flush_listing_buffer(spider)
 
         return item

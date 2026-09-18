@@ -22,6 +22,16 @@ It then submits the normalized listing:
 POST /api/v1/internal/acquisition/listings
 ```
 
+Scheduled scraper delivery uses the bounded bulk route:
+
+```http
+POST /api/v1/internal/acquisition/listings/bulk
+```
+
+The single-listing route remains supported for manual diagnosis and backward
+compatibility. Both routes execute the same `AcquisitionService` listing
+logic.
+
 Both requests use the authentication header below. The older
 `/api/v1/ingest/{platform}` API remains deprecated for compatibility and is
 not the active Daraz/PriceOye delivery path.
@@ -37,7 +47,9 @@ The ingestion key must be stored in environment variables and must never be comm
 The scraper reads the shared `INGESTION_API_KEY` environment variable. Its
 backend base URL can be overridden with `VEXTRO_API_URL`; local development
 defaults to `http://127.0.0.1:8000`. `VEXTRO_API_TIMEOUT` optionally controls
-the HTTP timeout in seconds.
+the HTTP timeout in seconds. `VEXTRO_INGESTION_BATCH_SIZE` controls listing
+delivery buffering, defaults to `25`, and is clamped to the backend-supported
+range of `1` through `100`.
 
 ## Request Body
 
@@ -163,6 +175,83 @@ updated
 duplicate
 ```
 
+## Bulk Listing Contract
+
+The bulk request contains between 1 and 100 raw listing objects. Each object is
+validated independently with the existing `AcquisitionListingInput` schema so
+one malformed listing does not reject otherwise valid captures:
+
+```json
+{
+  "items": [
+    {
+      "platform_code": "daraz",
+      "product_variant_id": 1,
+      "external_id": "DARAZ-ITEM-10001",
+      "title": "Samsung Galaxy A55 8GB 256GB",
+      "product_url": "https://www.daraz.pk/products/example",
+      "current_price": 124999,
+      "currency": "PKR",
+      "is_available": true,
+      "scraped_at": "2026-08-06T00:30:00Z"
+    }
+  ]
+}
+```
+
+Empty batches, batches above 100 items, malformed outer bodies, and invalid
+ingestion keys reject the entire HTTP request. A valid outer request returns
+one ordered result per item:
+
+```json
+{
+  "received": 3,
+  "succeeded": 1,
+  "duplicates": 1,
+  "rejected": 0,
+  "failed": 1,
+  "results": [
+    {
+      "index": 0,
+      "status": "created",
+      "platform_code": "daraz",
+      "external_id": "DARAZ-ITEM-10001",
+      "listing_id": 25,
+      "price_history_id": 140,
+      "price_history_created": true,
+      "alerts_triggered": 1,
+      "competitor_alerts_triggered": 0
+    },
+    {
+      "index": 1,
+      "status": "duplicate",
+      "platform_code": "daraz",
+      "external_id": "DARAZ-ITEM-10002",
+      "listing_id": 26,
+      "price_history_id": 141,
+      "price_history_created": false,
+      "alerts_triggered": 0,
+      "competitor_alerts_triggered": 0
+    },
+    {
+      "index": 2,
+      "status": "failed",
+      "platform_code": "daraz",
+      "external_id": "DARAZ-ITEM-10003",
+      "error_code": "product_variant_not_found",
+      "error_stage": "ingestion",
+      "message": "The requested product variant was not found."
+    }
+  ]
+}
+```
+
+`succeeded` counts `created` and `updated`; idempotent captures are reported
+separately as `duplicates`. Schema-invalid items are `rejected`. Validated
+items that cannot be ingested are `failed`. Error messages are bounded to
+known validation/business messages or a generic unexpected-failure message;
+stack traces and credentials are never returned.
+
 ## Error Responses
 
 - `401 Unauthorized` — invalid ingestion key
@@ -173,6 +262,20 @@ duplicate
 ## Transaction Rule
 
 Seller, listing, and price-history changes must run in one database transaction. Any failure must roll back the complete ingestion request.
+
+Bulk ingestion uses **partial-success semantics**. Every item calls the same
+single-listing service, which commits or rolls back its seller, listing,
+history, price-alert, and competitor-alert work as one item transaction. A
+failed item cannot roll back earlier successful items and cannot leave its own
+partial writes. Replaying a batch preserves the existing `(listing,
+scraped_at)` capture deduplication and does not create duplicate price history.
+
+The scraper still performs product matching before buffering because the
+established ingestion contract accepts a canonical `product_variant_id`.
+Matched listings are sent when the configured batch size is reached. Pipeline
+shutdown flushes the last partial batch, so a final buffer smaller than the
+configured size is not silently discarded. Reviews continue through their
+separate bounded review route.
 
 ## Persistent Scrape Monitoring
 
@@ -218,6 +321,16 @@ GET /api/v1/internal/acquisition/runs/{run_id}
 
 If the backend itself is unavailable, neither acquisition nor monitoring can
 be persisted; the existing console/file logs remain the fallback evidence.
+
+For bulk listings, counters represent item results rather than HTTP request
+count. The pipeline emits a queued signal before Scrapy reports the item and
+then emits delivered or failed/rejected signals from the corresponding batch
+result. A 20-item response containing 18 successful outcomes, one rejection,
+and one failure therefore records `ingested += 18`, `rejected += 1`, and
+`failed += 1`. Whole-request timeout, authentication, malformed-response, or
+backend failures mark every buffered item failed; the batch is never counted
+as one successful item. Persisted error metadata is limited to safe batch
+index, platform, external listing ID, stage, code, and bounded message.
 
 ## Initial Implementation Files
 

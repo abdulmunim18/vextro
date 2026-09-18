@@ -15,6 +15,8 @@ from app.core.database import get_db
 from app.schemas.acquisition import (
     AcquisitionListingInput,
     AcquisitionListingResponse,
+    AcquisitionBulkInput,
+    AcquisitionBulkResponse,
 )
 from app.schemas.product_matching import (
     ProductMatchRequest,
@@ -219,6 +221,22 @@ def ingest_marketplace_listing(
         )
 
     return result
+
+
+@router.post(
+    "/listings/bulk",
+    response_model=AcquisitionBulkResponse,
+    status_code=status.HTTP_200_OK,
+)
+def ingest_marketplace_listings_bulk(
+    payload: AcquisitionBulkInput,
+    database_session: Session = Depends(get_db),
+) -> AcquisitionBulkResponse:
+    """Ingest a bounded batch with isolated per-item transactions."""
+
+    return acquisition_service.ingest_bulk(database_session, payload)
+
+
 @router.post(
     "/match-product",
     response_model=ProductMatchResponse,
