@@ -1,16 +1,16 @@
-import api from "./api";
+import apiClient from "../api/httpClient";
 
 export async function getWarehouseMetrics() {
-  const response = await api.get("/api/v1/warehouse/metrics");
+  const response = await apiClient.get("/warehouse/metrics");
   return response.data;
 }
 
 export async function getScrapeRuns(params = {}) {
-  const response = await api.get("/api/v1/warehouse/scrape-runs", { params });
+  const response = await apiClient.get("/warehouse/scrape-runs", { params });
   return response.data;
 }
 
 export async function triggerWarehouseAudit() {
-  const response = await api.post("/api/v1/warehouse/maintenance/audit");
+  const response = await apiClient.post("/warehouse/maintenance/audit");
   return response.data;
 }
