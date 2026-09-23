@@ -1,11 +1,20 @@
-from scrapy.http import HtmlResponse, Request, TextResponse
 import json
+from pathlib import Path
 
-from vextro_scraper.spiders.priceoye_spider import PriceoyeSpider
-from vextro_scraper.spiders.daraz_spider import DarazSpider
+import pytest
+from scrapy.http import HtmlResponse, Request, TextResponse
+
 from vextro_scraper.pipelines import (
     VextroCleaningPipeline,
     infer_brand,
+)
+from vextro_scraper.spiders.priceoye_spider import (
+    PriceOyeReviewParserError,
+    PriceoyeSpider,
+)
+from vextro_scraper.spiders.daraz_spider import (
+    DarazParserError,
+    DarazSpider,
 )
 
 def test_daraz_parser():
@@ -61,6 +70,17 @@ def test_daraz_parser():
         'RAM': '8GB',
         'Battery': '5000 mAh',
     }
+
+
+def test_daraz_malformed_json_raises_monitorable_parser_error():
+    spider = DarazSpider()
+    response = TextResponse(
+        url='https://www.daraz.pk/smartphones/?ajax=true',
+        body=b'not-json',
+    )
+
+    with pytest.raises(DarazParserError):
+        list(spider.parse(response))
 
 
 def test_cleaning_pipeline_infers_brand_and_title_specifications():
@@ -203,3 +223,44 @@ def test_priceoye_availability_detects_all_variants_out_of_stock():
     )
 
     assert spider.extract_availability(response) is False
+
+
+def test_priceoye_review_parser_uses_saved_marketplace_fixture():
+    fixture = (
+        Path(__file__).parent
+        / 'fixtures'
+        / 'priceoye_reviews.html'
+    ).read_bytes()
+    spider = PriceoyeSpider()
+    response = HtmlResponse(
+        url='https://priceoye.pk/mobiles/test/sanitized/reviews',
+        encoding='utf-8',
+        body=fixture,
+    )
+
+    batch = list(
+        spider.parse_reviews(response, 'sanitized-listing')
+    )[0]
+
+    assert batch['platform'] == 'PriceOye'
+    assert batch['external_listing_id'] == 'sanitized-listing'
+    assert len(batch['reviews']) == 3
+    assert batch['reviews'][0]['rating'] == 5
+    assert batch['reviews'][0]['verified_purchase'] is True
+    assert batch['reviews'][0]['review_text'].endswith('❤️')
+    assert batch['reviews'][1]['review_text'] is None
+    assert batch['reviews'][1]['verified_purchase'] is False
+    assert batch['reviews'][2]['reviewer_display_name'] is None
+    assert batch['reviews'][2]['reviewed_at'].startswith('2025-09-07')
+
+
+def test_priceoye_review_parser_rejects_advertised_broken_markup():
+    spider = PriceoyeSpider()
+    response = HtmlResponse(
+        url='https://priceoye.pk/mobiles/test/broken/reviews',
+        encoding='utf-8',
+        body=b'<section class="product-rating">12 Reviews</section>',
+    )
+
+    with pytest.raises(PriceOyeReviewParserError):
+        list(spider.parse_reviews(response, 'broken-listing'))

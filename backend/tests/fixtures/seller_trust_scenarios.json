@@ -1,0 +1,5 @@
+{
+  "description": "Artificial FYP rule scenarios only; these are not marketplace data or verified fraud labels.",
+  "stronger_evidence": {"low": 90, "medium": 8, "high": 2, "known_purchase_status": 100, "verified_purchases": 80},
+  "weaker_evidence": {"low": 35, "medium": 30, "high": 35, "known_purchase_status": 0, "verified_purchases": 0}
+}

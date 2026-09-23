@@ -1,3 +1,6 @@
+import os
+
+
 # Scrapy settings for vextro_scraper project
 #
 # For simplicity, this file contains only settings considered important or
@@ -52,9 +55,9 @@ DOWNLOAD_DELAY = 1
 
 # Enable or disable extensions
 # See https://docs.scrapy.org/en/latest/topics/extensions.html
-#EXTENSIONS = {
-#    "scrapy.extensions.telnet.TelnetConsole": None,
-#}
+EXTENSIONS = {
+    "vextro_scraper.monitoring.ScrapeMonitoringExtension": 500,
+}
 
 # Configure item pipelines
 # See https://docs.scrapy.org/en/latest/topics/item-pipeline.html
@@ -88,3 +91,24 @@ ITEM_PIPELINES = {
 
 # Set settings whose default value is deprecated to a future-proof value
 FEED_EXPORT_ENCODING = "utf-8"
+
+# Secure FastAPI acquisition integration. The ingestion key intentionally has
+# no default so a crawl cannot deliver data without explicit authentication.
+VEXTRO_API_URL = os.getenv(
+    "VEXTRO_API_URL",
+    "http://127.0.0.1:8000",
+)
+INGESTION_API_KEY = os.getenv("INGESTION_API_KEY")
+VEXTRO_API_TIMEOUT = float(
+    os.getenv("VEXTRO_API_TIMEOUT", "5"),
+)
+VEXTRO_INGESTION_BATCH_SIZE = int(
+    os.getenv("VEXTRO_INGESTION_BATCH_SIZE", "25")
+)
+VEXTRO_SCRAPE_TRIGGER = os.getenv(
+    "VEXTRO_SCRAPE_TRIGGER",
+    "manual",
+)
+MAX_REVIEWS_PER_LISTING = int(
+    os.getenv("MAX_REVIEWS_PER_LISTING", "50")
+)

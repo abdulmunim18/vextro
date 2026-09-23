@@ -24,6 +24,8 @@ IngestionStatus = Literal[
     "duplicate",
 ]
 
+MAX_BULK_INGESTION_ITEMS = 100
+
 
 class AcquisitionSellerInput(BaseModel):
     """Seller data collected from a marketplace."""
@@ -86,12 +88,12 @@ class AcquisitionListingInput(BaseModel):
     product_url: HttpUrl
 
     current_price: Decimal = Field(
-        ge=0,
+        gt=0,
     )
 
     original_price: Decimal | None = Field(
         default=None,
-        ge=0,
+        gt=0,
     )
 
     currency: str = Field(
@@ -201,3 +203,51 @@ class AcquisitionListingResponse(BaseModel):
     )
 
     captured_at: datetime
+
+
+class AcquisitionBulkInput(BaseModel):
+    """Bounded raw items validated independently for partial success."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[dict[str, Any]] = Field(
+        min_length=1,
+        max_length=MAX_BULK_INGESTION_ITEMS,
+    )
+
+
+BulkItemStatus = Literal[
+    "created",
+    "updated",
+    "duplicate",
+    "rejected",
+    "failed",
+]
+
+
+class AcquisitionBulkItemResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    index: int = Field(ge=0)
+    status: BulkItemStatus
+    platform_code: PlatformCode | None = None
+    external_id: str | None = None
+    listing_id: int | None = Field(default=None, ge=1)
+    price_history_id: int | None = Field(default=None, ge=1)
+    price_history_created: bool = False
+    alerts_triggered: int = Field(default=0, ge=0)
+    competitor_alerts_triggered: int = Field(default=0, ge=0)
+    error_code: str | None = None
+    error_stage: Literal["validation", "ingestion"] | None = None
+    message: str | None = None
+
+
+class AcquisitionBulkResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    received: int = Field(ge=1, le=MAX_BULK_INGESTION_ITEMS)
+    succeeded: int = Field(ge=0)
+    duplicates: int = Field(ge=0)
+    rejected: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    results: list[AcquisitionBulkItemResponse]
