@@ -93,12 +93,26 @@ def test_assistant_conversation_is_private_and_grounded(
     assert contextual_answer["intent"] == "product_details"
     assert "Samsung Galaxy A55" in contextual_answer["content"]
 
+    redundant_suffix_response = client.post(
+        f"/api/v1/assistant/conversations/{conversation_id}/messages",
+        headers=headers,
+        json={"content": "100000 k budget main konsa mobile acha hoga"},
+    )
+    assert redundant_suffix_response.status_code == 201
+    redundant_suffix = redundant_suffix_response.json()["assistant_message"]
+    assert redundant_suffix["intent"] == "recommendation"
+    assert redundant_suffix["entities"]["budget_max"] == "100000"
+    assert all(
+        float(item["lowest_price"]) <= 100000
+        for item in redundant_suffix["grounded_data"]["recommendations"]
+    )
+
     read_response = client.get(
         f"/api/v1/assistant/conversations/{conversation_id}",
         headers=headers,
     )
     assert read_response.status_code == 200
-    assert len(read_response.json()["messages"]) == 8
+    assert len(read_response.json()["messages"]) == 10
 
     other_headers = _consumer_headers(client)
     forbidden_read = client.get(

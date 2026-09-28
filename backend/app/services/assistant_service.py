@@ -7,7 +7,10 @@ from decimal import Decimal
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.repositories.assistant_repository import AssistantRepository
+from app.repositories.assistant_repository import (
+    AssistantRepository,
+    extract_camera_evidence,
+)
 from app.schemas.assistant import (
     AssistantMessageCreate,
     AssistantMessageResponse,
@@ -41,12 +44,17 @@ INTENT_PATTERNS = (
     ("buy_or_wait", r"buy now|should i buy|\bwait\b|best time|ab (loon|kharidon)|intezar"),
     (
         "recommendation",
-        r"\b(recommend|suggest|similar|alternative|best option)\b|"
-        r"kons[ai]|kaunsa|kaunsi|which (phone|laptop|product).*(buy|choose)",
+        r"\b(recommend|suggest|similar|alternative|best(?:\s+option)?)\b|"
+        r"kons[ai]|kaunsa|kaunsi|"
+        r"which (phone|mobile|laptop|product).*(buy|choose)|"
+        r"\b(phone|mobile|laptop|tablet)s?\b.*"
+        r"\b(under|below|within|budget|andar|ander|andr|chahiye|chaiye)\b|"
+        r"\bbudget\b.*\b(phone|mobile|laptop|tablet)s?\b",
     ),
     ("product_details", r"\b(spec|specification|ram|storage|battery|camera|processor|feature)s?\b|details?|kitni ram"),
     ("lowest_price", r"\b(lowest|cheapest|current price|price|cost|rate)\b|qeemat|kitne ka|kitni ki"),
     ("greeting", r"^(hi|hello|hey|salam|assalam|help)\b"),
+    ("acknowledgement", r"^(ok|okay|acha|achha|theek|thanks|thank you)(\s+(tell|batao|ji))?[.!?]*$"),
 )
 
 CATEGORY_TERMS = {
@@ -54,6 +62,8 @@ CATEGORY_TERMS = {
     "phones": "Mobile Phones",
     "mobile": "Mobile Phones",
     "mobiles": "Mobile Phones",
+    "smartphone": "Mobile Phones",
+    "smart phone": "Mobile Phones",
     "laptop": "Laptops",
     "laptops": "Laptops",
     "tablet": "Tablets",
@@ -72,6 +82,8 @@ CATEGORY_TERMS = {
 KNOWN_BRANDS = (
     "apple", "samsung", "xiaomi", "oppo", "vivo", "infinix",
     "tecno", "realme", "oneplus", "huawei", "honor", "nokia",
+    "google", "motorola", "nothing", "sony", "zte", "itel", "qmobile",
+    "vgotel", "lg", "sharp", "dcode", "balmuda", "sego", "villaon",
     "dell", "hp", "lenovo", "asus", "acer",
 )
 
@@ -80,6 +92,18 @@ def detect_assistant_intent(message: str) -> str:
     """Classify one supported assistant intent without inventing data."""
 
     normalized = message.strip().lower()
+
+    # Treat use-case questions as recommendations, even when the user does not
+    # use the literal word "recommend". This is especially important for
+    # follow-ups such as "camera quality achi chahiye" after a budget request.
+    if re.search(
+        r"\b(camera|photography|photo|selfie)\b.*"
+        r"\b(best|better|acha|achi|chahiye|quality)\b|"
+        r"\b(best|better|acha|achi|chahiye|quality)\b.*"
+        r"\b(camera|photography|photo|selfie)\b",
+        normalized,
+    ):
+        return "recommendation"
 
     for intent, pattern in INTENT_PATTERNS:
         if re.search(pattern, normalized):
@@ -91,8 +115,12 @@ def detect_assistant_intent(message: str) -> str:
 def _parse_money_value(number: str, suffix: str | None) -> Decimal:
     value = Decimal(number.replace(",", ""))
     normalized_suffix = (suffix or "").lower()
-    if normalized_suffix in {"k", "thousand"}:
-        value *= 1000
+    if normalized_suffix in {"k", "thousand", "hazar", "hazaar"}:
+        # Users often type a redundant suffix after a complete amount, for
+        # example "100000 k budget". Treating that as 100 million makes the
+        # budget filter silently disappear in practice.
+        if value < 10000:
+            value *= 1000
     elif normalized_suffix in {"lac", "lakh"}:
         value *= 100000
     return value
@@ -101,7 +129,7 @@ def _parse_money_value(number: str, suffix: str | None) -> Decimal:
 def _money_candidates(message: str) -> list[Decimal]:
     matches = re.findall(
         r"(?:pkr|rs\.?)?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*"
-        r"(k|thousand|lac|lakh)?\b",
+        r"(k|thousand|hazar|hazaar|lac|lakh)?\b",
         message.lower(),
     )
     return [_parse_money_value(number, suffix) for number, suffix in matches]
@@ -112,9 +140,27 @@ def extract_assistant_entities(message: str) -> dict[str, object]:
 
     normalized = message.lower()
     entities: dict[str, object] = {}
+
+    if re.search(r"\b(camera|photography|photo|photos|selfie)\b", normalized):
+        entities["preference"] = "camera"
     amounts = [amount for amount in _money_candidates(normalized) if amount >= 1000]
     under_phrase = re.search(
-        r"(under|below|within|up to|less than|se kam|ke andar|k andar)",
+        r"(under|below|within|up to|less than|se kam|"
+        r"(?:k|ke)?\s*(?:andar|ander|andr))",
+        normalized,
+    )
+    amount_before_limit = re.search(
+        r"(?:pkr|rs\.?)?\s*"
+        r"([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*"
+        r"(k|thousand|hazar|hazaar|lac|lakh)?\s*"
+        r"(?:k|ke)?\s*(?:andar|ander|andr|se kam)\b",
+        normalized,
+    )
+    amount_after_limit = re.search(
+        r"(?:under|below|within|up to|less than)\s*"
+        r"(?:pkr|rs\.?)?\s*"
+        r"([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*"
+        r"(k|thousand|hazar|hazaar|lac|lakh)?\b",
         normalized,
     )
     between_phrase = re.search(r"(between|darmiyan|se).*(and|aur|to|tak)", normalized)
@@ -122,8 +168,18 @@ def extract_assistant_entities(message: str) -> dict[str, object]:
     if len(amounts) >= 2 and between_phrase:
         entities["budget_min"] = str(min(amounts[0], amounts[1]))
         entities["budget_max"] = str(max(amounts[0], amounts[1]))
+    elif amount_before_limit or amount_after_limit:
+        limit_match = amount_before_limit or amount_after_limit
+        entities["budget_max"] = str(
+            _parse_money_value(limit_match.group(1), limit_match.group(2))
+        )
     elif amounts and under_phrase:
-        entities["budget_max"] = str(amounts[-1])
+        entities["budget_max"] = str(amounts[0])
+    elif amounts and re.search(
+        r"\b(budget|range|around|approximately|approx|taqreeban|tak)\b",
+        normalized,
+    ):
+        entities["budget_max"] = str(amounts[0])
 
     for term, category in CATEGORY_TERMS.items():
         if re.search(rf"\b{re.escape(term)}s?\b", normalized):
@@ -159,6 +215,31 @@ def extract_assistant_entities(message: str) -> dict[str, object]:
             break
 
     return entities
+
+
+def inherit_recommendation_context(
+    entities: dict[str, object],
+    context: dict[str, object],
+) -> dict[str, object]:
+    """Carry filters only from the immediately relevant recommendation turn."""
+
+    if context.get("last_intent") != "recommendation":
+        return entities
+
+    merged = dict(entities)
+    has_new_budget = "budget_min" in entities or "budget_max" in entities
+    keys = (
+        ("category",)
+        if has_new_budget
+        else (
+            "budget_min", "budget_max", "category", "brand",
+            "ram_gb", "storage_gb", "preference",
+        )
+    )
+    for key in keys:
+        if key not in merged and key in context:
+            merged[key] = context[key]
+    return merged
 
 
 def _extract_target_price(message: str) -> Decimal | None:
@@ -253,6 +334,13 @@ class AssistantService:
         )
         if intent == "recommendation" and entities.get("category"):
             normalized_message = message.lower()
+            budget_number_tokens = set(
+                re.findall(
+                    r"\b([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*"
+                    r"(?:k|thousand|lac|lakh)\b",
+                    normalized_message,
+                )
+            )
             explicitly_modeled = []
             for product in explicit_products:
                 model_terms = re.findall(
@@ -261,12 +349,15 @@ class AssistantService:
                 generic_model_terms = {
                     "phone", "mobile", "smartphone", "laptop", "tablet",
                     "watch", "pro", "max", "plus", "5g", "4g",
+                    "camera", "quality", "display", "battery", "ram",
+                    "rom", "storage", "dual", "sim", "inches",
                 }
                 if (
                     product.name.lower() in normalized_message
                     or any(
                         len(term) >= 2
                         and term not in generic_model_terms
+                        and term not in budget_number_tokens
                         and re.search(
                             rf"\b{re.escape(term)}\b", normalized_message
                         )
@@ -283,6 +374,17 @@ class AssistantService:
         contextual_products = self.repository.get_products_by_ids(
             database_session, context_ids
         )
+
+        # A filtered recommendation follow-up (for example, adding a camera
+        # preference to the previous 80k request) must re-rank the whole
+        # eligible catalog. Previous recommendation cards are context, not
+        # products to exclude from the new result set.
+        if (
+            intent == "recommendation"
+            and entities.get("category")
+            and not explicit_products
+        ):
+            return []
 
         reference = entities.get("reference")
         if intent != "comparison" and contextual_products:
@@ -332,6 +434,17 @@ class AssistantService:
                         "buy_or_wait",
                         "set_price_alert",
                     ],
+                    "data_timestamp": timestamp,
+                },
+            )
+
+        if intent == "acknowledgement":
+            return (
+                "Ji. Aap product ki price, specifications, comparison, "
+                "price history ya apne budget ke andar recommendation "
+                "pooch sakte hain.",
+                {
+                    "matched_products": [],
                     "data_timestamp": timestamp,
                 },
             )
@@ -395,6 +508,10 @@ class AssistantService:
                         int(entities["storage_gb"])
                         if entities.get("storage_gb") else None
                     ),
+                    preference=(
+                        str(entities["preference"])
+                        if entities.get("preference") else None
+                    ),
                     exclude_ids=[product.id for product in products],
                 )
 
@@ -413,11 +530,39 @@ class AssistantService:
                     },
                 )
 
+            if entities.get("preference") == "camera":
+                names = [
+                    f"{item['name']} (PKR {item['lowest_price']}; "
+                    f"{item['preference_evidence']})"
+                    for item in recommendations[:4]
+                ]
+                return (
+                    "For camera priority, my strongest catalog-backed picks are: "
+                    + "; ".join(names)
+                    + ". I ranked only products that have camera details in the "
+                    "catalog. Note: megapixels alone do not guarantee photo "
+                    "quality; sensor size, OIS and image processing data are not "
+                    "available in these listings.",
+                    {
+                        "matched_products": [
+                            {"id": product.id, "name": product.name}
+                            for product in products
+                        ],
+                        "recommendations": recommendations,
+                        "filters": entities,
+                        "method": "catalog camera evidence, rating, and budget fit",
+                    },
+                )
+
             names = [
                 f"{item['name']} (PKR {item['lowest_price']})"
                 for item in recommendations[:4]
             ]
-            reason = "live offers ranked by rating, then lowest price"
+            reason = (
+                "live offers ranked by closest budget fit, then rating"
+                if entities.get("budget_max")
+                else "live offers ranked by rating and catalog price"
+            )
             return (
                 "My catalog picks are: " + "; ".join(names) + f". I used {reason}.",
                 {
@@ -592,6 +737,35 @@ class AssistantService:
                         "attributes": variant.variant_attributes,
                     }
                 )
+            if entities.get("preference") == "camera":
+                camera_evidence = extract_camera_evidence(
+                    product.specifications or {},
+                    " || ".join(item.title for item in listings.items),
+                )
+                if camera_evidence is None:
+                    return (
+                        f"I found {product.name}, but its catalog records do "
+                        "not contain camera specifications. I cannot judge its "
+                        "camera quality from unrelated details such as color.",
+                        {
+                            "matched_products": matched,
+                            "camera_evidence": None,
+                            "data_status": "camera specifications unavailable",
+                        },
+                    )
+
+                _, _, evidence_text = camera_evidence
+                return (
+                    f"{product.name}: {evidence_text}. This is seller-listed "
+                    "specification data, not a camera-quality benchmark; sensor "
+                    "size, OIS and image-processing evidence is unavailable.",
+                    {
+                        "matched_products": matched,
+                        "camera_evidence": evidence_text,
+                        "specifications": product.specifications or {},
+                    },
+                )
+
             specification_parts = [
                 f"{key}: {value}"
                 for key, value in (product.specifications or {}).items()
@@ -650,13 +824,23 @@ class AssistantService:
 
         intent = detect_assistant_intent(payload.content)
         entities = extract_assistant_entities(payload.content)
+        if (
+            intent == "product_search"
+            and conversation.context.get("last_intent") == "recommendation"
+            and (
+                entities.get("budget_max") is not None
+                or re.search(
+                    r"\b(i said|maine kaha|main ne kaha|tum ne|galat|wrong|budget)\b",
+                    payload.content.lower(),
+                )
+            )
+        ):
+            intent = "recommendation"
         if intent == "recommendation":
-            for key in (
-                "budget_min", "budget_max", "category", "brand",
-                "ram_gb", "storage_gb",
-            ):
-                if key not in entities and key in conversation.context:
-                    entities[key] = conversation.context[key]
+            entities = inherit_recommendation_context(
+                entities,
+                conversation.context,
+            )
         products = self._resolve_products(
             database_session,
             message=payload.content,
@@ -715,11 +899,15 @@ class AssistantService:
             context = {
                 **conversation.context,
                 "product_ids": remembered_ids[:4],
-                "last_intent": intent,
+                "last_intent": (
+                    conversation.context.get("last_intent")
+                    if intent == "acknowledgement"
+                    else intent
+                ),
             }
             for key in (
                 "budget_min", "budget_max", "category", "brand",
-                "ram_gb", "storage_gb",
+                "ram_gb", "storage_gb", "preference",
             ):
                 if key in entities:
                     context[key] = entities[key]

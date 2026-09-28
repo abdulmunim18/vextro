@@ -51,6 +51,100 @@ STOP_WORDS = {
 }
 
 
+def extract_camera_evidence(
+    specifications: dict[str, object] | None,
+    listing_titles: str | None,
+) -> tuple[float, float, str] | None:
+    """Return a deterministic camera score and human-readable evidence.
+
+    Seller titles are used only as catalog evidence. The score intentionally
+    stays simple and transparent: listed rear/main megapixels first, then front
+    megapixels. It is not presented as a lab-quality camera benchmark.
+    """
+
+    specs = specifications or {}
+    text = (listing_titles or "").lower()
+
+    structured_rear = []
+    structured_front = []
+    for key, value in specs.items():
+        normalized_key = str(key).lower()
+        values = [
+            float(number)
+            for number in re.findall(
+                r"(\d+(?:\.\d+)?)\s*mp",
+                str(value).lower(),
+            )
+        ]
+        if not values or "camera" not in normalized_key:
+            continue
+        if any(term in normalized_key for term in ("front", "selfie")):
+            structured_front.extend(values)
+        elif any(term in normalized_key for term in ("rear", "back", "main")):
+            structured_rear.extend(values)
+
+    mp_matches = list(re.finditer(r"(\d+(?:\.\d+)?)\s*mp", text))
+    label_matches = list(
+        re.finditer(
+            r"\b(front|selfie|rear|back|main)(?:\s+camera)?\b",
+            text,
+        )
+    )
+    used_mp_indexes: set[int] = set()
+    listing_rear: list[float] = []
+    listing_front: list[float] = []
+
+    def clean_gap(value: str) -> bool:
+        return bool(re.fullmatch(r"[\s:,_+\-/()]*", value))
+
+    for label in label_matches:
+        selected_index = None
+        for index in range(len(mp_matches) - 1, -1, -1):
+            mp_match = mp_matches[index]
+            if index in used_mp_indexes or mp_match.end() > label.start():
+                continue
+            gap = text[mp_match.end():label.start()]
+            if len(gap) <= 16 and clean_gap(gap):
+                selected_index = index
+                break
+
+        if selected_index is None:
+            for index, mp_match in enumerate(mp_matches):
+                if index in used_mp_indexes or mp_match.start() < label.end():
+                    continue
+                gap = text[label.end():mp_match.start()]
+                if len(gap) <= 16 and clean_gap(gap):
+                    selected_index = index
+                break
+
+        if selected_index is None:
+            continue
+        used_mp_indexes.add(selected_index)
+        value = float(mp_matches[selected_index].group(1))
+        if label.group(1) in {"front", "selfie"}:
+            listing_front.append(value)
+        else:
+            listing_rear.append(value)
+
+    rear_values = structured_rear or listing_rear
+    front_values = structured_front or listing_front
+    all_values = [
+        float(value)
+        for value in re.findall(r"(\d+(?:\.\d+)?)\s*mp", text)
+    ]
+    all_values.extend(structured_rear)
+    all_values.extend(structured_front)
+    if not all_values:
+        return None
+
+    rear = max(rear_values) if rear_values else max(all_values)
+    front = max(front_values) if front_values else 0.0
+    evidence_parts = [f"listed {rear:g}MP rear/main"]
+    if front:
+        evidence_parts.append(f"{front:g}MP front")
+    return rear, front, " + ".join(evidence_parts)
+
+
 class AssistantRepository:
     """Persist conversations and find product entities."""
 
@@ -232,6 +326,7 @@ class AssistantRepository:
         budget_max: Decimal | None = None,
         ram_gb: int | None = None,
         storage_gb: int | None = None,
+        preference: str | None = None,
         exclude_ids: list[int] | None = None,
         limit: int = 4,
     ) -> list[dict[str, object]]:
@@ -239,6 +334,7 @@ class AssistantRepository:
 
         lowest_price = func.min(ProductListing.current_price)
         best_rating = func.max(ProductListing.rating)
+        listing_titles = func.string_agg(ProductListing.title, " || ")
         statement = (
             select(
                 CanonicalProduct,
@@ -246,6 +342,7 @@ class AssistantRepository:
                 Category.name.label("category_name"),
                 lowest_price.label("lowest_price"),
                 best_rating.label("best_rating"),
+                listing_titles.label("listing_titles"),
             )
             .join(Category, Category.id == CanonicalProduct.category_id)
             .outerjoin(Brand, Brand.id == CanonicalProduct.brand_id)
@@ -266,7 +363,19 @@ class AssistantRepository:
         )
 
         if category:
-            statement = statement.where(Category.name.ilike(f"%{category}%"))
+            normalized_category = category.strip().lower()
+            category_aliases = {
+                "mobile phones": {"mobile phones", "smartphones"},
+                "smartphones": {"mobile phones", "smartphones"},
+            }.get(normalized_category)
+            if category_aliases:
+                statement = statement.where(
+                    func.lower(Category.name).in_(category_aliases)
+                )
+            else:
+                statement = statement.where(
+                    Category.name.ilike(f"%{category}%")
+                )
         if brand:
             statement = statement.where(Brand.name.ilike(f"%{brand}%"))
         if ram_gb is not None:
@@ -282,13 +391,25 @@ class AssistantRepository:
         if budget_max is not None:
             statement = statement.having(lowest_price <= budget_max)
 
-        statement = statement.order_by(
-            best_rating.desc().nullslast(),
-            lowest_price.asc(),
-            CanonicalProduct.name.asc(),
-        ).limit(limit)
+        if budget_max is not None:
+            # Budget fit is the primary signal. Rating-first ordering allowed
+            # cheap feature phones to outrank suitable phones near the limit.
+            ordering = (
+                lowest_price.desc(),
+                best_rating.desc().nullslast(),
+                CanonicalProduct.name.asc(),
+            )
+        else:
+            ordering = (
+                best_rating.desc().nullslast(),
+                lowest_price.desc(),
+                CanonicalProduct.name.asc(),
+            )
+        query_limit = 500 if preference == "camera" else max(limit * 5, 20)
+        statement = statement.order_by(*ordering).limit(query_limit)
 
-        return [
+        rows = database_session.execute(statement).all()
+        results = [
             {
                 "id": product.id,
                 "name": product.name,
@@ -297,10 +418,52 @@ class AssistantRepository:
                 "category": category_name,
                 "lowest_price": str(price),
                 "rating": str(rating) if rating is not None else None,
+                "_specifications": product.specifications or {},
+                "_listing_titles": titles,
             }
-            for product, brand_name, category_name, price, rating
-            in database_session.execute(statement).all()
+            for product, brand_name, category_name, price, rating, titles in rows
         ]
+
+        if preference == "camera":
+            ranked = []
+            for index, item in enumerate(results):
+                evidence = extract_camera_evidence(
+                    item.pop("_specifications"),
+                    item.pop("_listing_titles"),
+                )
+                if evidence is None:
+                    continue
+                rear_score, front_score, description = evidence
+                item["preference_evidence"] = description
+                ranked.append((rear_score, front_score, -index, item))
+
+            ranked.sort(key=lambda row: (-row[0], -row[1], -row[2]))
+            deduplicated = []
+            seen_names = set()
+            for _, _, _, item in ranked:
+                normalized_name = str(item["name"]).strip().lower()
+                if normalized_name in seen_names:
+                    continue
+                seen_names.add(normalized_name)
+                deduplicated.append(item)
+                if len(deduplicated) == limit:
+                    break
+            return deduplicated
+
+        for item in results:
+            item.pop("_specifications", None)
+            item.pop("_listing_titles", None)
+        deduplicated = []
+        seen_names = set()
+        for item in results:
+            normalized_name = str(item["name"]).strip().lower()
+            if normalized_name in seen_names:
+                continue
+            seen_names.add(normalized_name)
+            deduplicated.append(item)
+            if len(deduplicated) == limit:
+                break
+        return deduplicated
 
     @staticmethod
     def find_similar_products(
