@@ -1,6 +1,8 @@
 import scrapy
 import json
+from math import ceil
 from datetime import datetime, timezone
+from urllib.parse import urljoin
 from vextro_scraper.items import SmartphoneItem
 
 
@@ -72,12 +74,30 @@ class DarazSpider(scrapy.Spider):
                 item['platform'] = 'Daraz'
                 
                 # Get the external ID (itemId)
-                item['external_id'] = item_data.get('itemId', '')
+                external_id = str(item_data.get('itemId') or '').strip()
+                item['external_id'] = external_id
                 
                 # Clean URL
-                product_url = item_data.get('productUrl', '')
+                product_url = (
+                    item_data.get('productUrl')
+                    or item_data.get('itemUrl')
+                    or item_data.get('item_url')
+                    or ''
+                )
+                product_url = str(product_url).strip()
+                if product_url.lower() in {'none', 'null', 'n/a'}:
+                    product_url = ''
                 if product_url.startswith('//'):
                     product_url = 'https:' + product_url
+                elif product_url.startswith('/'):
+                    product_url = urljoin('https://www.daraz.pk', product_url)
+                elif product_url and not product_url.startswith(('http://', 'https://')):
+                    product_url = urljoin('https://www.daraz.pk', product_url)
+                elif not product_url and external_id:
+                    product_url = (
+                        'https://www.daraz.pk/products/'
+                        f'i{external_id}.html'
+                    )
                 item['product_url'] = product_url
                 
                 # Get Title and Price
@@ -132,7 +152,11 @@ class DarazSpider(scrapy.Spider):
             # PAGINATION: Check if there's a next page and follow it
             main_info = data.get("mainInfo", {})
             page = int(main_info.get('page', 1))
-            total_pages = int(main_info.get('totalResults', 0)) // int(main_info.get('pageSize', 40)) + 1
+            page_size = max(1, int(main_info.get('pageSize', 40)))
+            total_pages = max(
+                1,
+                ceil(int(main_info.get('totalResults', 0)) / page_size),
+            )
             
             if page < total_pages:
                 next_page_url = f"https://www.daraz.pk/smartphones/?ajax=true&page={page + 1}"

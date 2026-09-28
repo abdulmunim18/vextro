@@ -328,7 +328,10 @@ class ScrapeMonitoringExtension:
             'PATCH',
             f'{self.RUNS_PATH}/{self.run_id}',
             payload={
-                'crawl_succeeded': reason == 'finished',
+                'crawl_succeeded': reason in {
+                    'finished',
+                    'closespider_itemcount',
+                },
                 **self.counters,
             },
         )

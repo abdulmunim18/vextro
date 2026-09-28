@@ -7,6 +7,7 @@ import {
 
 import RouteLoadingState from "../components/RouteLoadingState";
 import WarehouseMonitoring from "../components/WarehouseMonitoring";
+import AdminPendingProductMatches from "../components/AdminPendingProductMatches";
 import { useAuth } from "../context/useAuth";
 import {
   getAdminDashboard,
@@ -46,6 +47,10 @@ const TABS = [
   {
     id: "listings",
     label: "Listings",
+  },
+  {
+    id: "matching",
+    label: "Match Queue",
   },
 ];
 
@@ -2352,6 +2357,12 @@ function AdminPage() {
               />
             ) : null}
           </section>
+        ) : null}
+
+        {activeTab === "matching" ? (
+          <AdminPendingProductMatches
+            onSuccess={setSuccessMessage}
+          />
         ) : null}
       </div>
     </section>

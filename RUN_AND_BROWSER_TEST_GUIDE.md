@@ -23,7 +23,7 @@ These accounts are for local development only:
 |---|---|---|
 | Consumer | `demo.consumer@vextro.com` | `VextroDemo@2026!` |
 | SME | `demo.sme@vextro.com` | `VextroDemo@2026!` |
-| Admin | `demo.admin@vextro.com` | VextroDemo@2026!`` |
+| Admin | `demo.admin@vextro.com` | `VextroDemo@2026!` |
 
 Never use this shared demo password in production.
 
@@ -38,15 +38,14 @@ database and JWT settings.
 cd E:\Vextro\backend
 .\.venv\Scripts\Activate.ps1
 python -m alembic upgrade head
-python -m uvicorn app.main:app --reload
-```
+python -m uvicorn app.main:app --reload --port 8001
 
 Backend URLs:
 
 - API: `http://127.0.0.1:8000`
 - Swagger: `http://127.0.0.1:8000/docs`
-- Health: `http://127.0.0.1:8000/api/v1/health`
-- Database health: `http://127.0.0.1:8000/api/v1/database/health`
+- Health: `http://127.0.0.1:8000/health`
+- Database health: `http://127.0.0.1:8000/database/health`
 
 ### Terminal 2 - Frontend
 

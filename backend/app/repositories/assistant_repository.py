@@ -1,13 +1,18 @@
 """Database operations for assistant conversations and grounding."""
 
 import re
+from decimal import Decimal
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.assistant_conversation import AssistantConversation
 from app.models.assistant_message import AssistantMessage
 from app.models.canonical_product import CanonicalProduct
+from app.models.brand import Brand
+from app.models.category import Category
+from app.models.product_listing import ProductListing
+from app.models.product_variant import ProductVariant
 
 
 STOP_WORDS = {
@@ -29,6 +34,20 @@ STOP_WORDS = {
     "vs",
     "what",
     "with",
+    "ab",
+    "andar",
+    "batao",
+    "dikhao",
+    "ka",
+    "ke",
+    "ki",
+    "koi",
+    "konsa",
+    "konsi",
+    "mujhe",
+    "se",
+    "wala",
+    "wale",
 }
 
 
@@ -116,7 +135,13 @@ class AssistantRepository:
         *,
         limit: int = 5,
     ) -> list[CanonicalProduct]:
-        """Find active products using meaningful words from a message."""
+        """Find explicitly named products, ranked by token coverage.
+
+        The previous query returned any product containing any message word,
+        so generic words such as ``phone`` could displace the actual model.
+        Catalog size is modest, therefore deterministic in-memory scoring gives
+        much better multi-product extraction without an external AI service.
+        """
 
         terms = [
             term
@@ -127,23 +152,55 @@ class AssistantRepository:
         if not terms:
             return []
 
-        conditions = [
-            or_(
-                CanonicalProduct.name.ilike(f"%{term}%"),
-                CanonicalProduct.model.ilike(f"%{term}%"),
-            )
-            for term in terms[:8]
-        ]
         statement = (
             select(CanonicalProduct)
-            .where(
-                CanonicalProduct.is_active.is_(True),
-                or_(*conditions),
-            )
-            .order_by(CanonicalProduct.name.asc())
-            .limit(limit)
+            .where(CanonicalProduct.is_active.is_(True))
+            .options(selectinload(CanonicalProduct.variants))
         )
-        return list(database_session.scalars(statement))
+        products = list(database_session.scalars(statement))
+        message_terms = set(terms)
+        ranked: list[tuple[float, int, CanonicalProduct]] = []
+
+        for product in products:
+            searchable = f"{product.name} {product.model or ''}".lower()
+            product_terms = set(re.findall(r"[a-z0-9]+", searchable))
+            overlap = message_terms & product_terms
+
+            if not overlap:
+                continue
+
+            model_terms = set(
+                re.findall(r"[a-z0-9]+", (product.model or "").lower())
+            )
+            distinctive = {
+                term for term in overlap
+                if any(character.isdigit() for character in term)
+                or term in model_terms
+            }
+            # One brand/family word alone is ambiguous. A model token, two
+            # matching words, or the complete name is treated as explicit.
+            if len(overlap) < 2 and not distinctive:
+                continue
+
+            coverage = len(overlap) / max(len(product_terms), 1)
+            score = len(overlap) * 10 + len(distinctive) * 4 + coverage
+            if product.name.lower() in message.lower():
+                score += 30
+            ranked.append((score, len(overlap), product))
+
+        ranked.sort(key=lambda item: (-item[0], -item[1], item[2].name))
+        if not ranked:
+            return []
+
+        # Keep products reasonably close to the strongest explicit match. This
+        # retains two named products for comparisons without returning every
+        # phone that happens to share "Galaxy" or "iPhone".
+        best_score = ranked[0][0]
+        return [
+            product
+            for score, _, product in ranked
+            if score >= max(14, best_score * 0.45)
+        ][:limit]
 
     @staticmethod
     def get_products_by_ids(
@@ -161,7 +218,89 @@ class AssistantRepository:
             )
             .order_by(CanonicalProduct.name.asc())
         )
-        return list(database_session.scalars(statement))
+        products = list(database_session.scalars(statement))
+        by_id = {product.id: product for product in products}
+        return [by_id[product_id] for product_id in product_ids if product_id in by_id]
+
+    @staticmethod
+    def recommend_products(
+        database_session: Session,
+        *,
+        category: str | None = None,
+        brand: str | None = None,
+        budget_min: Decimal | None = None,
+        budget_max: Decimal | None = None,
+        ram_gb: int | None = None,
+        storage_gb: int | None = None,
+        exclude_ids: list[int] | None = None,
+        limit: int = 4,
+    ) -> list[dict[str, object]]:
+        """Rank available catalog products using live price and rating data."""
+
+        lowest_price = func.min(ProductListing.current_price)
+        best_rating = func.max(ProductListing.rating)
+        statement = (
+            select(
+                CanonicalProduct,
+                Brand.name.label("brand_name"),
+                Category.name.label("category_name"),
+                lowest_price.label("lowest_price"),
+                best_rating.label("best_rating"),
+            )
+            .join(Category, Category.id == CanonicalProduct.category_id)
+            .outerjoin(Brand, Brand.id == CanonicalProduct.brand_id)
+            .join(
+                ProductVariant,
+                ProductVariant.canonical_product_id == CanonicalProduct.id,
+            )
+            .join(
+                ProductListing,
+                ProductListing.product_variant_id == ProductVariant.id,
+            )
+            .where(
+                CanonicalProduct.is_active.is_(True),
+                ProductVariant.is_active.is_(True),
+                ProductListing.is_available.is_(True),
+            )
+            .group_by(CanonicalProduct.id, Brand.name, Category.name)
+        )
+
+        if category:
+            statement = statement.where(Category.name.ilike(f"%{category}%"))
+        if brand:
+            statement = statement.where(Brand.name.ilike(f"%{brand}%"))
+        if ram_gb is not None:
+            statement = statement.where(ProductVariant.ram_gb >= ram_gb)
+        if storage_gb is not None:
+            statement = statement.where(
+                ProductVariant.storage_gb >= storage_gb
+            )
+        if exclude_ids:
+            statement = statement.where(CanonicalProduct.id.not_in(exclude_ids))
+        if budget_min is not None:
+            statement = statement.having(lowest_price >= budget_min)
+        if budget_max is not None:
+            statement = statement.having(lowest_price <= budget_max)
+
+        statement = statement.order_by(
+            best_rating.desc().nullslast(),
+            lowest_price.asc(),
+            CanonicalProduct.name.asc(),
+        ).limit(limit)
+
+        return [
+            {
+                "id": product.id,
+                "name": product.name,
+                "model": product.model,
+                "brand": brand_name,
+                "category": category_name,
+                "lowest_price": str(price),
+                "rating": str(rating) if rating is not None else None,
+            }
+            for product, brand_name, category_name, price, rating
+            in database_session.execute(statement).all()
+        ]
 
     @staticmethod
     def find_similar_products(

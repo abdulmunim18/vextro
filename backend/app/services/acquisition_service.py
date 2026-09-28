@@ -346,9 +346,26 @@ class AcquisitionService:
 
             try:
                 item = AcquisitionListingInput.model_validate(raw_item)
-            except ValidationError:
+            except ValidationError as error:
                 database_session.rollback()
                 rejected += 1
+                validation_errors = [
+                    {
+                        "field": ".".join(
+                            str(part)
+                            for part in issue["loc"]
+                        ),
+                        "message": str(issue["msg"]),
+                        "type": str(issue["type"]),
+                    }
+                    for issue in error.errors(
+                        include_url=False,
+                    )[:10]
+                ]
+                readable_errors = "; ".join(
+                    f"{issue['field']}: {issue['message']}"
+                    for issue in validation_errors
+                )
                 results.append(
                     AcquisitionBulkItemResponse(
                         index=index,
@@ -357,7 +374,11 @@ class AcquisitionService:
                         external_id=safe_external_id,
                         error_code="invalid_listing_data",
                         error_stage="validation",
-                        message="Listing validation failed.",
+                        message=(
+                            "Listing validation failed: "
+                            f"{readable_errors}"
+                        )[:500],
+                        validation_errors=validation_errors,
                     )
                 )
                 continue

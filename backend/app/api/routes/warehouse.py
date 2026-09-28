@@ -3,7 +3,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import BigInteger, Sequence, func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -65,26 +65,75 @@ class AuditReportResponse(BaseModel):
     status: str
 
 
+def _serialize_scrape_run(run: ScrapeRun) -> dict[str, Any]:
+    """Expose the warehouse UI contract from the canonical scrape-run model."""
+
+    status_labels = {
+        "running": "RUNNING",
+        "completed": "SUCCESS",
+        "partial": "PARTIAL",
+        "failed": "FAILED",
+    }
+    return {
+        "id": run.id,
+        "platform": run.platform,
+        "status": status_labels.get(run.status, run.status.upper()),
+        "triggered_by": run.trigger_type.upper(),
+        "items_scraped": run.items_discovered,
+        "items_failed": run.items_failed,
+        "error_message": None,
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+    }
+
+
 # --- Endpoints ---
 
 @router.post("/scrape-runs/start", response_model=ScrapeRunResponse, status_code=status.HTTP_201_CREATED)
 def start_scrape_run(
     payload: ScrapeRunStartPayload,
     db: Session = Depends(get_db),
-) -> ScrapeRun:
+) -> dict[str, Any]:
     """Register the start of a scraper execution run."""
+    normalized_platform = payload.platform.strip().lower()
+    if normalized_platform.startswith("priceoye"):
+        normalized_platform = "priceoye"
+    elif normalized_platform.startswith("daraz"):
+        normalized_platform = "daraz"
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Platform must be Daraz or PriceOye.",
+        )
+
+    trigger_type = payload.triggered_by.strip().lower()
+    trigger_aliases = {
+        "scheduled": "scheduler",
+        "pipeline": "scheduler",
+    }
+    trigger_type = trigger_aliases.get(trigger_type, trigger_type)
+    if trigger_type not in {"manual", "scheduler", "test"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Trigger type must be manual, scheduler, or test.",
+        )
+
     run = ScrapeRun(
-        platform=payload.platform,
-        status="RUNNING",
-        triggered_by=payload.triggered_by,
-        items_scraped=0,
+        platform=normalized_platform,
+        spider_name=f"{normalized_platform}_spider",
+        status="running",
+        trigger_type=trigger_type,
+        parser_version="warehouse-api-v1",
+        items_discovered=0,
         items_failed=0,
         started_at=datetime.now(timezone.utc),
     )
     db.add(run)
     db.commit()
     db.refresh(run)
-    return run
+    response = _serialize_scrape_run(run)
+    response["platform"] = payload.platform
+    return response
 
 
 @router.post("/scrape-runs/{run_id}/finish", response_model=ScrapeRunResponse)
@@ -92,7 +141,7 @@ def finish_scrape_run(
     run_id: int,
     payload: ScrapeRunFinishPayload,
     db: Session = Depends(get_db),
-) -> ScrapeRun:
+) -> dict[str, Any]:
     """Mark a scrape run complete with final counts and status."""
     run = db.get(ScrapeRun, run_id)
     if not run:
@@ -101,15 +150,29 @@ def finish_scrape_run(
             detail=f"Scrape run ID {run_id} not found.",
         )
 
-    run.status = payload.status
-    run.items_scraped = payload.items_scraped
+    status_aliases = {
+        "success": "completed",
+        "cancelled": "failed",
+    }
+    normalized_status = status_aliases.get(
+        payload.status.strip().lower(), payload.status.strip().lower()
+    )
+    if normalized_status not in {"completed", "partial", "failed"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Status must be success, completed, partial, or failed.",
+        )
+
+    run.status = normalized_status
+    run.items_discovered = payload.items_scraped
+    run.items_ingested = max(payload.items_scraped - payload.items_failed, 0)
     run.items_failed = payload.items_failed
-    run.error_message = payload.error_message
+    run.error_count = 1 if payload.error_message else 0
     run.finished_at = datetime.now(timezone.utc)
 
     db.commit()
     db.refresh(run)
-    return run
+    return _serialize_scrape_run(run)
 
 
 @router.get("/scrape-runs", response_model=list[ScrapeRunResponse])
@@ -119,7 +182,7 @@ def list_scrape_runs(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-) -> Sequence[ScrapeRun]:
+) -> list[dict[str, Any]]:
     """Retrieve audit history log of past scraper execution runs."""
     stmt = select(ScrapeRun).order_by(ScrapeRun.started_at.desc())
 
@@ -129,7 +192,10 @@ def list_scrape_runs(
         stmt = stmt.where(ScrapeRun.status.ilike(status_filter))
 
     stmt = stmt.limit(limit).offset(offset)
-    return db.scalars(stmt).all()
+    return [
+        _serialize_scrape_run(run)
+        for run in db.scalars(stmt).all()
+    ]
 
 
 @router.get("/metrics", response_model=WarehouseMetricsResponse)
@@ -168,7 +234,7 @@ def get_warehouse_metrics(
             "listings_count": p_listings_count,
             "last_scrape_at": last_run.started_at.isoformat() if last_run else None,
             "last_scrape_status": last_run.status if last_run else "NO_RUNS",
-            "last_scrape_items": last_run.items_scraped if last_run else 0,
+            "last_scrape_items": last_run.items_discovered if last_run else 0,
         })
 
     # Data health metrics

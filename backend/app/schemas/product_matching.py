@@ -6,6 +6,8 @@ from pydantic import (
     Field,
 )
 
+from app.schemas.acquisition import PlatformCode
+
 
 class ProductMatchRequest(BaseModel):
     """Normalized product information received for matching."""
@@ -18,6 +20,14 @@ class ProductMatchRequest(BaseModel):
     title: str = Field(
         min_length=2,
         max_length=500,
+    )
+
+    platform_code: PlatformCode | None = None
+
+    external_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=150,
     )
 
     brand: str | None = Field(
@@ -63,6 +73,11 @@ class ProductMatchResponse(BaseModel):
     )
 
     product_variant_id: int | None = Field(
+        default=None,
+        ge=1,
+    )
+
+    suggested_product_variant_id: int | None = Field(
         default=None,
         ge=1,
     )

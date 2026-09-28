@@ -62,12 +62,43 @@ def test_assistant_conversation_is_private_and_grounded(
     assert assistant_message["data_timestamp"] is not None
     assert "Samsung Galaxy A55" in assistant_message["content"]
 
+    follow_up_response = client.post(
+        f"/api/v1/assistant/conversations/{conversation_id}/messages",
+        headers=headers,
+        json={"content": "is ki RAM aur storage kitni hai?"},
+    )
+    assert follow_up_response.status_code == 201
+    follow_up = follow_up_response.json()["assistant_message"]
+    assert follow_up["intent"] == "product_details"
+    assert "Samsung Galaxy A55" in follow_up["content"]
+
+    recommendation_response = client.post(
+        f"/api/v1/assistant/conversations/{conversation_id}/messages",
+        headers=headers,
+        json={"content": "150k ke andar phone recommend karo"},
+    )
+    assert recommendation_response.status_code == 201
+    recommendation = recommendation_response.json()["assistant_message"]
+    assert recommendation["intent"] == "recommendation"
+    assert recommendation["entities"]["budget_max"] == "150000"
+    assert recommendation["entities"]["category"] == "Mobile Phones"
+
+    contextual_response = client.post(
+        f"/api/v1/assistant/conversations/{conversation_id}/messages",
+        headers=headers,
+        json={"content": "pehle wale ki RAM aur storage kitni hai?"},
+    )
+    assert contextual_response.status_code == 201
+    contextual_answer = contextual_response.json()["assistant_message"]
+    assert contextual_answer["intent"] == "product_details"
+    assert "Samsung Galaxy A55" in contextual_answer["content"]
+
     read_response = client.get(
         f"/api/v1/assistant/conversations/{conversation_id}",
         headers=headers,
     )
     assert read_response.status_code == 200
-    assert len(read_response.json()["messages"]) == 2
+    assert len(read_response.json()["messages"]) == 8
 
     other_headers = _consumer_headers(client)
     forbidden_read = client.get(

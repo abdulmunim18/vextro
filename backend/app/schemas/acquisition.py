@@ -240,6 +240,9 @@ class AcquisitionBulkItemResponse(BaseModel):
     error_code: str | None = None
     error_stage: Literal["validation", "ingestion"] | None = None
     message: str | None = None
+    validation_errors: list[dict[str, str]] = Field(
+        default_factory=list,
+    )
 
 
 class AcquisitionBulkResponse(BaseModel):

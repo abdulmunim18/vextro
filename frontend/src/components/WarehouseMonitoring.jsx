@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   getWarehouseMetrics,
   getScrapeRuns,
@@ -13,7 +13,7 @@ export default function WarehouseMonitoring() {
   const [auditing, setAuditing] = useState(false);
   const [error, setError] = useState(null);
 
-  const loadWarehouseData = async () => {
+  const loadWarehouseData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -29,11 +29,12 @@ export default function WarehouseMonitoring() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    loadWarehouseData();
-  }, []);
+    const timeoutId = window.setTimeout(loadWarehouseData, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [loadWarehouseData]);
 
   const handleRunAudit = async () => {
     setAuditing(true);

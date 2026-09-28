@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models.brand import Brand
 from app.models.canonical_product import CanonicalProduct
+from app.models.pending_product_match import PendingProductMatch
 from app.models.product_variant import ProductVariant
 
 
@@ -105,3 +106,58 @@ class ProductMatchingRepository:
             )
             for row in rows
         ]
+
+    def get_manual_match(
+        self,
+        database_session: Session,
+        *,
+        platform_code: str,
+        external_id: str,
+    ) -> ProductMatchCandidate | None:
+        """Return an administrator-approved source mapping when available."""
+
+        row = database_session.execute(
+            select(
+                CanonicalProduct.id,
+                ProductVariant.id,
+                CanonicalProduct.name,
+                Brand.name,
+                CanonicalProduct.model,
+                ProductVariant.sku,
+                ProductVariant.ram_gb,
+                ProductVariant.storage_gb,
+                ProductVariant.color,
+                ProductVariant.condition,
+            )
+            .join(
+                PendingProductMatch,
+                PendingProductMatch.assigned_product_variant_id
+                == ProductVariant.id,
+            )
+            .join(
+                CanonicalProduct,
+                ProductVariant.canonical_product_id == CanonicalProduct.id,
+            )
+            .outerjoin(Brand, CanonicalProduct.brand_id == Brand.id)
+            .where(
+                PendingProductMatch.platform_code == platform_code,
+                PendingProductMatch.external_id == external_id,
+                PendingProductMatch.status.in_(("resolved", "replayed")),
+                ProductVariant.is_active.is_(True),
+                CanonicalProduct.is_active.is_(True),
+            )
+        ).first()
+        if row is None:
+            return None
+        return ProductMatchCandidate(
+            canonical_product_id=row[0],
+            product_variant_id=row[1],
+            product_name=row[2],
+            brand_name=row[3],
+            model=row[4],
+            sku=row[5],
+            ram_gb=row[6],
+            storage_gb=row[7],
+            color=row[8],
+            condition=row[9],
+        )

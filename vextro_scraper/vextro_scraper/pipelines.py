@@ -373,6 +373,7 @@ class AcquisitionDeliveryError(DropItem):
 
 class VextroApiIngestionPipeline:
     MATCH_PATH = '/api/v1/internal/acquisition/match-product'
+    PENDING_MATCHES_PATH = '/api/v1/internal/acquisition/pending-matches'
     LISTINGS_PATH = '/api/v1/internal/acquisition/listings'
     BULK_LISTINGS_PATH = '/api/v1/internal/acquisition/listings/bulk'
     REVIEWS_PATH = '/api/v1/internal/acquisition/reviews'
@@ -625,6 +626,12 @@ class VextroApiIngestionPipeline:
                     str(result.get('message') or 'Bulk listing ingestion failed.'),
                     error_type=str(result.get('error_code') or 'listing_ingestion_failed'),
                     error_stage=str(result.get('error_stage') or 'ingestion'),
+                    metadata={
+                        'validation_errors': result.get(
+                            'validation_errors',
+                            [],
+                        ),
+                    },
                     outcome=outcome,
                 ),
                 spider,
@@ -661,6 +668,12 @@ class VextroApiIngestionPipeline:
         )
 
         match_payload = {
+            'platform_code': str(
+                payload.get('platform') or ''
+            ).strip().lower() or None,
+            'external_id': _optional_text(
+                payload.get('external_id')
+            ),
             'title': str(payload.get('model') or '').strip(),
             'brand': _optional_text(payload.get('brand')),
             'model': None,
@@ -698,7 +711,7 @@ class VextroApiIngestionPipeline:
         }
 
     @staticmethod
-    def _build_listing_payload(payload, product_variant_id):
+    def _build_listing_payload(payload, product_variant_id=None):
         platform_code = str(payload.get('platform') or '').strip().lower()
         raw_payload = {
             'source': platform_code,
@@ -712,9 +725,8 @@ class VextroApiIngestionPipeline:
             'raw_html_path': payload.get('raw_html_path'),
         }
 
-        return {
+        listing_payload = {
             'platform_code': platform_code,
-            'product_variant_id': product_variant_id,
             'external_id': str(payload.get('external_id') or '').strip(),
             'title': str(payload.get('model') or '').strip(),
             'product_url': str(payload.get('product_url') or '').strip(),
@@ -731,6 +743,9 @@ class VextroApiIngestionPipeline:
             'seller': VextroApiIngestionPipeline._build_seller(payload),
             'raw_payload': raw_payload,
         }
+        if product_variant_id is not None:
+            listing_payload['product_variant_id'] = product_variant_id
+        return listing_payload
 
     def process_item(self, item, spider):
         payload = dict(ItemAdapter(item))
@@ -798,10 +813,32 @@ class VextroApiIngestionPipeline:
         product_variant_id = match_result.get('product_variant_id')
         if not match_result.get('matched') or not product_variant_id:
             reason = str(match_result.get('reason') or 'no safe match')
-            logging.error(
-                'Secure acquisition could not match item '
-                '(%s, confidence=%s, reason=%s).',
+            listing_payload = self._build_listing_payload(payload)
+            pending_payload = {
+                'platform_code': listing_payload['platform_code'],
+                'external_id': listing_payload['external_id'],
+                'title': listing_payload['title'],
+                'product_url': listing_payload['product_url'],
+                'match_payload': self._build_match_payload(payload),
+                'listing_payload': listing_payload,
+                'match_confidence': int(
+                    match_result.get('confidence') or 0
+                ),
+                'match_reason': reason[:500],
+                'suggested_product_variant_id': (
+                    match_result.get('suggested_product_variant_id')
+                ),
+            }
+            pending_result = self._post_json(
+                self.PENDING_MATCHES_PATH,
+                pending_payload,
                 context,
+            )
+            logging.error(
+                'Secure acquisition queued unresolved item '
+                '(%s, pending_match_id=%s, confidence=%s, reason=%s).',
+                context,
+                pending_result.get('id'),
                 match_result.get('confidence'),
                 reason,
             )
@@ -811,7 +848,9 @@ class VextroApiIngestionPipeline:
                 error_stage='matching',
                 metadata={
                     'confidence': match_result.get('confidence'),
+                    'pending_match_id': pending_result.get('id'),
                 },
+                outcome='rejected',
             )
 
         listing_payload = self._build_listing_payload(

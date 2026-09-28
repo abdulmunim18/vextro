@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   createAssistantConversation,
   getAssistantConversation,
@@ -11,7 +12,7 @@ const quickPrompts = [
   "What is the lowest price for Samsung Galaxy A55?",
   "Compare Samsung Galaxy A55 and Apple iPhone 15",
   "Should I buy Samsung Galaxy A55 now or wait?",
-  "Recommend alternatives to Apple iPhone 15",
+  "80k ke andar best phone recommend karo",
 ];
 
 function AssistantPage() {
@@ -151,7 +152,18 @@ function AssistantPage() {
                 {messages.map((message) => (
                   <article key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
                     <div className={`max-w-[85%] rounded-2xl px-5 py-4 text-sm leading-7 ${message.role === "user" ? "bg-blue-600 text-white" : "border border-slate-200 bg-slate-50 text-slate-800"}`}>
+                      {message.role === "assistant" && message.intent ? <span className="mb-2 inline-flex rounded-full bg-blue-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-blue-700">{message.intent.replaceAll("_", " ")}</span> : null}
                       <p>{message.content}</p>
+                      {message.role === "assistant" && Array.isArray(message.grounded_data?.recommendations) && message.grounded_data.recommendations.length > 0 ? (
+                        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                          {message.grounded_data.recommendations.slice(0, 4).map((product) => (
+                            <Link key={product.id} to={`/products/${product.id}`} className="rounded-xl border border-slate-200 bg-white p-3 transition hover:border-blue-300 hover:bg-blue-50">
+                              <span className="block font-black text-slate-950">{product.name}</span>
+                              {product.lowest_price ? <span className="mt-1 block text-xs font-bold text-blue-700">From PKR {product.lowest_price}</span> : null}
+                            </Link>
+                          ))}
+                        </div>
+                      ) : null}
                       {message.role === "assistant" && message.data_timestamp ? <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Data checked {new Date(message.data_timestamp).toLocaleString("en-PK")}</p> : null}
                     </div>
                   </article>
@@ -163,7 +175,7 @@ function AssistantPage() {
             <form onSubmit={handleSend} className="border-t border-slate-200 bg-white p-4 sm:p-6">
               {error ? <div className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700" role="alert">{error}</div> : null}
               <div className="flex gap-3">
-                <textarea value={draft} onChange={(event) => setDraft(event.target.value)} rows="2" maxLength="2000" placeholder="Ask about a product, comparison, history, buy timing or alert..." className="min-h-14 flex-1 resize-none rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" />
+                <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); handleSend(event); } }} rows="2" maxLength="2000" placeholder="Ask naturally: 80k ke andar Samsung phone recommend karo..." className="min-h-14 flex-1 resize-none rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" />
                 <button type="submit" disabled={isSending || !draft.trim()} className="min-w-24 rounded-2xl bg-blue-600 px-5 text-sm font-black text-white disabled:opacity-50">{isSending ? "Sending..." : "Send"}</button>
               </div>
               <p className="mt-2 text-xs text-slate-500">VEXTRO does not invent missing prices or guarantee future market movements.</p>

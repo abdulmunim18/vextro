@@ -269,6 +269,27 @@ class ProductMatchingService:
     ) -> ProductMatchResponse:
         """Return the best safe product variant match."""
 
+        if payload.platform_code and payload.external_id:
+            manual_match = self.repository.get_manual_match(
+                database_session,
+                platform_code=payload.platform_code,
+                external_id=payload.external_id,
+            )
+            if manual_match is not None:
+                return ProductMatchResponse(
+                    matched=True,
+                    confidence=100,
+                    product_variant_id=manual_match.product_variant_id,
+                    canonical_product_id=manual_match.canonical_product_id,
+                    product_name=manual_match.product_name,
+                    brand_name=manual_match.brand_name,
+                    model=manual_match.model,
+                    ram_gb=manual_match.ram_gb,
+                    storage_gb=manual_match.storage_gb,
+                    color=manual_match.color,
+                    reason="Administrator-approved marketplace mapping reused.",
+                )
+
         candidates = (
             self.repository.list_match_candidates(
                 database_session,
@@ -512,6 +533,9 @@ class ProductMatchingService:
             return ProductMatchResponse(
                 matched=False,
                 confidence=best_confidence,
+                suggested_product_variant_id=(
+                    best_candidate.product_variant_id
+                ),
                 product_name=(
                     best_candidate.product_name
                 ),
@@ -559,6 +583,9 @@ class ProductMatchingService:
             return ProductMatchResponse(
                 matched=False,
                 confidence=best_confidence,
+                suggested_product_variant_id=(
+                    best_candidate.product_variant_id
+                ),
                 product_name=(
                     best_candidate.product_name
                 ),
@@ -588,6 +615,9 @@ class ProductMatchingService:
             return ProductMatchResponse(
                 matched=False,
                 confidence=best_confidence,
+                suggested_product_variant_id=(
+                    best_candidate.product_variant_id
+                ),
                 product_name=(
                     best_candidate.product_name
                 ),

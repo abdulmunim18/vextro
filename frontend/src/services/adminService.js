@@ -74,3 +74,52 @@ export async function getAdminListings(params = {}) {
 
   return response.data;
 }
+
+
+export async function getPendingProductMatches(params = {}) {
+  const response = await apiClient.get(
+    "/admin/pending-product-matches",
+    { params },
+  );
+
+  return response.data;
+}
+
+
+export async function getProductVariantOptions(query) {
+  const response = await apiClient.get(
+    "/admin/product-variant-options",
+    { params: { q: query } },
+  );
+
+  return response.data;
+}
+
+
+export async function resolvePendingProductMatch(
+  matchId,
+  productVariantId,
+) {
+  const response = await apiClient.patch(
+    `/admin/pending-product-matches/${matchId}/resolve`,
+    { product_variant_id: productVariantId },
+  );
+
+  return response.data;
+}
+
+
+export async function replayPendingProductMatch(matchId) {
+  const response = await apiClient.post(
+    `/admin/pending-product-matches/${matchId}/replay`,
+  );
+
+  return response.data;
+}
+
+
+export async function deletePendingProductMatch(matchId) {
+  await apiClient.delete(
+    `/admin/pending-product-matches/${matchId}`,
+  );
+}

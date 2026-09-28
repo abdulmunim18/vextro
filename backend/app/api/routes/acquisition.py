@@ -22,6 +22,10 @@ from app.schemas.product_matching import (
     ProductMatchRequest,
     ProductMatchResponse,
 )
+from app.schemas.pending_product_match import (
+    PendingProductMatchCreate,
+    PendingProductMatchResponse,
+)
 from app.schemas.scrape_monitoring import (
     ScrapeErrorInput,
     ScrapeErrorResponse,
@@ -37,6 +41,7 @@ from app.services.acquisition_service import (
 from app.services.product_matching_service import (
     ProductMatchingService,
 )
+from app.services.pending_product_match_service import PendingProductMatchService
 from app.services.scrape_monitoring_service import ScrapeMonitoringService
 from app.services.review_service import ReviewService
 
@@ -54,6 +59,7 @@ acquisition_service = AcquisitionService()
 product_matching_service = ProductMatchingService()
 scrape_monitoring_service = ScrapeMonitoringService()
 review_service = ReviewService()
+pending_product_match_service = PendingProductMatchService()
 
 
 @router.post(
@@ -253,3 +259,17 @@ def match_marketplace_product(
         database_session,
         payload,
     )
+
+
+@router.post(
+    "/pending-matches",
+    response_model=PendingProductMatchResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def record_pending_product_match(
+    payload: PendingProductMatchCreate,
+    database_session: Session = Depends(get_db),
+) -> PendingProductMatchResponse:
+    """Persist or refresh one unresolved marketplace product mapping."""
+
+    return pending_product_match_service.record(database_session, payload)

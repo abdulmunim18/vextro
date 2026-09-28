@@ -207,6 +207,9 @@ def test_bulk_invalid_price_is_item_rejection_without_persistence(
     body = response.json()
     assert body["rejected"] == 1
     assert body["results"][0]["error_code"] == "invalid_listing_data"
+    assert body["results"][0]["validation_errors"]
+    assert body["results"][0]["validation_errors"][0]["field"] == "current_price"
+    assert "current_price" in body["results"][0]["message"]
     assert database_session.scalar(
         select(ProductListing.id).where(
             ProductListing.external_id == acquisition_context["external_id"]

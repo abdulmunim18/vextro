@@ -83,6 +83,30 @@ def test_daraz_malformed_json_raises_monitorable_parser_error():
         list(spider.parse(response))
 
 
+def test_daraz_parser_constructs_url_when_marketplace_omits_it():
+    spider = DarazSpider()
+    response = TextResponse(
+        url='https://www.daraz.pk/smartphones/?ajax=true',
+        body=json.dumps({
+            'mods': {
+                'listItems': [{
+                    'itemId': '1965744785',
+                    'name': 'Samsung Galaxy A55 8GB RAM 256GB ROM',
+                    'price': '125000',
+                    'inStock': True,
+                }],
+            },
+            'mainInfo': {'page': 1, 'totalResults': 1, 'pageSize': 40},
+        }).encode('utf-8'),
+    )
+
+    item = list(spider.parse(response))[0]
+
+    assert item['product_url'] == (
+        'https://www.daraz.pk/products/i1965744785.html'
+    )
+
+
 def test_cleaning_pipeline_infers_brand_and_title_specifications():
     item = {
         'model': (

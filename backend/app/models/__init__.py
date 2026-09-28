@@ -8,6 +8,7 @@ from app.models.category import Category
 from app.models.competitor_watchlist import CompetitorWatchlist
 from app.models.organization import Organization
 from app.models.organization_user import OrganizationUser
+from app.models.pending_product_match import PendingProductMatch
 from app.models.platform import Platform
 from app.models.price_alert import PriceAlert
 from app.models.price_history import PriceHistory
@@ -39,6 +40,7 @@ __all__ = [
     "CompetitorWatchlist",
     "Organization",
     "OrganizationUser",
+    "PendingProductMatch",
     "Platform",
     "PriceAlert",
     "PriceHistory",

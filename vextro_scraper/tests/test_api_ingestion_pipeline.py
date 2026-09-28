@@ -167,6 +167,8 @@ def test_pipeline_matches_then_uses_secure_listing_contract():
 
     match_payload = session.calls[0][1]['json']
     assert match_payload == {
+        'platform_code': 'daraz',
+        'external_id': 'daraz-secure-123',
         'title': 'Samsung Galaxy A55 8GB RAM 256GB ROM Black',
         'brand': 'Samsung',
         'model': None,
@@ -238,6 +240,12 @@ def test_pipeline_does_not_ingest_an_unmatched_product():
             'product_variant_id': None,
             'reason': 'No safe automatic match.',
         }),
+        FakeResponse(201, {
+            'id': 81,
+            'platform_code': 'daraz',
+            'external_id': 'daraz-secure-123',
+            'status': 'pending',
+        }),
     )
 
     with pytest.raises(DropItem):
@@ -246,8 +254,13 @@ def test_pipeline_does_not_ingest_an_unmatched_product():
             spider=None,
         )
 
-    assert len(session.calls) == 1
+    assert len(session.calls) == 2
     assert session.calls[0][0].endswith('/match-product')
+    assert session.calls[1][0].endswith('/pending-matches')
+    pending_payload = session.calls[1][1]['json']
+    assert pending_payload['external_id'] == 'daraz-secure-123'
+    assert pending_payload['match_confidence'] == 54
+    assert 'product_variant_id' not in pending_payload['listing_payload']
 
 
 def test_pipeline_rejects_timeout_and_malformed_response():
