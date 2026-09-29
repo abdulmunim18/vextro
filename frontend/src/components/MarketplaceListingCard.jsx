@@ -44,17 +44,26 @@ function MarketplaceListingCard({
   const marketplaceDestination =
     getMarketplaceDestination(listing, platformName);
 
+  const isUnavailable = !listing.is_available;
+
   return (
     <article
       className={`relative overflow-hidden rounded-3xl border bg-white transition duration-300 ${
-        isLowest
-          ? "border-2 border-emerald-300 shadow-lg shadow-emerald-500/10"
-          : "border-vextro-border shadow-sm hover:border-blue-200 hover:shadow-lg"
+        isUnavailable
+          ? "border-red-200 opacity-75 saturate-50"
+          : isLowest
+            ? "border-2 border-emerald-300 shadow-lg shadow-emerald-500/10"
+            : "border-vextro-border shadow-sm hover:border-blue-200 hover:shadow-lg"
       }`}
     >
-      {isLowest ? (
+      {isLowest && !isUnavailable ? (
         <span className="absolute right-4 top-4 z-10 rounded-full bg-emerald-500 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-white shadow-lg shadow-emerald-500/20">
           Lowest price
+        </span>
+      ) : null}
+      {isUnavailable ? (
+        <span className="absolute right-4 top-4 z-10 rounded-full bg-red-500 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-white shadow-lg shadow-red-500/20">
+          Out of stock
         </span>
       ) : null}
 
@@ -177,14 +186,20 @@ function MarketplaceListingCard({
             </div>
 
             <a
-              className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-vextro-primary px-5 text-sm font-black text-white shadow-lg shadow-blue-500/20 transition hover:-translate-y-0.5 hover:bg-vextro-primary-dark"
+              className={`inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-5 text-sm font-black transition hover:-translate-y-0.5 ${
+                isUnavailable
+                  ? "border border-red-200 bg-white text-red-600 hover:border-red-300 hover:bg-red-50"
+                  : "bg-vextro-primary text-white shadow-lg shadow-blue-500/20 hover:bg-vextro-primary-dark"
+              }`}
               href={marketplaceDestination.url}
               target="_blank"
               rel="noreferrer"
             >
-              {marketplaceDestination.isSearchFallback
-                ? `Search on ${platformName}`
-                : `View on ${platformName}`}
+              {isUnavailable
+                ? `See on ${platformName} (out of stock)`
+                : marketplaceDestination.isSearchFallback
+                  ? `Search on ${platformName}`
+                  : `View on ${platformName}`}
               <span>↗</span>
             </a>
           </div>
