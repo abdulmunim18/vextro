@@ -255,6 +255,36 @@ When the product catalog is empty on a new PC, import the latest team-approved d
 
 Public registration supports Consumer and SME accounts. Administrator access should be created through the approved project seed/setup process, not public registration.
 
+## Restoring from a team `pg_dump` (important)
+
+Team dumps in `backups/` (and the ones shared out-of-band) are in `pg_dump` **custom** format, not plain SQL. Use `pg_restore`, not `psql -f`, and always re-run migrations afterward — the dump reflects the schema at the moment it was taken, and any migrations added since then will be missing until you re-apply them. Skipping this step causes the acquisition endpoints to return `500 UndefinedTable` on every scraped item.
+
+Create the databases as `vextro_app` (not `postgres`) so every restored table lands with the correct owner. `REASSIGN OWNED BY postgres TO vextro_app` is not enough on its own because a superuser also owns system catalog rows that cannot be reassigned, and the whole statement aborts before it touches your tables.
+
+```powershell
+# 1. Let vextro_app create databases just for this operation.
+psql -h 127.0.0.1 -U postgres -d postgres -c "ALTER ROLE vextro_app CREATEDB;"
+
+# 2. Drop and recreate the target DBs as vextro_app so it owns them from the start.
+psql -h 127.0.0.1 -U postgres    -d postgres -c "DROP DATABASE IF EXISTS vextro_db WITH (FORCE);"
+psql -h 127.0.0.1 -U postgres    -d postgres -c "DROP DATABASE IF EXISTS vextro_test_db WITH (FORCE);"
+psql -h 127.0.0.1 -U vextro_app  -d postgres -c "CREATE DATABASE vextro_db;"
+psql -h 127.0.0.1 -U vextro_app  -d postgres -c "CREATE DATABASE vextro_test_db;"
+
+# 3. Restore each dump AS vextro_app, dropping the dump's baked-in ownership/privilege grants.
+pg_restore -h 127.0.0.1 -U vextro_app -d vextro_db      --no-owner --no-privileges "path\to\vextro_db.sql"
+pg_restore -h 127.0.0.1 -U vextro_app -d vextro_test_db --no-owner --no-privileges "path\to\vextro_test_db.sql"
+
+# 4. Apply any migrations added since the dump was taken.
+cd backend
+alembic upgrade heads
+
+# 5. Revoke the temporary CREATEDB privilege.
+psql -h 127.0.0.1 -U postgres -d postgres -c "ALTER ROLE vextro_app NOCREATEDB;"
+```
+
+Set `PGPASSWORD` for whichever role you invoke, or supply the password interactively. After step 4, `alembic current` should print the same revision as `alembic heads`, and `curl http://127.0.0.1:8000/database/health` should report `"connected_user":"vextro_app"`.
+
 # Development Checks
 
 Backend:
