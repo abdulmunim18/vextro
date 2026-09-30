@@ -89,6 +89,10 @@ class ReviewService:
                 )
             # Keep derived evidence and its source reviews in one transaction.
             if created_count:
+                self.repository.refresh_listing_aggregate(
+                    database_session,
+                    listing_id=listing.id,
+                )
                 ReviewAnalysisService().analyze_listing(database_session, listing.id)
                 if listing.seller_id is not None:
                     SellerTrustService().recalculate(database_session, listing.seller_id)

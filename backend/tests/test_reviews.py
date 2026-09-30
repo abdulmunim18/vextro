@@ -325,10 +325,9 @@ def test_review_end_to_end_deduplication_association_and_read_api(
     assert saved[0].review_text == "Excellent phone!"
     assert saved[1].review_text is None
 
-    auth = authenticated_headers(client)
+    # Read endpoints are public now; no Authorization header required.
     first_page = client.get(
         f"/api/v1/products/{product.id}/reviews",
-        headers=auth,
         params={"page": 1, "page_size": 2},
     )
     assert first_page.status_code == 200
@@ -348,20 +347,108 @@ def test_review_end_to_end_deduplication_association_and_read_api(
 
     second_page = client.get(
         f"/api/v1/products/{product.id}/reviews",
-        headers=auth,
         params={"page": 2, "page_size": 2},
     )
     assert second_page.status_code == 200
     assert len(second_page.json()["items"]) == 1
 
 
-def test_review_read_api_requires_application_authentication(
+def test_review_read_api_is_public(
     client: TestClient,
     database_session: Session,
 ) -> None:
+    """Anonymous shoppers can read reviews and review-analysis.
+
+    The endpoints used to require login. Reviews now sit alongside
+    prices and listings as public product intelligence; only the
+    mutating ``review-analysis/run`` action stays behind auth.
+    """
+
     product, _listing, _seller = create_review_listing(database_session)
-    response = client.get(f"/api/v1/products/{product.id}/reviews")
-    assert response.status_code == 401
+
+    reviews_response = client.get(
+        f"/api/v1/products/{product.id}/reviews",
+    )
+    assert reviews_response.status_code == 200
+
+    analysis_response = client.get(
+        f"/api/v1/products/{product.id}/review-analysis",
+    )
+    assert analysis_response.status_code == 200
+
+
+def test_review_ingestion_refreshes_listing_aggregate(
+    client: TestClient,
+    database_session: Session,
+) -> None:
+    """Ingesting a review batch updates product_listings.rating/count.
+
+    Before this landed, ``product_listings.rating`` and ``review_count``
+    stayed on whatever value the listing carried at creation time, so
+    catalog cards showed "★ 0.0 (0 reviews)" for listings that actually
+    had scraped reviews sitting in ``raw_reviews``.
+    """
+
+    _product, listing, _seller = create_review_listing(database_session)
+
+    # ``build_batch`` uses hardcoded external_review_id values that
+    # collide with the earlier e2e test's inserts under the
+    # (platform_id, external_review_id) unique constraint, so we need
+    # our own batch with test-scoped ids for this listing.
+    unique_batch = {
+        "platform_code": "daraz",
+        "external_listing_id": listing.external_id,
+        "source_url": listing.product_url,
+        "reviews": [
+            {
+                "external_review_id": f"agg-{listing.id}-r1",
+                "rating": 5,
+                "review_text": "Great phone",
+                "reviewed_at": "2026-03-01T00:00:00Z",
+                "verified_purchase": True,
+            },
+            {
+                "external_review_id": f"agg-{listing.id}-r2",
+                "rating": 4,
+                "review_text": "Solid choice",
+                "reviewed_at": "2026-03-02T00:00:00Z",
+                "verified_purchase": True,
+            },
+            {
+                "external_review_id": f"agg-{listing.id}-r3",
+                "rating": 3,
+                "review_text": "It works",
+                "reviewed_at": "2026-03-03T00:00:00Z",
+                "verified_purchase": False,
+            },
+        ],
+    }
+
+    response = client.post(
+        "/api/v1/internal/acquisition/reviews",
+        headers=ingestion_headers(),
+        json=unique_batch,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["created_count"] == 3, body
+
+    database_session.expire_all()
+    raw_review_rows = list(
+        database_session.scalars(
+            select(RawReview)
+            .where(RawReview.product_listing_id == listing.id)
+        ).all()
+    )
+    assert len(raw_review_rows) == 3, [
+        row.rating for row in raw_review_rows
+    ]
+
+    refreshed = database_session.get(ProductListing, listing.id)
+    assert refreshed is not None
+    # Batch has three reviews with ratings 5, 4, 3 -> average 4.0.
+    assert refreshed.review_count == 3, refreshed.review_count
+    assert float(refreshed.rating) == 4.0, float(refreshed.rating)
 
 
 def test_review_read_rejects_listing_from_another_product(
@@ -375,9 +462,9 @@ def test_review_read_rejects_listing_from_another_product(
         database_session,
         platform_code="priceoye",
     )
+    # No auth needed; the listing-vs-product check still returns 404.
     response = client.get(
         f"/api/v1/products/{first_product.id}/reviews",
-        headers=authenticated_headers(client),
         params={"listing_id": other_listing.id},
     )
     assert response.status_code == 404
