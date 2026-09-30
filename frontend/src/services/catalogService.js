@@ -92,3 +92,22 @@ export async function getPersonalizedProductBuyGuidance(
 
   return response.data;
 }
+
+export async function getProductReviews(productId, params = {}) {
+  const response = await apiClient.get(
+    `/products/${productId}/reviews`,
+    { params },
+  );
+  return response.data;
+}
+
+export async function getProductReviewAnalysis(
+  productId,
+  params = {},
+) {
+  const response = await apiClient.get(
+    `/products/${productId}/review-analysis`,
+    { params },
+  );
+  return response.data;
+}

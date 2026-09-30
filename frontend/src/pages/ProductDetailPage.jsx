@@ -15,6 +15,7 @@ import PriceHistoryChart from "../components/PriceHistoryChart";
 import PriceForecastCard from "../components/PriceForecastCard";
 import BuyTimeGuidanceCard from "../components/BuyTimeGuidanceCard";
 import RelatedProductCard from "../components/RelatedProductCard";
+import ReviewsPanel from "../components/ReviewsPanel";
 import RouteLoadingState from "../components/RouteLoadingState";
 import { useAuth } from "../context/useAuth";
 import {
@@ -1058,6 +1059,8 @@ function ProductDetailPage() {
         />
 
         <BuyTimeGuidanceCard guidance={buyGuidance} />
+
+        <ReviewsPanel productId={product.id} />
 
         {specifications.length > 0 ? (
           <section className="mt-10">
