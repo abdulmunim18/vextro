@@ -1060,7 +1060,16 @@ function ProductDetailPage() {
 
         <BuyTimeGuidanceCard guidance={buyGuidance} />
 
-        <ReviewsPanel productId={product.id} />
+        <ReviewsPanel
+          productId={product.id}
+          listings={listings.map((listing) => ({
+            id: listing.id,
+            platform_id: listing.platform_id,
+            platform_code: platformNames
+              .get(listing.platform_id)
+              ?.toLowerCase(),
+          }))}
+        />
 
         {specifications.length > 0 ? (
           <section className="mt-10">
