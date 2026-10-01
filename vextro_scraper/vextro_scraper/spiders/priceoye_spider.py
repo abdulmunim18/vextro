@@ -20,7 +20,7 @@ class PriceOyeReviewFetchError(RuntimeError):
 class PriceoyeSpider(scrapy.Spider):
     name = "priceoye_smartphones"
     platform_code = "priceoye"
-    parser_version = "priceoye-v2-reviews"
+    parser_version = "priceoye-v3-color-variants"
     allowed_domains = ["priceoye.pk"]
     start_urls = ["https://priceoye.pk/mobiles"]
 
@@ -74,6 +74,113 @@ class PriceoyeSpider(scrapy.Spider):
                     specifications[label] = value
 
         return specifications
+
+    @staticmethod
+    def extract_color_variants(response):
+        """Return every colour variant PriceOye lists for the product.
+
+        The product page's ``ul.colors`` always carries every colour the
+        marketplace tracks for a product, whether it is in stock or not.
+        Sold-out colours are flagged by the presence of a
+        ``<span class="sold-out-tag"></span>`` element inside the
+        ``<li>`` (the span is visually styled by CSS but has no inner
+        text, so we check for the element itself, never its text).
+
+        Each entry carries:
+            color: Human-readable colour name (e.g. ``"Mist Blue"``)
+            slug: Machine key from ``data-vars-value`` (e.g. ``"mist_blue"``)
+            is_available: ``True`` when the sold-out marker is absent
+            active: ``True`` for the colour currently shown in the
+                    gallery and price panel; used to attach reviews
+                    to a single listing per product.
+            thumbnail_url: Small 100x100 colour thumbnail; usable as a
+                           500x500 by swapping the dimension suffix.
+        """
+
+        variants = []
+        for color_li in response.css("ul.colors li"):
+            name = (color_li.css(".color-name::text").get() or "").strip()
+            if not name:
+                continue
+
+            slug = (
+                color_li.css("a::attr(data-vars-value)").get() or ""
+            ).strip().lower()
+            if not slug:
+                slug = re.sub(
+                    r"[^a-z0-9]+", "-", name.lower()
+                ).strip("-")
+
+            is_sold_out = bool(color_li.css(".sold-out-tag"))
+            classes = color_li.attrib.get("class") or ""
+            active = "active" in classes.split()
+
+            thumbnail = (
+                color_li.css(
+                    ".product-detail-image::attr(src)"
+                ).get()
+                or color_li.css("img::attr(src)").get()
+            )
+
+            variants.append(
+                {
+                    "color": name,
+                    "slug": slug,
+                    "is_available": not is_sold_out,
+                    "active": active,
+                    "thumbnail_url": thumbnail,
+                }
+            )
+        return variants
+
+    @staticmethod
+    def extract_prices(response):
+        """Return (current_price, original_price) as PriceOye strings.
+
+        Current price is the headline ``summary-price.price-size-lg``;
+        original price is the strike-through variant inside
+        ``.retail-price``. Either can be ``None`` when PriceOye does
+        not surface a discount for the active variant. The cleaning
+        pipeline accepts either format and normalises them downstream.
+        """
+
+        def _first_price(selector_list):
+            text = " ".join(
+                part.strip()
+                for part in selector_list.css("::text").getall()
+                if part.strip()
+            )
+            match = re.search(r"Rs\s?[\d,]+", text)
+            return match.group(0) if match else None
+
+        current = _first_price(
+            response.css(".product-price .summary-price.price-size-lg")
+        ) or _first_price(response.css(".product-price"))
+
+        original = _first_price(
+            response.css(".retail-price .summary-price")
+        )
+
+        return current, original
+
+    @staticmethod
+    def _promote_to_main_image(thumbnail_url):
+        """Rewrite a PriceOye colour-swatch thumbnail into its 500x500 twin.
+
+        Non-active colours only have 100x100 thumbnails inline. The
+        main gallery URL for the same colour follows the convention
+        ``<prefix>-500x500.webp``, so we can promote the thumbnail
+        instead of refetching the page per colour.
+        """
+
+        if not thumbnail_url:
+            return None
+        promoted = re.sub(
+            r"-100x100(\.(?:webp|jpg|jpeg|png))$",
+            r"-500x500\1",
+            thumbnail_url,
+        )
+        return promoted
 
     @staticmethod
     def extract_availability(response):
@@ -157,14 +264,25 @@ class PriceoyeSpider(scrapy.Spider):
 
 
     def parse_product(self, response):
-        item = response.meta['item']
-        item['product_url'] = response.url
-        item['external_id'] = (
-            item.get('external_id')
-            or response.url.rstrip('/').split('/')[-1]
+        """Emit one listing item per colour PriceOye lists for this product.
+
+        The old implementation emitted a single item for whichever
+        colour PriceOye chose to show by default, which meant we never
+        learned about the other colours' availability. When the default
+        colour later went out of stock, our catalog kept claiming the
+        product was in stock. Walking ``ul.colors`` once gives us the
+        full picture — including which colours are sold out — from a
+        single detail-page fetch.
+        """
+
+        base_item = response.meta["item"]
+        base_external_id = (
+            base_item.get("external_id")
+            or response.url.rstrip("/").split("/")[-1]
         )
 
-        item['brand'] = (
+        # --- Common fields (shared across every colour variant) ---
+        brand = (
             response.css(
                 '[itemprop="brand"]::attr(content), '
                 '[itemprop="brand"] ::text, '
@@ -175,68 +293,142 @@ class PriceoyeSpider(scrapy.Spider):
                 'meta[property="product:brand"]::attr(content)'
             ).get()
         )
-        
-        # 1. Clean Price: Extract ONLY the first price matching pattern "Rs X,XXX" or "Rs XX,XXX"
-        price_raw = response.css('div.product-price ::text').getall()
-        full_price_str = "".join([p.strip() for p in price_raw if p.strip()])
-        price_match = re.search(r'Rs\s?[\d,]+', full_price_str)
-        if price_match:
-            item['price'] = price_match.group(0)
 
-        # 2. Extract Color
-        color = response.css('ul.colors li.active ::text').get()
-        item['color'] = color.strip() if color else 'N/A'
-        
-        # 3. Extract Variant (RAM/Storage):
-        # First check title regex, then check page active buttons
-        title_variant = re.search(r'\(\d+GB.*?\)', item.get('model', ''))
-        variant_btn = response.css('div.po-variant-card ul.variants li.active ::text').get()
-        
-        if title_variant:
-            item['variant'] = title_variant.group(0)
-        elif variant_btn:
-            item['variant'] = variant_btn.strip()
+        current_price, original_price = self.extract_prices(response)
+
+        model_text = base_item.get("model", "")
+        title_variant_match = re.search(
+            r"\(\d+GB.*?\)", model_text
+        )
+        variant_button = response.css(
+            "div.po-variant-card ul.variants li.active ::text"
+        ).get()
+        if title_variant_match:
+            variant_label = title_variant_match.group(0)
+        elif variant_button:
+            variant_label = variant_button.strip()
         else:
-            item['variant'] = 'Standard'
+            variant_label = "Standard"
 
-        # 4. Availability
-        item['availability'] = (
-            'In Stock'
-            if self.extract_availability(response)
-            else 'Out of Stock'
+        warranty_text = response.xpath(
+            '//table//td[contains(text(), "Warranty")]'
+            '/following-sibling::td/text()'
+        ).get()
+        warranty = (
+            warranty_text.strip()
+            if warranty_text
+            else "Official Brand Warranty"
         )
 
-        # 5. Warranty: Set clean default unless explicitly found
-        warranty_text = response.xpath('//table//td[contains(text(), "Warranty")]/following-sibling::td/text()').get()
-        item['warranty'] = warranty_text.strip() if warranty_text else 'Official Brand Warranty'
-
-        # PriceOye's current product gallery uses full-size main-product-img
-        # elements. OpenGraph is retained as a fallback for markup changes.
-        image_urls = response.css('img.main-product-img::attr(src)').getall()
-        if not image_urls:
-            image_urls = response.css(
+        main_image_urls = response.css(
+            "img.main-product-img::attr(src)"
+        ).getall()
+        if not main_image_urls:
+            main_image_urls = response.css(
                 'meta[property="og:image"]::attr(content)'
             ).getall()
-        item['image_urls'] = [
+        main_image_urls = [
             response.urljoin(image_url)
-            for image_url in image_urls
+            for image_url in main_image_urls
             if image_url
         ]
-        item['specifications'] = self.extract_specifications(response)
-        
-        yield item
 
-        external_listing_id = item.get('external_id')
-        if external_listing_id and self._max_reviews_per_listing() > 0:
+        specifications = self.extract_specifications(response)
+
+        # --- Per-colour fan-out ---
+        color_variants = self.extract_color_variants(response)
+
+        if not color_variants:
+            # PriceOye either removed the colour selector or served a
+            # single-colour SKU. Fall back to the pre-split behaviour
+            # so these products keep landing instead of being dropped.
+            color_variants = [
+                {
+                    "color": "N/A",
+                    "slug": None,
+                    "is_available": self.extract_availability(response),
+                    "active": True,
+                    "thumbnail_url": None,
+                }
+            ]
+
+        # Reviews are product-level on PriceOye; attach them to the
+        # alphabetically-first colour so the review-to-listing mapping
+        # stays stable across runs even when PriceOye changes which
+        # colour is active or in stock.
+        review_target_slug = min(
+            (variant.get("slug") or variant["color"].lower() for variant in color_variants),
+            default=None,
+        )
+        review_target_id = None
+        scraped_at = datetime.now(timezone.utc).isoformat()
+
+        for color_variant in color_variants:
+            item = SmartphoneItem()
+            item["platform"] = base_item.get("platform", "PriceOye")
+            item["product_url"] = response.url
+            item["model"] = model_text
+            item["brand"] = brand
+            item["variant"] = variant_label
+            item["warranty"] = warranty
+            item["price"] = current_price
+            if original_price:
+                item["original_price"] = original_price
+            item["specifications"] = specifications
+            item["scrape_timestamp"] = scraped_at
+
+            color_name = color_variant["color"]
+            color_slug = color_variant.get("slug")
+            item["color"] = color_name
+            item["availability"] = (
+                "In Stock"
+                if color_variant["is_available"]
+                else "Out of Stock"
+            )
+
+            # Unique external_id per colour so each listing updates
+            # independently in the catalog. For the single-colour
+            # fallback above the suffix is skipped so legacy listings
+            # keep their external_id steady across runs.
+            if color_slug:
+                item["external_id"] = (
+                    f"{base_external_id}--{color_slug}"
+                )
+            else:
+                item["external_id"] = base_external_id
+
+            # Images: active colour reuses the full gallery; inactive
+            # colours promote their 100x100 swatch to 500x500 so each
+            # listing has at least one representative image.
+            if color_variant["active"] and main_image_urls:
+                item["image_urls"] = main_image_urls
+            else:
+                promoted = self._promote_to_main_image(
+                    color_variant.get("thumbnail_url")
+                )
+                item["image_urls"] = (
+                    [response.urljoin(promoted)] if promoted else []
+                )
+
+            if color_slug == review_target_slug:
+                review_target_id = item["external_id"]
+            elif review_target_id is None and review_target_slug is None:
+                # Single-colour fallback path has slug=None for both
+                # sides, so take the first (and only) item.
+                review_target_id = item["external_id"]
+
+            yield item
+
+        if review_target_id and self._max_reviews_per_listing() > 0:
             yield scrapy.Request(
                 url=f"{response.url.rstrip('/')}/reviews",
                 callback=self.parse_reviews,
                 errback=self.review_fetch_error,
                 cb_kwargs={
-                    'external_listing_id': external_listing_id,
+                    "external_listing_id": review_target_id,
                 },
                 meta={
-                    'external_listing_id': external_listing_id,
+                    "external_listing_id": review_target_id,
                 },
             )
 
