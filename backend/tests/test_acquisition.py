@@ -1164,6 +1164,95 @@ def test_product_match_rejects_wrong_storage(
     )
 
 
+def test_product_match_rejects_wrong_color(
+    client: TestClient,
+    acquisition_context: dict[str, object],
+) -> None:
+    """Reject a candidate whose colour disagrees with the request."""
+
+    token = str(acquisition_context["token"])
+
+    # The fixture creates a Black variant; ask for White with an
+    # otherwise perfect brand/model/RAM/storage match.
+    response = client.post(
+        MATCH_ENDPOINT,
+        headers=ingestion_headers(),
+        json={
+            "title": (
+                f"Acquisition Test Phone "
+                f"{token} 8GB 256GB White"
+            ),
+            "color": "White",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["matched"] is False
+    assert body["product_variant_id"] is None
+    assert body["canonical_product_id"] is None
+    assert "colour" in body["reason"].lower() or "color" in body["reason"].lower()
+
+
+def test_product_match_accepts_marketing_suffix_color(
+    client: TestClient,
+    acquisition_context: dict[str, object],
+) -> None:
+    """Accept 'Awesome Black' against a 'Black' catalog variant."""
+
+    token = str(acquisition_context["token"])
+
+    response = client.post(
+        MATCH_ENDPOINT,
+        headers=ingestion_headers(),
+        json={
+            "title": (
+                f"Acquisition Test Phone "
+                f"{token} 8GB 256GB Awesome Black"
+            ),
+            "color": "Awesome Black",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["matched"] is True
+    assert body["confidence"] >= 75
+
+
+def test_product_match_without_color_still_matches(
+    client: TestClient,
+    acquisition_context: dict[str, object],
+) -> None:
+    """A colourless request does not eliminate a colourful candidate.
+
+    This preserves the current pragmatic behaviour for platforms (like
+    Daraz) that do not always report a colour: we lose the 5-point
+    bonus but the listing still lands on the best available variant
+    instead of falling into pending review.
+    """
+
+    token = str(acquisition_context["token"])
+
+    response = client.post(
+        MATCH_ENDPOINT,
+        headers=ingestion_headers(),
+        json={
+            "title": (
+                f"Acquisition Test Phone "
+                f"{token} 8GB 256GB"
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["matched"] is True
+
+
 def test_product_match_rejects_vague_title(
     client: TestClient,
     acquisition_context: dict[str, object],
