@@ -1,110 +1,52 @@
-"""create scrape runs and warehouse performance indexes
+"""merge Module-6.3 warehouse indexes into the acquisition chain
 
 Revision ID: d8f2b4c10e95
-Revises: f6a1c82d09b4
+Revises: c72fd91e6a31
 Create Date: 2026-09-15 15:00:00
+
+Original intent was to add ``scrape_runs`` and warehouse performance
+indexes as a sibling branch off ``f6a1c82d09b4``. In parallel, Member 2's
+acquisition chain also introduced ``scrape_runs`` (via
+``d82f3a91c4e7 create scrape monitoring tables``) with a richer schema
+that the scraper's monitoring extension and the ORM model actually use.
+Running both branches produced ``relation "scrape_runs" already exists``
+on any fresh Alembic upgrade.
+
+Resolution:
+- This revision is re-chained after the acquisition head
+  ``c72fd91e6a31`` so Alembic exposes a single head.
+- The duplicate ``scrape_runs`` creation and its indexes are removed;
+  ``d82f3a91c4e7`` remains the sole source of truth for that table.
+- The two supplementary warehouse indexes on ``price_history`` and
+  ``product_listings`` are preserved because they benefit read-heavy
+  queries and do not conflict with any index the acquisition chain
+  already created.
 """
 
 from typing import Sequence, Union
 
 from alembic import op
-import sqlalchemy as sa
 
 
 revision: str = "d8f2b4c10e95"
-down_revision: Union[str, Sequence[str], None] = "f6a1c82d09b4"
+down_revision: Union[str, Sequence[str], None] = "c72fd91e6a31"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # 1. Create scrape_runs table
-    op.create_table(
-        "scrape_runs",
-        sa.Column("id", sa.BigInteger(), sa.Identity(), nullable=False),
-        sa.Column("platform", sa.String(length=50), nullable=False),
-        sa.Column(
-            "status",
-            sa.String(length=20),
-            server_default=sa.text("'RUNNING'"),
-            nullable=False,
-        ),
-        sa.Column(
-            "triggered_by",
-            sa.String(length=30),
-            server_default=sa.text("'MANUAL'"),
-            nullable=False,
-        ),
-        sa.Column(
-            "items_scraped",
-            sa.Integer(),
-            server_default=sa.text("0"),
-            nullable=False,
-        ),
-        sa.Column(
-            "items_failed",
-            sa.Integer(),
-            server_default=sa.text("0"),
-            nullable=False,
-        ),
-        sa.Column("error_message", sa.Text(), nullable=True),
-        sa.Column(
-            "started_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
-            nullable=False,
-        ),
-        sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
-        sa.PrimaryKeyConstraint("id"),
+    # IF NOT EXISTS keeps this idempotent for databases stamped from a
+    # dump that already carried these indexes.
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_price_history_listing_created "
+        "ON price_history (listing_id, created_at)"
     )
-
-    # 2. Indexes for scrape_runs
-    op.create_index(
-        op.f("ix_scrape_runs_platform"),
-        "scrape_runs",
-        ["platform"],
-        unique=False,
-    )
-    op.create_index(
-        op.f("ix_scrape_runs_status"),
-        "scrape_runs",
-        ["status"],
-        unique=False,
-    )
-    op.create_index(
-        op.f("ix_scrape_runs_started_at"),
-        "scrape_runs",
-        ["started_at"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_scrape_runs_platform_status_started",
-        "scrape_runs",
-        ["platform", "status", "started_at"],
-        unique=False,
-    )
-
-    # 3. Warehouse performance indexes on existing tables
-    op.create_index(
-        "ix_price_history_listing_created",
-        "price_history",
-        ["listing_id", "created_at"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_product_listings_variant_platform",
-        "product_listings",
-        ["product_variant_id", "platform_id"],
-        unique=False,
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_product_listings_variant_platform "
+        "ON product_listings (product_variant_id, platform_id)"
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_product_listings_variant_platform", table_name="product_listings")
-
-    op.drop_index("ix_price_history_listing_created", table_name="price_history")
-    op.drop_index("ix_scrape_runs_platform_status_started", table_name="scrape_runs")
-    op.drop_index(op.f("ix_scrape_runs_started_at"), table_name="scrape_runs")
-    op.drop_index(op.f("ix_scrape_runs_status"), table_name="scrape_runs")
-    op.drop_index(op.f("ix_scrape_runs_platform"), table_name="scrape_runs")
-    op.drop_table("scrape_runs")
+    op.execute("DROP INDEX IF EXISTS ix_product_listings_variant_platform")
+    op.execute("DROP INDEX IF EXISTS ix_price_history_listing_created")

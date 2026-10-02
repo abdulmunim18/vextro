@@ -9,15 +9,31 @@ Usage:
 import os
 import sys
 from datetime import datetime
+from urllib.parse import quote_plus
 from sqlalchemy import create_engine, text
 
-DB_HOST = os.getenv("POSTGRES_HOST", "localhost")
-DB_PORT = os.getenv("POSTGRES_PORT", "5432")
-DB_USER = os.getenv("POSTGRES_USER", "postgres")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "1234")
-DB_NAME = os.getenv("POSTGRES_DB", "vextro_db")
+# Accept either the backend .env naming (DB_*) or the legacy POSTGRES_*
+# names, whichever is set. No baked-in password: force the caller to
+# supply one via the environment so we cannot leak a stale default.
+DB_HOST = os.getenv("DB_HOST") or os.getenv("POSTGRES_HOST", "127.0.0.1")
+DB_PORT = os.getenv("DB_PORT") or os.getenv("POSTGRES_PORT", "5432")
+DB_USER = os.getenv("DB_USER") or os.getenv("POSTGRES_USER", "vextro_app")
+DB_PASSWORD = os.getenv("DB_PASSWORD") or os.getenv("POSTGRES_PASSWORD", "")
+DB_NAME = os.getenv("DB_NAME") or os.getenv("POSTGRES_DB", "vextro_db")
 
-DB_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+if not DB_PASSWORD:
+    raise SystemExit(
+        "Set DB_PASSWORD (or POSTGRES_PASSWORD) before running the audit."
+    )
+
+# Explicit psycopg (v3) driver so this script uses the same DBAPI the
+# backend requirements pin, instead of pulling psycopg2 as a hidden dep.
+# URL-encode user/password so special chars like ``@`` in the password do
+# not corrupt the connection URL's parsed host.
+DB_URL = (
+    f"postgresql+psycopg://{quote_plus(DB_USER)}:{quote_plus(DB_PASSWORD)}"
+    f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+)
 
 def run_warehouse_audit():
     print("==========================================================")
@@ -60,11 +76,14 @@ def run_warehouse_audit():
             print(f"   * {p_name:<15} : {p_cnt} listings")
         print("----------------------------------------------------------")
 
-        # Last 5 Scrape Runs
+        # Last 5 Scrape Runs. Uses the acquisition-chain column names
+        # (items_ingested / items_rejected / items_failed) that the
+        # scraper's monitoring extension and the ORM model actually write.
         runs = conn.execute(text("""
-            SELECT id, platform, status, items_scraped, started_at 
-            FROM scrape_runs 
-            ORDER BY started_at DESC 
+            SELECT id, platform, status, items_discovered, items_ingested,
+                   items_rejected, items_failed, started_at
+            FROM scrape_runs
+            ORDER BY started_at DESC
             LIMIT 5
         """)).fetchall()
 
@@ -72,8 +91,12 @@ def run_warehouse_audit():
         if not runs:
             print("   (No scrape runs recorded yet)")
         else:
-            for rid, rplat, rstat, rcnt, rtime in runs:
-                print(f"   * Run #{rid:<3} | {rplat:<10} | {rstat:<8} | Scraped: {rcnt:<3} | {rtime}")
+            for rid, rplat, rstat, rdisc, ring, rrej, rfail, rtime in runs:
+                print(
+                    f"   * Run #{rid:<3} | {rplat:<10} | {rstat:<8} | "
+                    f"discovered {rdisc:<4} ingested {ring:<4} "
+                    f"rejected {rrej:<4} failed {rfail:<4} | {rtime}"
+                )
 
         print("==========================================================")
         print(" SUCCESS: WAREHOUSE AUDIT COMPLETED!")
