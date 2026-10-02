@@ -788,3 +788,57 @@ def test_priceoye_reference_price_page_is_not_reported_as_in_stock():
     assert item['image_urls'] == [
         'https://images.priceoye.pk/calme-classic-500x500.webp',
     ]
+
+
+def test_priceoye_matrix_without_storage_options_is_still_structured():
+    """Feature phones list a colour's offers by position, not size label.
+
+    Their matrix looks like {"charcoal": [[offer]]} instead of
+    {"charcoal": {"256gb": [offer]}}. Each colour must still become a
+    structured item with its own price and stock; note the two colours
+    here are priced differently and only one is in stock.
+    """
+
+    body = (
+        b"<html><body><h1>Nokia 106 2023</h1>"
+        b"<script>window.product_data = {\"product_config\":{"
+        b"\"aColorSize\":{\"charcoal\":[\"\"],\"red\":[\"\"]},"
+        b"\"dataPrices\":{"
+        b"\"charcoal\":[[{\"product_price\":\"4,149\",\"retail_price\":\"4,999\","
+        b"\"product_availability\":\"In Stock\",\"product_warranty\":\"1 Year\","
+        b"\"stock_qty\":11,\"store_name\":\"Priceoye\"}]],"
+        b"\"red\":[[{\"product_price\":\"4,249\",\"retail_price\":\"4,999\","
+        b"\"product_availability\":\"Out Of Stock\",\"product_warranty\":\"1 Year\","
+        b"\"stock_qty\":0,\"store_name\":\"Priceoye\"}]]}},"
+        b"\"dataSet\":{\"brand_name\":\"Nokia\",\"slug\":\"nokia-106-2023\","
+        b"\"title\":\"Nokia 106 2023\",\"warranty\":\"1 Year\",\"specification\":\"{}\"},"
+        b"\"product_color_images\":{},\"lowPrice\":4700,"
+        b"\"average_rating\":0,\"total_rattings_count\":0};</script>"
+        b"</body></html>"
+    )
+    url = 'https://priceoye.pk/mobiles/nokia/nokia-106-2023'
+    response = HtmlResponse(
+        url=url,
+        encoding='utf-8',
+        body=body,
+        request=Request(
+            url=url,
+            meta={'item': {'platform': 'PriceOye', 'model': 'Nokia 106 2023'}},
+        ),
+    )
+
+    emitted = list(PriceoyeSpider().parse_product(response))
+    items = [entry for entry in emitted if isinstance(entry, SmartphoneItem)]
+
+    assert [item['external_id'] for item in items] == [
+        'nokia-106-2023--charcoal',
+        'nokia-106-2023--red',
+    ]
+    assert [item['price'] for item in items] == ['Rs 4,149', 'Rs 4,249']
+    assert [item['availability'] for item in items] == [
+        'In Stock', 'Out of Stock',
+    ]
+    assert all(item['structured_source'] is True for item in items)
+    assert all(item['variant'] == 'Standard' for item in items)
+    # No reviews on PriceOye, so no review request is made.
+    assert len(emitted) == 2

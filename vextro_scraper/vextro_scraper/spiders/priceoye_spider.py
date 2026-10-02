@@ -596,11 +596,27 @@ class PriceoyeSpider(scrapy.Spider):
         rating = data.get('average_rating') if review_count else None
         scraped_at = datetime.now(timezone.utc).isoformat()
 
+        size_labels_by_color = config.get('aColorSize') or {}
+
         items = []
         for color_slug in sorted(price_matrix):
             sizes = price_matrix[color_slug]
             if isinstance(sizes, list):
-                sizes = {'': sizes}
+                # Phones without storage options list each colour's
+                # offers by position instead of by size label:
+                # [[offer, ...]] rather than {"256gb": [offer, ...]}.
+                labels = size_labels_by_color.get(color_slug)
+                if not isinstance(labels, list):
+                    labels = []
+                by_label = {}
+                for index, offers in enumerate(sizes):
+                    label = str(
+                        labels[index] if index < len(labels) else ''
+                    ).strip()
+                    if not label and len(sizes) > 1:
+                        label = str(index)
+                    by_label[label] = offers
+                sizes = by_label
             if not isinstance(sizes, dict):
                 continue
 
