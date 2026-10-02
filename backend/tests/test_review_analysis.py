@@ -119,7 +119,8 @@ def test_database_ingestion_persistence_idempotency_and_aggregate_api(client: Te
     assert post.json()["created_count"] == 10
     auth = authenticated_headers(client)
     summary_url = f"/api/v1/products/{product.id}/review-analysis"
-    assert client.get(summary_url).status_code == 401
+    # review-analysis GET is now public; only rerun is authenticated.
+    assert client.get(summary_url).status_code == 200
     first = client.get(summary_url, headers=auth, params={"listing_id": listing.id})
     assert first.status_code == 200, first.text
     body = first.json()

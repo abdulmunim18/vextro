@@ -252,9 +252,12 @@ def read_product_reviews(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     database_session: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
 ) -> ProductReviewsResponse:
-    """Return persisted reviews and factual rating aggregates."""
+    """Return persisted reviews and factual rating aggregates.
+
+    Public: anonymous shoppers see reviews the same way they see prices
+    and listings. The mutating rerun endpoint below stays authenticated.
+    """
 
     return review_service.get_product_reviews(
         database_session,
@@ -272,7 +275,6 @@ def read_product_review_analysis(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     database_session: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
 ) -> ProductReviewAnalysisResponse:
     """Read persisted suspicion evidence; scores are not fraud labels."""
     return review_analysis_service.product_summary(
@@ -316,7 +318,6 @@ def read_review_analysis(
     product_id: int = Path(..., ge=1),
     review_id: int = Path(..., ge=1),
     database_session: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
 ) -> ReviewAnalysisResponse:
     """Read versioned evidence for one review belonging to a product."""
     return review_analysis_service.product_review_result(
@@ -329,7 +330,6 @@ def read_listing_seller_trust(
     product_id: int = Path(..., ge=1),
     listing_id: int = Path(..., ge=1),
     database_session: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
 ) -> SellerTrustResponse:
     """Return seller trust indicators or explain why seller evidence is unavailable."""
     from app.repositories.review_repository import ReviewRepository

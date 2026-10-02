@@ -194,3 +194,41 @@ class ReviewRepository:
             else None
         )
         return average, distribution
+
+    @staticmethod
+    def refresh_listing_aggregate(
+        database_session: Session,
+        *,
+        listing_id: int,
+    ) -> tuple[float | None, int]:
+        """Recompute a listing's ``rating`` and ``review_count`` from raw reviews.
+
+        Returns the new ``(average_rating, review_count)`` so callers can
+        report or log the change. Persists the values on the
+        ``product_listings`` row and flushes; the enclosing transaction
+        owns the commit.
+        """
+
+        statement = select(
+            func.count(RawReview.id),
+            func.avg(RawReview.rating),
+        ).where(RawReview.product_listing_id == listing_id)
+        review_count, average_rating = database_session.execute(
+            statement,
+        ).one()
+
+        review_count = int(review_count or 0)
+        rounded_average = (
+            round(float(average_rating), 2)
+            if average_rating is not None
+            else None
+        )
+
+        listing = database_session.get(ProductListing, listing_id)
+        if listing is None:
+            return rounded_average, review_count
+
+        listing.rating = rounded_average
+        listing.review_count = review_count
+        database_session.flush()
+        return rounded_average, review_count
