@@ -236,6 +236,22 @@ class VextroCleaningPipeline:
                 raw_value=raw_price_context,
             ) from exc
 
+        # 1b. The pre-discount price is optional decoration. Keep it only
+        # when it parses and is genuinely higher than the selling price;
+        # anything else is dropped rather than failing the whole item.
+        raw_original = adapter.get('original_price')
+        if raw_original is not None:
+            try:
+                original_price = normalize_marketplace_price(raw_original)
+            except ValueError:
+                original_price = None
+            adapter['original_price'] = (
+                original_price
+                if original_price is not None
+                and original_price > adapter['price']
+                else None
+            )
+
         # 2. Clean Availability: Convert 'In Stock' to Boolean (True/False)
         avail = adapter.get('availability', '')
         adapter['is_available'] = True if 'In Stock' in avail else False
@@ -682,6 +698,13 @@ class VextroApiIngestionPipeline:
             'color': _optional_text(payload.get('color')),
         }
 
+        # Sources that publish brand, model, colour and storage as
+        # separate fields may add missing variants or brand-new phones
+        # to the catalog; free-text sources still go to manual review.
+        if payload.get('structured_source'):
+            match_payload['allow_catalog_create'] = True
+            match_payload['specifications'] = specifications
+
         return match_payload
 
     @staticmethod
@@ -720,15 +743,31 @@ class VextroApiIngestionPipeline:
             'variant': payload.get('variant'),
             'color': payload.get('color'),
             'availability': payload.get('availability'),
+            'stock_quantity': payload.get('stock_quantity'),
             'specifications': payload.get('specifications') or {},
             'image_urls': payload.get('image_urls') or [],
             'raw_html_path': payload.get('raw_html_path'),
         }
 
+        # One product page now yields a listing per colour and storage
+        # option; name the option in the title so shoppers can tell
+        # the offers apart.
+        title = str(payload.get('model') or '').strip()
+        if payload.get('structured_source'):
+            option_parts = [
+                part for part in (
+                    _optional_text(payload.get('color')),
+                    _optional_text(payload.get('variant')),
+                )
+                if part and part.lower() not in title.lower()
+            ]
+            if option_parts:
+                title = f"{title} ({', '.join(option_parts)})"
+
         listing_payload = {
             'platform_code': platform_code,
             'external_id': str(payload.get('external_id') or '').strip(),
-            'title': str(payload.get('model') or '').strip(),
+            'title': title[:500],
             'product_url': str(payload.get('product_url') or '').strip(),
             'current_price': payload.get('price'),
             'original_price': payload.get('original_price'),
@@ -752,6 +791,11 @@ class VextroApiIngestionPipeline:
         context = self._context(payload)
 
         if payload.get('reviews') is not None:
+            # Reviews attach to a listing by its marketplace id, and
+            # that listing may still be waiting in the bulk buffer.
+            # Deliver it first so the review batch is not rejected as
+            # belonging to an unknown listing.
+            self._flush_listing_buffer(spider)
             review_payload = {
                 'platform_code': str(
                     payload.get('platform') or ''

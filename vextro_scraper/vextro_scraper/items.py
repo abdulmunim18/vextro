@@ -15,7 +15,16 @@ class SmartphoneItem(scrapy.Item):
     price = scrapy.Field()
     original_price = scrapy.Field()   # Pre-discount strike-through price, if any.
     availability = scrapy.Field() # In Stock / Out of Stock
+    stock_quantity = scrapy.Field()   # Units left, when the marketplace states it.
     seller = scrapy.Field()
+
+    # Marketplace-reported review aggregate for the product.
+    rating = scrapy.Field()
+    review_count = scrapy.Field()
+
+    # True when brand, model, colour and storage came from structured
+    # page data rather than being inferred from a free-text title.
+    structured_source = scrapy.Field()
     
     # NLP & Operational Data
     platform = scrapy.Field()     # 'Daraz' or 'PriceOye'

@@ -451,3 +451,340 @@ def test_priceoye_parse_product_falls_back_when_no_color_selector():
     assert len(items) == 1
     assert items[0]['color'] == 'N/A'
     assert items[0]['external_id'] == 'mono-phone'
+
+
+def _load_gt50pro_response():
+    fixture = (
+        Path(__file__).parent
+        / 'fixtures'
+        / 'priceoye_gt50pro_product_data.html'
+    ).read_bytes()
+    url = 'https://priceoye.pk/mobiles/infinix/infinix-gt-50-pro'
+    return HtmlResponse(
+        url=url,
+        encoding='utf-8',
+        body=fixture,
+        request=Request(
+            url=url,
+            meta={
+                'item': {
+                    'platform': 'PriceOye',
+                    'model': 'Infinix GT 50 Pro',
+                },
+            },
+        ),
+    )
+
+
+def _listing_response(url, body, meta=None):
+    return HtmlResponse(
+        url=url,
+        encoding='utf-8',
+        body=body,
+        request=Request(url=url, meta=meta or {}),
+    )
+
+
+_LISTING_WITH_BRANDS = (
+    b"<html><body>"
+    b"<div class='productBox'><a href='/mobiles/infinix/infinix-gt-50-pro'></a>"
+    b"<div class='detail-box'>Infinix GT 50 Pro<span>Rs 162,999</span></div></div>"
+    b"<a rel='next'>Next</a>"
+    b"<script>window.product_data = {\"totalCategoryProducts\": 2,"
+    b"\"brand_filter_bar\": {\"filters\": {\"brands\": {\"options\": {"
+    b"\"infinix\": {\"name\": \"infinix\"}, \"apple\": {\"name\": \"apple\"}}}}}};"
+    b"</script></body></html>"
+)
+
+
+def test_priceoye_listing_walks_pages_and_every_brand():
+    """The catalogue is walked at ?page=N plus each brand's own page.
+
+    PriceOye's "Next" control has no href, so the spider used to stop
+    after page 1. The general listing is also a live ranking that
+    reshuffles between requests (385 entries, only 304 distinct
+    phones), and robots.txt only permits the ?page= query, so the
+    brands named in the page data are crawled as well to fill the gaps.
+    """
+
+    spider = PriceoyeSpider()
+    assert spider.start_urls == ['https://priceoye.pk/mobiles']
+
+    first_page = _listing_response(
+        'https://priceoye.pk/mobiles', _LISTING_WITH_BRANDS,
+    )
+    urls = [request.url for request in spider.parse(first_page)]
+
+    assert 'https://priceoye.pk/mobiles/infinix/infinix-gt-50-pro' in urls
+    assert 'https://priceoye.pk/mobiles?page=2' in urls
+    assert 'https://priceoye.pk/mobiles/infinix' in urls
+    assert 'https://priceoye.pk/mobiles/apple' in urls
+    # Nothing here needs a query string robots.txt disallows.
+    assert all('sort=' not in url for url in urls)
+
+    # The Apple brand page contributes the phone the listing skipped;
+    # the phone already queued from the listing is not requested twice.
+    brand_page = _listing_response(
+        'https://priceoye.pk/mobiles/apple',
+        b"<html><body>"
+        b"<div class='productBox'><a href='/mobiles/apple/apple-iphone-17'></a>"
+        b"<div class='detail-box'>Apple Iphone 17<span>Rs 384,999</span></div></div>"
+        b"<div class='productBox'><a href='/mobiles/infinix/infinix-gt-50-pro'></a>"
+        b"<div class='detail-box'>Infinix GT 50 Pro<span>Rs 162,999</span></div></div>"
+        b"</body></html>",
+        meta={'brand_slug': 'apple', 'brand_page': 1},
+    )
+    brand_urls = [request.url for request in spider.parse_brand(brand_page)]
+    assert brand_urls == ['https://priceoye.pk/mobiles/apple/apple-iphone-17']
+
+    assert spider.full_crawl_completed is False
+    empty_page = _listing_response(
+        'https://priceoye.pk/mobiles?page=2',
+        b"<html><body><p>No products</p></body></html>",
+        meta={'listing_page': 2},
+    )
+    assert list(spider.parse(empty_page)) == []
+    # Two phones stated, two distinct phones queued: the walk is complete.
+    assert spider.full_crawl_completed is True
+
+
+def test_priceoye_short_walk_is_not_reported_as_a_full_crawl():
+    """Fewer distinct phones than the catalogue states is not complete.
+
+    This is the guard against a listing that repeats some phones and
+    skips others: reaching the last page is not enough on its own.
+    """
+
+    spider = PriceoyeSpider()
+    list(spider.parse(_listing_response(
+        'https://priceoye.pk/mobiles', _LISTING_WITH_BRANDS,
+    )))
+    list(spider.parse(_listing_response(
+        'https://priceoye.pk/mobiles?page=2',
+        b"<html><body></body></html>",
+        meta={'listing_page': 2},
+    )))
+
+    # Only one of the two stated phones was ever seen.
+    assert spider.full_crawl_completed is False
+
+
+def test_priceoye_full_brand_page_continues_to_the_next_one():
+    """A brand page that is completely full may hide more current phones."""
+
+    spider = PriceoyeSpider()
+    boxes = b"".join(
+        b"<div class='productBox'><a href='/mobiles/samsung/phone-%d'></a>"
+        b"<div class='detail-box'>Phone<span>Rs 1,000</span></div></div>" % index
+        for index in range(spider.listing_page_size)
+    )
+    full_page = _listing_response(
+        'https://priceoye.pk/mobiles/samsung',
+        b"<html><body>" + boxes + b"</body></html>",
+        meta={'brand_slug': 'samsung', 'brand_page': 1},
+    )
+    urls = [request.url for request in spider.parse_brand(full_page)]
+    assert 'https://priceoye.pk/mobiles/samsung?page=2' in urls
+
+    # The second page is as far as a brand is followed: later pages
+    # list discontinued models.
+    second_page = _listing_response(
+        'https://priceoye.pk/mobiles/samsung?page=2',
+        b"<html><body>" + boxes + b"</body></html>",
+        meta={'brand_slug': 'samsung', 'brand_page': 2},
+    )
+    assert not any(
+        'page=3' in request.url
+        for request in spider.parse_brand(second_page)
+    )
+
+
+def test_priceoye_variant_matrix_yields_every_colour_and_storage_option():
+    """One listing per colour x storage, read from window.product_data.
+
+    The matrix is what PriceOye's own page reads when a shopper picks
+    an option, so price, discount and stock are exact per option
+    rather than whatever the default selection happened to show.
+    """
+
+    spider = PriceoyeSpider()
+    emitted = list(spider.parse_product(_load_gt50pro_response()))
+
+    items = [entry for entry in emitted if isinstance(entry, SmartphoneItem)]
+    requests = [entry for entry in emitted if isinstance(entry, Request)]
+
+    assert [item['external_id'] for item in items] == [
+        'infinix-gt-50-pro--black_abyss--256gb-12gb-ram',
+        'infinix-gt-50-pro--red_blaze--256gb-12gb-ram',
+        'infinix-gt-50-pro--red_blaze--512gb-12gb-ram',
+        'infinix-gt-50-pro--silver_glacier--256gb-12gb-ram',
+    ]
+    assert [item['color'] for item in items] == [
+        'Black Abyss', 'Red Blaze', 'Red Blaze', 'Silver Glacier',
+    ]
+    assert [item['availability'] for item in items] == [
+        'In Stock', 'In Stock', 'In Stock', 'Out of Stock',
+    ]
+    assert [item['price'] for item in items] == [
+        'Rs 162,999', 'Rs 162,999', 'Rs 179,999', 'Rs 162,999',
+    ]
+    assert items[2]['original_price'] == 'Rs 199,999'
+    assert [item['stock_quantity'] for item in items] == [2, 3, 5, 0]
+
+    for item in items:
+        assert item['structured_source'] is True
+        assert item['brand'] == 'Infinix'
+        assert item['model'] == 'Infinix GT 50 Pro'
+        assert item['warranty'] == '1 Year'
+        assert item['rating'] == 5
+        assert item['review_count'] == 1
+        assert item['specifications']['ram'] == '12GB'
+        assert item['specifications']['Screen Size'] == '6.78 inches'
+        # "N/A" spec values are noise and must not be stored.
+        assert 'Phone Weight' not in item['specifications']
+
+    assert items[1]['specifications']['storage_capacity'] == '256GB'
+    assert items[2]['specifications']['storage_capacity'] == '512GB'
+    assert items[1]['image_urls'] == [
+        'https://images.priceoye.pk/infinix-gt-50-pro-pakistan-priceoye-s1qax-500x500.webp',
+        'https://images.priceoye.pk/infinix-gt-50-pro-pakistan-priceoye-mf5tk-500x500.webp',
+    ]
+
+    # Reviews are per product: one request, on the first listing.
+    assert len(requests) == 1
+    assert requests[0].url.endswith('/infinix-gt-50-pro/reviews')
+    assert requests[0].cb_kwargs['external_listing_id'] == (
+        'infinix-gt-50-pro--black_abyss--256gb-12gb-ram'
+    )
+
+
+def test_priceoye_size_label_parsing():
+    parse = PriceoyeSpider._parse_size_label
+    assert parse('256gb - 12gb ram') == (12, 256)
+    assert parse('128GB - 8GB RAM') == (8, 128)
+    assert parse('512gb') == (None, 512)
+    assert parse('1tb - 16gb ram') == (16, 1024)
+    assert parse('') == (None, None)
+
+
+def test_cleaning_pipeline_keeps_only_a_genuine_discount():
+    """original_price survives only when it parses and exceeds price."""
+
+    pipeline = VextroCleaningPipeline()
+
+    discounted = pipeline.process_item(
+        {
+            'platform': 'PriceOye',
+            'price': 'Rs 162,999',
+            'original_price': 'Rs 189,999',
+            'availability': 'In Stock',
+            'product_url': 'https://priceoye.pk/mobiles/infinix/infinix-gt-50-pro',
+            'model': 'Infinix GT 50 Pro',
+        },
+        spider=None,
+    )
+    assert discounted['price'] == 162999.0
+    assert discounted['original_price'] == 189999.0
+
+    not_discounted = pipeline.process_item(
+        {
+            'platform': 'PriceOye',
+            'price': 'Rs 162,999',
+            'original_price': 'Rs 162,999',
+            'availability': 'Out of Stock',
+            'product_url': 'https://priceoye.pk/mobiles/infinix/infinix-gt-50-pro',
+            'model': 'Infinix GT 50 Pro',
+        },
+        spider=None,
+    )
+    assert not_discounted['original_price'] is None
+    assert not_discounted['is_available'] is False
+
+    garbage = pipeline.process_item(
+        {
+            'platform': 'PriceOye',
+            'price': 'Rs 162,999',
+            'original_price': 'Call for price',
+            'availability': 'In Stock',
+            'product_url': 'https://priceoye.pk/mobiles/infinix/infinix-gt-50-pro',
+            'model': 'Infinix GT 50 Pro',
+        },
+        spider=None,
+    )
+    assert garbage['original_price'] is None
+
+
+def test_priceoye_failed_page_withholds_the_full_crawl_signal():
+    """A page that failed to download must not let the run retire offers."""
+
+    from types import SimpleNamespace
+    from vextro_scraper.spiders.priceoye_spider import PriceOyePageFetchError
+
+    spider = PriceoyeSpider()
+    empty_page = HtmlResponse(
+        url='https://priceoye.pk/mobiles?page=12',
+        encoding='utf-8',
+        body=b"<html><body></body></html>",
+        request=Request(
+            url='https://priceoye.pk/mobiles?page=12',
+            meta={'listing_page': 12},
+        ),
+    )
+    list(spider.parse(empty_page))
+    assert spider.full_crawl_completed is True
+
+    failure = SimpleNamespace(
+        request=Request(url='https://priceoye.pk/mobiles/x/y'),
+        value=TimeoutError('timed out'),
+    )
+    with pytest.raises(PriceOyePageFetchError):
+        spider.page_fetch_error(failure)
+
+    assert spider.full_crawl_completed is False
+
+
+def test_priceoye_reference_price_page_is_not_reported_as_in_stock():
+    """A phone PriceOye lists without selling it must be unavailable.
+
+    These pages have an empty variant matrix and no buy button, yet
+    their schema_status still says "InStock". Availability has to
+    follow the matrix, otherwise the catalog advertises an offer no
+    shopper can actually purchase.
+    """
+
+    body = (
+        b"<html><body><h1>Calme Classic</h1>"
+        b"<div class='product-price'>Last Updated Price Rs 2,600</div>"
+        b"<script>window.product_data = {"
+        b"\"product_config\":{\"dataPrices\":[],\"aColorSize\":{\"white\":[\"standard\"]}},"
+        b"\"dataSet\":{\"brand_name\":\"CALME\",\"slug\":\"calme-classic\","
+        b"\"title\":\"Calme Classic\",\"warranty\":\"1 Year\",\"specification\":\"{}\"},"
+        b"\"product_color_images\":{\"white\":{\"large\":[\"calme-classic-500x500.webp\"]}},"
+        b"\"schema_status\":\"InStock\",\"lowPrice\":2600,"
+        b"\"average_rating\":0,\"total_rattings_count\":0};</script>"
+        b"</body></html>"
+    )
+    url = 'https://priceoye.pk/mobiles/calme/calme-classic'
+    response = HtmlResponse(
+        url=url,
+        encoding='utf-8',
+        body=body,
+        request=Request(
+            url=url,
+            meta={'item': {'platform': 'PriceOye', 'model': 'Calme Classic'}},
+        ),
+    )
+
+    emitted = list(PriceoyeSpider().parse_product(response))
+
+    assert len(emitted) == 1
+    item = emitted[0]
+    assert item['external_id'] == 'calme-classic'
+    assert item['availability'] == 'Out of Stock'
+    assert item['price'] == 2600.0
+    assert item['structured_source'] is True
+    assert item['brand'] == 'CALME'
+    assert item['rating'] is None
+    assert item['image_urls'] == [
+        'https://images.priceoye.pk/calme-classic-500x500.webp',
+    ]

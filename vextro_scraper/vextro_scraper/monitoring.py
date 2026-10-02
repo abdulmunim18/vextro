@@ -328,10 +328,22 @@ class ScrapeMonitoringExtension:
             'PATCH',
             f'{self.RUNS_PATH}/{self.run_id}',
             payload={
-                'crawl_succeeded': reason in {
-                    'finished',
-                    'closespider_itemcount',
-                },
+                # A crawl that ends cleanly without finding a single
+                # item did not succeed: it was turned away (robots.txt,
+                # a block page, a changed layout) before it began.
+                'crawl_succeeded': (
+                    reason in {'finished', 'closespider_itemcount'}
+                    and self.counters['items_discovered'] > 0
+                ),
+                # Only a run that ended on its own after walking the
+                # whole catalogue can vouch that unseen listings are
+                # gone; capped or interrupted runs must not.
+                'full_crawl': (
+                    reason == 'finished'
+                    and bool(
+                        getattr(spider, 'full_crawl_completed', False)
+                    )
+                ),
                 **self.counters,
             },
         )

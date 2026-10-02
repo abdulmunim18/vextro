@@ -1,3 +1,4 @@
+import json
 import scrapy
 import re
 from datetime import datetime, timezone
@@ -17,12 +18,67 @@ class PriceOyeReviewFetchError(RuntimeError):
     error_type = "review_fetch_error"
     error_stage = "fetch"
 
+
+class PriceOyePageFetchError(RuntimeError):
+    """A PriceOye listing or product page could not be fetched."""
+
+    error_type = "page_fetch_error"
+    error_stage = "fetch"
+
 class PriceoyeSpider(scrapy.Spider):
     name = "priceoye_smartphones"
     platform_code = "priceoye"
-    parser_version = "priceoye-v3-color-variants"
+    parser_version = "priceoye-v4-variant-matrix"
     allowed_domains = ["priceoye.pk"]
-    start_urls = ["https://priceoye.pk/mobiles"]
+
+    # The catalogue listing is a live "recommended" ranking that
+    # reshuffles between requests: walking it returned 385 entries but
+    # only 304 distinct phones, silently skipping 81. A sorted listing
+    # would be stable, but robots.txt only permits the ``?page=`` query,
+    # so sorting is not an option. Each brand's own page lists that
+    # brand's current phones on its first page, so the walk covers the
+    # general listing AND every brand page, then checks the number of
+    # distinct phones against the catalogue's stated size.
+    listing_url = "https://priceoye.pk/mobiles"
+    start_urls = [listing_url]
+    listing_page_size = 36
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._reached_catalogue_end = False
+        self._failed_pages = 0
+        self._product_urls = set()
+        self._stated_total = None
+
+    @property
+    def full_crawl_completed(self):
+        """True when every catalogue and product page was read.
+
+        The backend treats this as proof that a listing it did not
+        receive is no longer on sale, so anything that leaves a doubt
+        withholds it: a page that failed to download, or fewer distinct
+        phones queued than the catalogue says it holds. Better to keep
+        a stale offer for one more cycle than to mark a healthy one
+        unavailable.
+        """
+
+        if not self._reached_catalogue_end or self._failed_pages:
+            return False
+        if self._stated_total is None:
+            return True
+        return len(self._product_urls) >= self._stated_total
+
+    def page_fetch_error(self, failure):
+        self._failed_pages += 1
+        request = getattr(failure, 'request', None)
+        error = PriceOyePageFetchError(
+            'PriceOye page request failed: '
+            f"{getattr(request, 'url', 'unknown url')}"
+        )
+        cause = getattr(failure, 'value', None)
+        if cause is None:
+            raise error
+        raise error from cause
 
     custom_settings = {
         'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -234,14 +290,28 @@ class PriceoyeSpider(scrapy.Spider):
         )
         return bool(purchase_control) and not explicitly_unavailable
 
-    def parse(self, response):
-        phones = response.css('div.productBox')
-        
-        for phone in phones:
+    def _max_listing_pages(self):
+        crawler = getattr(self, 'crawler', None)
+        if crawler is None:
+            return 60
+        return max(1, crawler.settings.getint('PRICEOYE_MAX_PAGES', 60))
+
+    def _crawl_brand_pages(self):
+        """Brand pages complete the catalogue; a capped trial run skips them."""
+
+        crawler = getattr(self, 'crawler', None)
+        if crawler is None:
+            return True
+        return crawler.settings.getbool('PRICEOYE_BRAND_PAGES', True)
+
+    def _product_requests(self, response):
+        """Queue every product linked from a listing or brand page."""
+
+        for phone in response.css('div.productBox'):
             item = SmartphoneItem()
             item['platform'] = 'PriceOye'
             item['product_url'] = phone.css('a::attr(href)').get()
-            
+
             details = [t.strip() for t in phone.css('div.detail-box ::text').getall() if t.strip()]
             if details:
                 item['model'] = details[0]
@@ -249,18 +319,386 @@ class PriceoyeSpider(scrapy.Spider):
                     (t for t in details if 'Rs' in t),
                     None,
                 )
-            
-            item['scrape_timestamp'] = datetime.now(timezone.utc).isoformat()
-            
-            # DEEP SCRAPING: Instead of saving the item immediately, 
-            # we tell Scrapy to visit the product URL and pass the item to a new function!
-            if item['product_url']:
-                yield response.follow(item['product_url'], callback=self.parse_product, meta={'item': item})
 
-        # PAGINATION: Find the "Next" page button and loop the spider
-        next_page = response.css('a[rel="next"]::attr(href)').get()
-        if next_page:
-            yield response.follow(next_page, callback=self.parse)
+            item['scrape_timestamp'] = datetime.now(timezone.utc).isoformat()
+
+            if not item['product_url']:
+                continue
+
+            product_url = response.urljoin(item['product_url'])
+            if product_url in self._product_urls:
+                # The same phone shows up on both the general listing
+                # and its brand page; one visit is enough.
+                continue
+            self._product_urls.add(product_url)
+
+            # DEEP SCRAPING: visit the product page, which carries the
+            # full colour/storage matrix for this phone.
+            yield response.follow(
+                product_url,
+                callback=self.parse_product,
+                errback=self.page_fetch_error,
+                meta={'item': item},
+            )
+
+    def parse(self, response):
+        """Walk the general catalogue listing, page by page."""
+
+        page = int(response.meta.get('listing_page', 1))
+        phones = response.css('div.productBox')
+
+        if page == 1:
+            listing_data = self.extract_product_data(response) or {}
+
+            # The catalogue's own size, used to confirm the walk really
+            # covered every phone.
+            stated_total = listing_data.get('totalCategoryProducts')
+            if not isinstance(stated_total, int):
+                stated = re.search(
+                    r'(\d[\d,]*)\s+results', response.text, re.I,
+                )
+                stated_total = (
+                    int(stated.group(1).replace(',', ''))
+                    if stated
+                    else None
+                )
+            self._stated_total = stated_total
+
+            if self._crawl_brand_pages():
+                brand_options = (
+                    ((listing_data.get('brand_filter_bar') or {})
+                     .get('filters') or {})
+                    .get('brands') or {}
+                ).get('options') or {}
+                for brand_slug in brand_options:
+                    slug = re.sub(
+                        r'[^a-z0-9-]+', '-', str(brand_slug).lower(),
+                    ).strip('-')
+                    if not slug:
+                        continue
+                    yield scrapy.Request(
+                        url=f"{self.listing_url}/{slug}",
+                        callback=self.parse_brand,
+                        errback=self.page_fetch_error,
+                        meta={'brand_slug': slug, 'brand_page': 1},
+                    )
+
+        yield from self._product_requests(response)
+
+        # PAGINATION: PriceOye's "Next" control is a script-driven
+        # button with no href, so following a[rel="next"] stops after
+        # the first page (36 of ~385 phones). The catalogue is served
+        # at ?page=N instead; walk it until a page comes back empty.
+        if not phones:
+            # An empty page past the first one is the natural end of
+            # the general listing.
+            if page > 1:
+                self._reached_catalogue_end = True
+            return
+
+        if page < self._max_listing_pages():
+            yield scrapy.Request(
+                url=f"{self.listing_url}?page={page + 1}",
+                callback=self.parse,
+                errback=self.page_fetch_error,
+                meta={'listing_page': page + 1},
+            )
+
+    def parse_brand(self, response):
+        """Collect a brand's current phones from its own page.
+
+        A brand page lists the brand's current phones first and its
+        discontinued models on later pages, so the first page is all
+        that is needed unless it is completely full, in which case the
+        current range may continue onto the next one.
+        """
+
+        phones = response.css('div.productBox')
+        yield from self._product_requests(response)
+
+        brand_page = int(response.meta.get('brand_page', 1))
+        if len(phones) >= self.listing_page_size and brand_page < 2:
+            slug = response.meta['brand_slug']
+            yield scrapy.Request(
+                url=f"{self.listing_url}/{slug}?page={brand_page + 1}",
+                callback=self.parse_brand,
+                errback=self.page_fetch_error,
+                meta={'brand_slug': slug, 'brand_page': brand_page + 1},
+            )
+
+    @staticmethod
+    def extract_product_data(response):
+        """Return PriceOye's embedded ``window.product_data`` object.
+
+        Every product page ships the full variant matrix as inline
+        JSON: price, pre-discount price, availability and stock for
+        each colour and storage option. It is what the page's own
+        scripts read when a shopper clicks a colour, so it is the same
+        data the shopper sees, without depending on CSS class names.
+        """
+
+        text = response.text
+        marker = text.find('window.product_data')
+        if marker == -1:
+            return None
+        brace = text.find('{', marker)
+        if brace == -1:
+            return None
+        try:
+            data, _ = json.JSONDecoder().raw_decode(text, brace)
+        except ValueError:
+            return None
+        return data if isinstance(data, dict) else None
+
+    @staticmethod
+    def _parse_size_label(size_label):
+        """Return (ram_gb, storage_gb) from labels like '256gb - 12gb ram'."""
+
+        label = str(size_label or '').lower()
+        ram_match = re.search(r'(\d{1,3})\s*gb\s*ram', label)
+        ram_gb = int(ram_match.group(1)) if ram_match else None
+
+        storage_gb = None
+        for value, unit, trailer in re.findall(
+            r'(\d{1,4})\s*(gb|tb)(\s*ram)?', label,
+        ):
+            if trailer.strip():
+                continue
+            storage_gb = int(value) * (1024 if unit == 'tb' else 1)
+            break
+        return ram_gb, storage_gb
+
+    @staticmethod
+    def _flatten_specification(raw_specification):
+        """Flatten PriceOye's sectioned specification JSON to label/value."""
+
+        if isinstance(raw_specification, str):
+            try:
+                raw_specification = json.loads(raw_specification)
+            except ValueError:
+                return {}
+        if not isinstance(raw_specification, dict):
+            return {}
+
+        flattened = {}
+        for rows in raw_specification.values():
+            if isinstance(rows, dict):
+                rows = [rows]
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                for label, value in row.items():
+                    text = str(value).strip() if value is not None else ''
+                    if text and text.upper() not in {'N/A', 'NA', '-'}:
+                        flattened[str(label).strip()] = text
+        return flattened
+
+    def _reference_price_item(self, response, data, base_item):
+        """Describe a phone PriceOye lists but is not currently selling.
+
+        Such pages carry an empty variant matrix and show only a "Last
+        Updated Price" with no buy button. The page's ``schema_status``
+        still reads "InStock", which is why availability is taken from
+        the matrix instead: no sellable option means not available.
+        """
+
+        data_set = data.get('dataSet') or {}
+        try:
+            reference_price = float(data.get('lowPrice') or 0)
+        except (TypeError, ValueError):
+            reference_price = 0
+        if reference_price <= 0:
+            return None
+
+        product_slug = (
+            str(data_set.get('slug') or '').strip()
+            or base_item.get('external_id')
+            or response.url.rstrip('/').split('/')[-1]
+        )
+        review_count = int(data.get('total_rattings_count') or 0)
+
+        image_urls = []
+        for images in (data.get('product_color_images') or {}).values():
+            for image in (images or {}).get('large') or []:
+                if image:
+                    image_urls.append(
+                        image if str(image).startswith('http')
+                        else f'https://images.priceoye.pk/{image}'
+                    )
+
+        item = SmartphoneItem()
+        item['platform'] = 'PriceOye'
+        item['structured_source'] = True
+        item['product_url'] = response.url
+        item['external_id'] = product_slug[:150]
+        item['model'] = (
+            str(data_set.get('title') or '').strip()
+            or base_item.get('model', '')
+        )
+        item['brand'] = str(data_set.get('brand_name') or '').strip() or None
+        item['color'] = 'N/A'
+        item['variant'] = 'Standard'
+        item['price'] = reference_price
+        item['availability'] = 'Out of Stock'
+        item['stock_quantity'] = 0
+        item['warranty'] = (
+            str(data_set.get('warranty') or '').strip()
+            or 'Official Brand Warranty'
+        )
+        item['rating'] = data.get('average_rating') if review_count else None
+        item['review_count'] = review_count
+        item['image_urls'] = image_urls[:12]
+        item['specifications'] = self._flatten_specification(
+            data_set.get('specification')
+        )
+        item['scrape_timestamp'] = datetime.now(timezone.utc).isoformat()
+        return item
+
+    def _items_from_product_data(self, response, data, base_item):
+        """Build one item per colour and storage option from page JSON."""
+
+        config = data.get('product_config') or {}
+        price_matrix = config.get('dataPrices')
+        data_set = data.get('dataSet') or {}
+
+        if not isinstance(price_matrix, dict) or not price_matrix:
+            reference_item = self._reference_price_item(
+                response, data, base_item,
+            )
+            return [reference_item] if reference_item else []
+
+        product_slug = (
+            str(data_set.get('slug') or '').strip()
+            or base_item.get('external_id')
+            or response.url.rstrip('/').split('/')[-1]
+        )
+        model = (
+            str(data_set.get('title') or '').strip()
+            or base_item.get('model', '')
+        )
+        brand = str(data_set.get('brand_name') or '').strip() or None
+        specifications = self._flatten_specification(
+            data_set.get('specification')
+        )
+        color_images = data.get('product_color_images') or {}
+
+        # Display names come from the page's colour picker; the JSON
+        # only carries machine keys such as "mist_blue".
+        color_names = {
+            variant['slug']: variant['color']
+            for variant in self.extract_color_variants(response)
+        }
+
+        review_count = int(data.get('total_rattings_count') or 0)
+        # A rating is only meaningful alongside at least one review.
+        rating = data.get('average_rating') if review_count else None
+        scraped_at = datetime.now(timezone.utc).isoformat()
+
+        items = []
+        for color_slug in sorted(price_matrix):
+            sizes = price_matrix[color_slug]
+            if isinstance(sizes, list):
+                sizes = {'': sizes}
+            if not isinstance(sizes, dict):
+                continue
+
+            color_key = str(color_slug).strip().lower()
+            color_name = color_names.get(color_key) or ' '.join(
+                part.capitalize()
+                for part in re.split(r'[_\-\s]+', color_key)
+                if part
+            )
+
+            for size_label in sorted(sizes):
+                offers = sizes[size_label]
+                if isinstance(offers, dict):
+                    offers = [offers]
+                if not isinstance(offers, list) or not offers:
+                    continue
+                offer = next(
+                    (
+                        entry for entry in offers
+                        if isinstance(entry, dict)
+                        and str(entry.get('store_name', '')).lower()
+                        == 'priceoye'
+                    ),
+                    offers[0],
+                )
+                if not isinstance(offer, dict):
+                    continue
+
+                price_text = str(offer.get('product_price') or '').strip()
+                if not price_text:
+                    continue
+
+                ram_gb, storage_gb = self._parse_size_label(size_label)
+                variant_specifications = dict(specifications)
+                if ram_gb is not None:
+                    variant_specifications['ram'] = f'{ram_gb}GB'
+                if storage_gb is not None:
+                    variant_specifications['storage_capacity'] = (
+                        f'{storage_gb}GB'
+                    )
+
+                size_slug = re.sub(
+                    r'[^a-z0-9]+', '-', str(size_label).lower(),
+                ).strip('-')
+                external_id = '--'.join(
+                    part for part in (
+                        product_slug,
+                        color_key or 'default',
+                        size_slug,
+                    )
+                    if part
+                )
+
+                images = (color_images.get(color_slug) or {}).get('large')
+                image_urls = [
+                    image if str(image).startswith('http')
+                    else f'https://images.priceoye.pk/{image}'
+                    for image in (images or [])
+                    if image
+                ]
+
+                item = SmartphoneItem()
+                item['platform'] = 'PriceOye'
+                item['structured_source'] = True
+                item['product_url'] = response.url
+                item['external_id'] = external_id[:150]
+                item['model'] = model
+                item['brand'] = brand
+                item['color'] = color_name or 'N/A'
+                item['variant'] = (
+                    str(size_label).upper()
+                    if size_label
+                    else 'Standard'
+                )
+                item['price'] = f'Rs {price_text}'
+                retail_text = str(offer.get('retail_price') or '').strip()
+                if retail_text:
+                    item['original_price'] = f'Rs {retail_text}'
+                item['availability'] = (
+                    'In Stock'
+                    if str(offer.get('product_availability') or '')
+                    .strip().lower() == 'in stock'
+                    else 'Out of Stock'
+                )
+                item['stock_quantity'] = offer.get('stock_qty')
+                item['warranty'] = (
+                    str(offer.get('product_warranty') or '').strip()
+                    or str(data_set.get('warranty') or '').strip()
+                    or 'Official Brand Warranty'
+                )
+                item['rating'] = rating
+                item['review_count'] = review_count
+                item['image_urls'] = image_urls
+                item['specifications'] = variant_specifications
+                item['scrape_timestamp'] = scraped_at
+                items.append(item)
+
+        return items
 
 
     def parse_product(self, response):
@@ -281,6 +719,36 @@ class PriceoyeSpider(scrapy.Spider):
             or response.url.rstrip("/").split("/")[-1]
         )
 
+        # Preferred path: the page's own variant matrix. It covers
+        # every colour AND storage option with its exact price and
+        # stock, which the visible markup only shows for whichever
+        # option is currently selected.
+        product_data = self.extract_product_data(response)
+        if product_data is not None:
+            structured_items = self._items_from_product_data(
+                response, product_data, base_item,
+            )
+            if structured_items:
+                yield from structured_items
+
+                # Reviews are published per product, so they are
+                # attached to one deterministic listing (the first in
+                # colour/size order) rather than repeated per variant.
+                has_reviews = (
+                    structured_items[0].get("review_count") or 0
+                ) > 0
+                if has_reviews and self._max_reviews_per_listing() > 0:
+                    target_id = structured_items[0]["external_id"]
+                    yield scrapy.Request(
+                        url=f"{response.url.rstrip('/')}/reviews",
+                        callback=self.parse_reviews,
+                        errback=self.review_fetch_error,
+                        cb_kwargs={"external_listing_id": target_id},
+                        meta={"external_listing_id": target_id},
+                    )
+                return
+
+        # Fallback path: no usable JSON on the page, read the markup.
         # --- Common fields (shared across every colour variant) ---
         brand = (
             response.css(

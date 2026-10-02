@@ -447,3 +447,72 @@ def test_pipeline_marks_review_delivery_failures(status_code):
     )
     assert captured.value.error_type == expected
     assert captured.value.error_stage == 'ingestion'
+
+
+def test_structured_source_payloads_name_the_option_and_allow_catalog_create():
+    """PriceOye variant items carry their option into title and matcher.
+
+    One product page yields several listings now, so the listing title
+    must name the colour and storage option, and the match request
+    must opt in to catalog creation so a phone the catalog has never
+    seen (or a missing configuration) is added instead of parked.
+    """
+
+    item = {
+        'platform': 'PriceOye',
+        'structured_source': True,
+        'external_id': 'infinix-gt-50-pro--red_blaze--256gb-12gb-ram',
+        'model': 'Infinix GT 50 Pro',
+        'brand': 'Infinix',
+        'color': 'Red Blaze',
+        'variant': '256GB - 12GB RAM',
+        'price': 162999.0,
+        'original_price': 189999.0,
+        'is_available': True,
+        'rating': 5,
+        'review_count': 1,
+        'stock_quantity': 3,
+        'product_url': 'https://priceoye.pk/mobiles/infinix/infinix-gt-50-pro',
+        'scrape_timestamp': '2026-10-02T10:00:00+00:00',
+        'specifications': {'ram': '12GB', 'storage_capacity': '256GB'},
+        'image_urls': ['https://images.priceoye.pk/a-500x500.webp'],
+    }
+
+    match_payload = VextroApiIngestionPipeline._build_match_payload(item)
+    assert match_payload['title'] == 'Infinix GT 50 Pro'
+    assert match_payload['color'] == 'Red Blaze'
+    assert match_payload['ram_gb'] == 12
+    assert match_payload['storage_gb'] == 256
+    assert match_payload['allow_catalog_create'] is True
+    assert match_payload['specifications']['ram'] == '12GB'
+
+    listing_payload = VextroApiIngestionPipeline._build_listing_payload(
+        item, 113,
+    )
+    assert listing_payload['title'] == (
+        'Infinix GT 50 Pro (Red Blaze, 256GB - 12GB RAM)'
+    )
+    assert listing_payload['original_price'] == 189999.0
+    assert listing_payload['rating'] == 5
+    assert listing_payload['review_count'] == 1
+    assert listing_payload['raw_payload']['stock_quantity'] == 3
+    assert listing_payload['raw_payload']['image_urls'] == [
+        'https://images.priceoye.pk/a-500x500.webp',
+    ]
+    # The payload must still satisfy the backend contract exactly.
+    AcquisitionListingInput.model_validate(listing_payload)
+
+
+def test_free_text_source_does_not_request_catalog_creation():
+    """Daraz-style items keep going through manual review when unmatched."""
+
+    match_payload = VextroApiIngestionPipeline._build_match_payload(
+        {
+            'platform': 'Daraz',
+            'external_id': '1966046217',
+            'model': 'Infinix GT 50 Pro - 12GB RAM 256GB ROM',
+            'color': 'N/A',
+            'specifications': {},
+        }
+    )
+    assert 'allow_catalog_create' not in match_payload

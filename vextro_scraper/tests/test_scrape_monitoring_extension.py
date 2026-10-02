@@ -130,8 +130,11 @@ def test_extension_records_partial_run_lifecycle_and_counters():
     assert failed_error['error_type'] == 'backend_timeout'
 
     finish_payload = session.calls[4][2]['json']
+    # The spider here never signalled a complete catalogue walk, so the
+    # run must not vouch that unseen listings are gone.
     assert finish_payload == {
         'crawl_succeeded': True,
+        'full_crawl': False,
         **extension.counters,
     }
     assert all(
@@ -157,7 +160,10 @@ def test_extension_keeps_priceoye_run_metadata_separate():
 
     assert session.calls[0][2]['json']['platform'] == 'priceoye'
     assert session.calls[0][2]['json']['parser_version'] == 'priceoye-v1'
-    assert session.calls[1][2]['json']['crawl_succeeded'] is True
+    # It ended cleanly but found nothing (the marketplace turned it
+    # away), so it must not be recorded as a successful crawl.
+    assert session.calls[1][2]['json']['crawl_succeeded'] is False
+    assert session.calls[1][2]['json']['full_crawl'] is False
 
 
 def test_extension_marks_abnormal_close_as_failed():
@@ -313,3 +319,37 @@ def test_bulk_outcomes_count_items_not_http_requests():
     assert len(session.calls) == 4
     assert session.calls[2][2]['json']['metadata']['batch_index'] == 1
     assert session.calls[3][2]['json']['metadata']['batch_index'] == 2
+
+
+def test_extension_reports_full_crawl_only_for_a_completed_catalogue_walk():
+    """full_crawl is the backend's licence to retire unseen listings.
+
+    It must be true only when the spider finished on its own after
+    reaching the end of the marketplace listing; a run capped by
+    CLOSESPIDER_ITEMCOUNT is a successful crawl but not a full one.
+    """
+
+    def finish_payload_for(reason, completed):
+        session = RecordingSession(
+            FakeResponse(201, {'id': 77, 'status': 'running'}),
+            FakeResponse(200, {'id': 77, 'status': 'completed'}),
+        )
+        extension = build_extension(session)
+        spider = SimpleNamespace(
+            name='priceoye_smartphones',
+            platform_code='priceoye',
+            parser_version='priceoye-v4-variant-matrix',
+            full_crawl_completed=completed,
+        )
+        extension.spider_opened(spider)
+        # One item, so the run counts as having crawled something.
+        extension.counters['items_discovered'] = 1
+        extension.counters['items_ingested'] = 1
+        extension.spider_closed(spider, reason)
+        return session.calls[-1][2]['json']
+
+    assert finish_payload_for('finished', True)['full_crawl'] is True
+    assert finish_payload_for('finished', False)['full_crawl'] is False
+    capped = finish_payload_for('closespider_itemcount', True)
+    assert capped['crawl_succeeded'] is True
+    assert capped['full_crawl'] is False
