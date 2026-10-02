@@ -97,6 +97,22 @@ class AcquisitionService:
             )
         )
 
+        if existing_listing is None and "--" in payload.external_id:
+            # First capture under a variant-level id. Re-key the older
+            # product-level row (if any) to this id so its price
+            # history and reviews carry forward, instead of leaving it
+            # behind as a stale duplicate offer.
+            superseded_listing = (
+                self.repository.find_superseded_listing(
+                    database_session,
+                    platform_id=platform.id,
+                    external_id=payload.external_id,
+                )
+            )
+            if superseded_listing is not None:
+                superseded_listing.external_id = payload.external_id
+                existing_listing = superseded_listing
+
         if existing_listing is not None:
             existing_capture = (
                 self.repository.get_price_history_capture(
@@ -213,6 +229,13 @@ class AcquisitionService:
                     scraped_at=payload.scraped_at,
                 )
             else:
+                # A capture that carries no rating says nothing about
+                # reviews; it must not wipe an aggregate that an
+                # earlier capture or the review pipeline established.
+                reports_reviews = (
+                    payload.rating is not None
+                    or payload.review_count > 0
+                )
                 listing = self.repository.update_listing(
                     database_session,
                     existing_listing,
@@ -229,12 +252,36 @@ class AcquisitionService:
                         payload.original_price
                     ),
                     currency=payload.currency,
-                    rating=payload.rating,
-                    review_count=payload.review_count,
+                    rating=(
+                        payload.rating
+                        if reports_reviews
+                        else existing_listing.rating
+                    ),
+                    review_count=(
+                        payload.review_count
+                        if reports_reviews
+                        else existing_listing.review_count
+                    ),
                     warranty=payload.warranty,
                     is_available=payload.is_available,
                     raw_payload=payload.raw_payload,
                     scraped_at=payload.scraped_at,
+                )
+
+            self.repository.clear_pending_matches(
+                database_session,
+                platform_code=payload.platform_code,
+                external_id=payload.external_id,
+            )
+
+            captured_images = payload.raw_payload.get("image_urls")
+            if isinstance(captured_images, list) and captured_images:
+                self.repository.sync_listing_images(
+                    database_session,
+                    listing=listing,
+                    canonical_product_id=canonical_product.id,
+                    image_urls=captured_images,
+                    alt_text=payload.title,
                 )
 
             price_history = (

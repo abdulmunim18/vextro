@@ -1,10 +1,15 @@
 """Transactional lifecycle operations for scraper monitoring."""
 
 from fastapi import HTTPException, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.models.product_listing import ProductListing
 from app.models.scrape_run import ScrapeRun
 from app.core.config import settings
+from app.repositories.acquisition_repository import (
+    AcquisitionRepository,
+)
 from app.repositories.scrape_monitoring_repository import (
     ScrapeMonitoringRepository,
 )
@@ -77,6 +82,10 @@ class ScrapeMonitoringService:
         payload: ScrapeRunStartInput,
     ) -> ScrapeRunResponse:
         try:
+            self.repository.fail_abandoned_runs(
+                database_session,
+                spider_name=payload.spider_name,
+            )
             run = self.repository.create_run(
                 database_session,
                 platform=payload.platform,
@@ -175,12 +184,60 @@ class ScrapeMonitoringService:
                 items_failed=payload.items_failed,
                 error_count=payload.error_count,
             )
+            if payload.crawl_succeeded and payload.full_crawl:
+                self._retire_unseen_listings(database_session, run)
             database_session.commit()
             database_session.refresh(run)
             return ScrapeRunResponse.model_validate(run)
         except Exception:
             database_session.rollback()
             raise
+
+    @staticmethod
+    def _retire_unseen_listings(
+        database_session: Session,
+        run: ScrapeRun,
+    ) -> int:
+        """Mark listings a complete crawl did not see as unavailable.
+
+        Without this, an offer the marketplace has removed keeps its
+        last price and an "in stock" badge forever. The sweep is
+        skipped when the crawl refreshed fewer than half of the
+        platform's previously available listings: that pattern means
+        the marketplace throttled or changed its pages, not that half
+        the catalogue vanished, and retiring on it would wrongly blank
+        out healthy offers.
+        """
+
+        platform = AcquisitionRepository.get_platform_by_code(
+            database_session,
+            run.platform,
+        )
+        if platform is None:
+            return 0
+
+        seen = database_session.scalar(
+            select(func.count(ProductListing.id)).where(
+                ProductListing.platform_id == platform.id,
+                ProductListing.last_seen_at >= run.started_at,
+            )
+        ) or 0
+        stale_available = database_session.scalar(
+            select(func.count(ProductListing.id)).where(
+                ProductListing.platform_id == platform.id,
+                ProductListing.last_seen_at < run.started_at,
+                ProductListing.is_available.is_(True),
+            )
+        ) or 0
+
+        if seen == 0 or seen < stale_available:
+            return 0
+
+        return AcquisitionRepository.mark_unseen_listings_unavailable(
+            database_session,
+            platform_id=platform.id,
+            seen_since=run.started_at,
+        )
 
     def list_runs(
         self,

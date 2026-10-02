@@ -280,3 +280,30 @@ def test_run_detail_returns_related_errors(client: TestClient) -> None:
     assert response.status_code == 200
     assert len(response.json()["errors"]) == 1
     assert response.json()["errors"][0]["error_type"] == "invalid_price"
+
+
+def test_starting_a_run_closes_an_abandoned_run_of_the_same_spider(
+    client: TestClient,
+    database_session: Session,
+) -> None:
+    """A spider killed mid-crawl must not stay "running" forever."""
+
+    abandoned = start_run(client)
+    other_spider = start_run(
+        client,
+        platform="priceoye",
+        spider_name="priceoye_smartphones",
+    )
+
+    fresh = start_run(client)
+
+    database_session.expire_all()
+    abandoned_row = database_session.get(ScrapeRun, abandoned["id"])
+    other_row = database_session.get(ScrapeRun, other_spider["id"])
+    fresh_row = database_session.get(ScrapeRun, fresh["id"])
+
+    assert abandoned_row.status == "failed"
+    assert abandoned_row.finished_at is not None
+    # A different spider's open run is none of this spider's business.
+    assert other_row.status == "running"
+    assert fresh_row.status == "running"

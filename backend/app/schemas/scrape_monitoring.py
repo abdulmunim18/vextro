@@ -34,6 +34,10 @@ class ScrapeRunFinishInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     crawl_succeeded: bool
+    # True only when the spider walked the marketplace's whole catalogue
+    # (not a capped or interrupted run). Lets the backend conclude that
+    # a listing it did not see is no longer on sale.
+    full_crawl: bool = False
     items_discovered: int = Field(ge=0)
     items_ingested: int = Field(ge=0)
     items_rejected: int = Field(ge=0)

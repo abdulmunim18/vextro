@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.scrape_error import ScrapeError
@@ -11,6 +11,31 @@ from app.models.scrape_run import ScrapeRun
 
 
 class ScrapeMonitoringRepository:
+    @staticmethod
+    def fail_abandoned_runs(
+        database_session: Session,
+        *,
+        spider_name: str,
+    ) -> int:
+        """Close runs of a spider that never reported their end.
+
+        A spider killed mid-crawl (power loss, forced stop) cannot send
+        its final report, which would leave its run "running" forever.
+        The scheduler never runs the same spider twice at once, so any
+        run still open when a new one starts was abandoned.
+        """
+
+        result = database_session.execute(
+            update(ScrapeRun)
+            .where(
+                ScrapeRun.spider_name == spider_name,
+                ScrapeRun.status == "running",
+            )
+            .values(status="failed", finished_at=datetime.now(UTC))
+            .execution_options(synchronize_session=False)
+        )
+        return int(result.rowcount or 0)
+
     @staticmethod
     def create_run(
         database_session: Session,

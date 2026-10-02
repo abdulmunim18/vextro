@@ -87,8 +87,15 @@ def build_review_fingerprint(
             "external_review_id": external_review_id,
         }
     else:
+        # Marketplaces publish reviews per product, while listings are
+        # now tracked per colour/storage variant with ids shaped like
+        # "<product>--<colour>--<size>". Hash on the product part only,
+        # so the same review keeps one identity no matter which variant
+        # listing it is delivered against.
         identity = {
-            "listing_external_id": listing_external_id,
+            "listing_external_id": listing_external_id.split(
+                "--", 1
+            )[0],
             "reviewer_external_id": (
                 reviewer_external_id.lower()
                 if reviewer_external_id

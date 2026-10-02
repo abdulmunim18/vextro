@@ -4,11 +4,13 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session, selectinload
 
+from app.models.pending_product_match import PendingProductMatch
 from app.models.platform import Platform
 from app.models.price_history import PriceHistory
+from app.models.product_image import ProductImage
 from app.models.product_listing import ProductListing
 from app.models.product_variant import ProductVariant
 from app.models.seller import Seller
@@ -165,6 +167,162 @@ class AcquisitionRepository:
         )
 
         return database_session.scalar(statement)
+
+    @classmethod
+    def find_superseded_listing(
+        cls,
+        database_session: Session,
+        *,
+        platform_id: int,
+        external_id: str,
+    ) -> ProductListing | None:
+        """Find the coarser listing that a variant-level id replaces.
+
+        Variant-level ids look like ``<product>--<colour>--<size>``.
+        Before listings were tracked per variant, the same marketplace
+        page was stored under ``<product>`` (or ``<product>--<colour>``).
+        Walking the id from most to least specific returns that older
+        row so the caller can re-key it instead of leaving a stale
+        duplicate beside the new one.
+        """
+
+        parts = external_id.split("--")
+        for length in range(len(parts) - 1, 0, -1):
+            candidate = cls.get_listing(
+                database_session,
+                platform_id=platform_id,
+                external_id="--".join(parts[:length]),
+            )
+            if candidate is not None:
+                return candidate
+        return None
+
+    @staticmethod
+    def clear_pending_matches(
+        database_session: Session,
+        *,
+        platform_code: str,
+        external_id: str,
+    ) -> int:
+        """Drop review-queue entries that a successful capture answers.
+
+        An item parked for manual matching stops being work for an
+        administrator once the same marketplace offer is ingested.
+        Entries an administrator already resolved are kept: they are
+        the record of an approved mapping, not open work.
+        """
+
+        parts = external_id.split("--")
+        candidates = {
+            "--".join(parts[:length])
+            for length in range(1, len(parts) + 1)
+        }
+        result = database_session.execute(
+            delete(PendingProductMatch)
+            .where(
+                PendingProductMatch.platform_code == platform_code,
+                PendingProductMatch.external_id.in_(candidates),
+                PendingProductMatch.status == "pending",
+            )
+            .execution_options(synchronize_session=False)
+        )
+        return int(result.rowcount or 0)
+
+    @staticmethod
+    def sync_listing_images(
+        database_session: Session,
+        *,
+        listing: ProductListing,
+        canonical_product_id: int,
+        image_urls: list[str],
+        alt_text: str,
+    ) -> None:
+        """Store a listing's gallery and seed the product's own images.
+
+        The listing gallery mirrors the capture exactly. The product
+        gallery only ever gains images, and only while it is empty, so
+        the first variant seen gives a new phone its catalogue photo
+        without later colours reshuffling it.
+        """
+
+        urls: list[str] = []
+        for image_url in image_urls[:12]:
+            cleaned = str(image_url).strip()
+            if cleaned.startswith(("http://", "https://")) and (
+                cleaned not in urls
+            ):
+                urls.append(cleaned)
+        if not urls:
+            return
+
+        existing = {
+            image.image_url: image
+            for image in database_session.scalars(
+                select(ProductImage).where(
+                    ProductImage.listing_id == listing.id,
+                )
+            )
+        }
+        for image_url, image in existing.items():
+            if image_url not in urls:
+                database_session.delete(image)
+
+        for sort_order, image_url in enumerate(urls):
+            image = existing.get(image_url)
+            if image is None:
+                image = ProductImage(
+                    listing_id=listing.id,
+                    image_url=image_url,
+                )
+                database_session.add(image)
+            image.alt_text = alt_text[:255]
+            image.is_primary = sort_order == 0
+            image.sort_order = sort_order
+
+        product_has_images = database_session.scalar(
+            select(func.count(ProductImage.id)).where(
+                ProductImage.canonical_product_id
+                == canonical_product_id,
+            )
+        )
+        if not product_has_images:
+            for sort_order, image_url in enumerate(urls):
+                database_session.add(
+                    ProductImage(
+                        canonical_product_id=canonical_product_id,
+                        image_url=image_url,
+                        alt_text=alt_text[:255],
+                        is_primary=sort_order == 0,
+                        sort_order=sort_order,
+                    )
+                )
+
+        database_session.flush()
+
+    @staticmethod
+    def mark_unseen_listings_unavailable(
+        database_session: Session,
+        *,
+        platform_id: int,
+        seen_since: datetime,
+    ) -> int:
+        """Flag listings a full crawl did not encounter as unavailable.
+
+        Returns the number of rows changed. Rows are never deleted, so
+        their price history stays intact.
+        """
+
+        result = database_session.execute(
+            update(ProductListing)
+            .where(
+                ProductListing.platform_id == platform_id,
+                ProductListing.last_seen_at < seen_since,
+                ProductListing.is_available.is_(True),
+            )
+            .values(is_available=False)
+            .execution_options(synchronize_session=False)
+        )
+        return int(result.rowcount or 0)
 
     @staticmethod
     def create_listing(

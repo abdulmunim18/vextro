@@ -228,6 +228,14 @@ class ReviewRepository:
         if listing is None:
             return rounded_average, review_count
 
+        # The marketplace's own aggregate (delivered with the listing
+        # capture) covers every review it holds, while we only store a
+        # bounded sample per listing. Keep the marketplace figure when
+        # it is the larger one; fill in from stored reviews otherwise.
+        marketplace_count = int(listing.review_count or 0)
+        if listing.rating is not None and marketplace_count > review_count:
+            return float(listing.rating), marketplace_count
+
         listing.rating = rounded_average
         listing.review_count = review_count
         database_session.flush()
