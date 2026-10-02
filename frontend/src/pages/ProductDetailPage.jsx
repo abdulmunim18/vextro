@@ -15,6 +15,7 @@ import PriceHistoryChart from "../components/PriceHistoryChart";
 import PriceForecastCard from "../components/PriceForecastCard";
 import BuyTimeGuidanceCard from "../components/BuyTimeGuidanceCard";
 import RelatedProductCard from "../components/RelatedProductCard";
+import ReviewsPanel from "../components/ReviewsPanel";
 import RouteLoadingState from "../components/RouteLoadingState";
 import { useAuth } from "../context/useAuth";
 import {
@@ -1148,6 +1149,17 @@ function ProductDetailPage() {
         />
 
         <BuyTimeGuidanceCard guidance={buyGuidance} />
+
+        <ReviewsPanel
+          productId={product.id}
+          listings={listings.map((listing) => ({
+            id: listing.id,
+            platform_id: listing.platform_id,
+            platform_code: platformNames
+              .get(listing.platform_id)
+              ?.toLowerCase(),
+          }))}
+        />
 
         {specifications.length > 0 ? (
           <section className="mt-10">
