@@ -20,6 +20,55 @@ AMBIGUITY_MARGIN = 8
 MIN_NAME_IDENTITY_SCORE = 0.65
 MIN_MODEL_IDENTITY_SCORE = 0.90
 
+# When both the marketplace title and the candidate variant carry a
+# concrete colour, require this much fuzzy similarity before we treat
+# them as the same variant. Below this the candidate is rejected the
+# same way an incompatible RAM or storage does — otherwise a "Titan
+# Blue" listing happily lands on a "Titan Red" variant of the same
+# phone.
+MIN_COLOR_IDENTITY_SCORE = 0.60
+
+
+def _color_similarity(
+    requested: str | None,
+    candidate: str | None,
+) -> float:
+    """Return a colour-aware similarity in [0, 1].
+
+    ``SequenceMatcher.ratio`` alone rates "Awesome Black" against
+    "Black" at only ~0.56 because the character counts diverge, even
+    though a human reads them as the same colour. Marketplaces emit
+    exactly this pattern ("Awesome Pink", "Titanium Blue", "Phantom
+    Black"), so we boost the score to 1.0 whenever one normalised
+    string contains the other as a whole token, and fall back to the
+    plain sequence ratio otherwise. Distinct hues like "Blue" vs
+    "Red" stay well below the identity threshold and are rejected.
+    """
+
+    requested_normalised = _normalize_text(requested)
+    candidate_normalised = _normalize_text(candidate)
+
+    if not requested_normalised or not candidate_normalised:
+        return 0.0
+
+    if requested_normalised == candidate_normalised:
+        return 1.0
+
+    requested_tokens = set(requested_normalised.split())
+    candidate_tokens = set(candidate_normalised.split())
+
+    if requested_tokens and candidate_tokens and (
+        requested_tokens.issubset(candidate_tokens)
+        or candidate_tokens.issubset(requested_tokens)
+    ):
+        return 1.0
+
+    return SequenceMatcher(
+        None,
+        requested_normalised,
+        candidate_normalised,
+    ).ratio()
+
 def _normalize_text(value: str | None) -> str:
     """Normalize text for case-insensitive product matching."""
 
@@ -456,7 +505,7 @@ class ProductMatchingService:
             if requested_color:
                 possible_score += 5.0
 
-                color_score = _text_similarity(
+                color_score = _color_similarity(
                     requested_color,
                     candidate.color,
                 )
@@ -465,6 +514,21 @@ class ProductMatchingService:
                     color_score
                     * 5.0
                 )
+
+                # Only reject when the candidate itself asserts a
+                # colour and it does not match. A candidate with no
+                # colour recorded is left to lose points, not to be
+                # eliminated, so a colourful listing can still adopt
+                # a generic variant when nothing more specific exists.
+                if (
+                    candidate.color
+                    and color_score
+                    < MIN_COLOR_IDENTITY_SCORE
+                ):
+                    rejection_reason = (
+                        "The requested colour does not "
+                        "match this catalog variant."
+                    )
 
             strong_product_identity = (
                 name_score

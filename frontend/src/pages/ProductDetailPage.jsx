@@ -439,6 +439,47 @@ function ProductDetailPage() {
     });
   }, [listings, platforms]);
 
+  // One entry per supported marketplace (Daraz, PriceOye) so the
+  // stock summary strip renders even for platforms that have zero
+  // listings for this product. The `status` value drives the chip
+  // colour: "in_stock" | "out_of_stock" | "not_listed".
+  const platformAvailability = useMemo(() => {
+    const supportedPlatforms = platforms.filter((platform) =>
+      ["daraz", "priceoye"].includes(
+        platform.code?.toLowerCase(),
+      ),
+    );
+
+    return supportedPlatforms.map((platform) => {
+      const platformListings = listings.filter(
+        (listing) => listing.platform_id === platform.id,
+      );
+      const inStockCount = platformListings.filter(
+        (listing) => listing.is_available,
+      ).length;
+      const outOfStockCount =
+        platformListings.length - inStockCount;
+
+      let status;
+      if (platformListings.length === 0) {
+        status = "not_listed";
+      } else if (inStockCount === 0) {
+        status = "out_of_stock";
+      } else {
+        status = "in_stock";
+      }
+
+      return {
+        id: platform.id,
+        name: platform.name,
+        status,
+        inStockCount,
+        outOfStockCount,
+        totalCount: platformListings.length,
+      };
+    });
+  }, [listings, platforms]);
+
   const brandName =
     brands.find(
       (brand) => brand.id === product?.brand_id,
@@ -896,6 +937,55 @@ function ProductDetailPage() {
               {listingResponse?.total === 1 ? "offer" : "offers"}
             </span>
           </div>
+
+          {platformAvailability.length > 0 ? (
+            <div className="mt-6 flex flex-wrap items-stretch gap-3">
+              {platformAvailability.map((entry) => {
+                const styles = {
+                  in_stock:
+                    "border-emerald-200 bg-emerald-50 text-emerald-800",
+                  out_of_stock:
+                    "border-red-200 bg-red-50 text-red-800",
+                  not_listed:
+                    "border-slate-200 bg-slate-50 text-slate-600",
+                }[entry.status];
+
+                const dotStyles = {
+                  in_stock: "bg-emerald-500",
+                  out_of_stock: "bg-red-500",
+                  not_listed: "bg-slate-400",
+                }[entry.status];
+
+                const message = {
+                  in_stock:
+                    entry.outOfStockCount > 0
+                      ? `${entry.inStockCount} in stock · ${entry.outOfStockCount} unavailable`
+                      : `${entry.inStockCount} in stock`,
+                  out_of_stock: `Out of stock (${entry.outOfStockCount} listing${entry.outOfStockCount === 1 ? "" : "s"})`,
+                  not_listed: "Not currently listed",
+                }[entry.status];
+
+                return (
+                  <div
+                    className={`flex min-w-[180px] flex-1 items-center gap-3 rounded-2xl border px-4 py-3 ${styles}`}
+                    key={entry.id}
+                  >
+                    <span
+                      className={`inline-block size-2.5 shrink-0 rounded-full ${dotStyles}`}
+                    />
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-black uppercase tracking-[0.14em]">
+                        {entry.name}
+                      </div>
+                      <div className="mt-0.5 text-sm font-bold">
+                        {message}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
 
           {listings.length > 0 ? (
             <div className="mt-7 grid gap-5">
