@@ -285,6 +285,33 @@ psql -h 127.0.0.1 -U postgres -d postgres -c "ALTER ROLE vextro_app NOCREATEDB;"
 
 Set `PGPASSWORD` for whichever role you invoke, or supply the password interactively. After step 4, `alembic current` should print the same revision as `alembic heads`, and `curl http://127.0.0.1:8000/database/health` should report `"connected_user":"vextro_app"`.
 
+# Keeping Marketplace Data Fresh
+
+Prices and stock are only as current as the last crawl, so the spiders must run on a schedule. Register the 12-hour task once, from an **Administrator** PowerShell (the backend must be running whenever the task fires):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_scrape_schedule.ps1
+```
+
+Run a crawl by hand (backend running, from `vextro_scraper/`, with `INGESTION_API_KEY` set to the value in `backend/.env`):
+
+```powershell
+python -m scrapy crawl priceoye_smartphones
+python -m scrapy crawl daraz_smartphones
+```
+
+What a crawl guarantees:
+
+- **PriceOye is read from the page's own variant data**, so every colour and storage option becomes its own listing with its exact price, pre-discount price and stock. The whole catalogue is walked (`/mobiles?page=N` until an empty page), not just the first page.
+- **A phone PriceOye lists but does not sell** (reference price only, no buy button) is recorded as unavailable.
+- **New phones are added to the catalog automatically** when they come from PriceOye's structured data. Free-text sources (Daraz) only attach to phones the catalog already knows; anything else goes to the admin review queue.
+- **Look-alike models never merge**: "iPhone 17", "iPhone 17 Air", "iPhone 17e" and "iPhone 17 Pro" are different phones to the matcher.
+- **A marketplace id that was ingested before keeps its mapping**, so re-crawls always refresh existing offers.
+- **A complete PriceOye crawl retires offers it did not see** (marks them unavailable, history kept). A capped, interrupted or partly failed crawl never does.
+- An offer whose price has not been confirmed for 48 hours is labelled "Price last confirmed <date>" in the UI.
+
+Each run is recorded in `scrape_runs` / `scrape_errors`; `python scripts/warehouse_audit.py` prints the latest runs.
+
 # Development Checks
 
 Backend:
