@@ -13,6 +13,7 @@ class SmartphoneItem(scrapy.Item):
     
     # Time-Series Data (12-hour refresh cycle)
     price = scrapy.Field()
+    original_price = scrapy.Field()   # Pre-discount strike-through price, if any.
     availability = scrapy.Field() # In Stock / Out of Stock
     seller = scrapy.Field()
     

@@ -405,8 +405,32 @@ class ProductMatchingService:
             )
         )
 
+        # Scrapers (particularly the pre-refactor Daraz spider) still
+        # emit marketplace placeholders like ``"N/A"`` or ``"Standard"``
+        # when they cannot read the real colour. Treating those as a
+        # real colour request would mis-trigger the colour-rejection
+        # path below and the auto-create path with it, so collapse
+        # them to ``None`` here and let the title fallback try to find
+        # a real one.
+        raw_color = (
+            str(payload.color).strip()
+            if payload.color is not None
+            else None
+        )
+        if raw_color and raw_color.lower() in {
+            "n/a",
+            "na",
+            "none",
+            "standard",
+            "unknown",
+            "default",
+            "-",
+            "--",
+        }:
+            raw_color = None
+
         requested_color = (
-            payload.color
+            raw_color
             or _detect_unique_text_value(
                 payload.title,
                 [
@@ -520,6 +544,9 @@ class ProductMatchingService:
                 # colour recorded is left to lose points, not to be
                 # eliminated, so a colourful listing can still adopt
                 # a generic variant when nothing more specific exists.
+                # The auto-create path further down picks these
+                # rejections up and spawns the missing colour variant
+                # when the rest of the identity is strong.
                 if (
                     candidate.color
                     and color_score
@@ -589,10 +616,60 @@ class ProductMatchingService:
 
             (
                 best_confidence,
-                _,
+                best_name_score,
                 best_candidate,
                 rejection_reason,
             ) = scored_candidates[0]
+
+            # Auto-create a sibling colour variant when the only
+            # issue with the strongest candidate is that the
+            # catalog does not yet track this specific colour.
+            # Marketplaces (PriceOye in particular) list every colour
+            # of a phone on the same product URL, so a single
+            # scrape can legitimately discover four or five new
+            # colours of a product whose catalog only has one. Letting
+            # all of those fall into pending_product_matches would
+            # mean an administrator has to resolve dozens of
+            # look-alike rows by hand for every new launch.
+            auto_created = self._maybe_auto_create_color_sibling(
+                database_session,
+                best_candidate=best_candidate,
+                best_name_score=best_name_score,
+                rejection_reason=rejection_reason,
+                requested_color=requested_color,
+                requested_ram=requested_ram,
+                requested_storage=requested_storage,
+            )
+            if auto_created is not None:
+                # The matcher endpoint does not own a transaction
+                # boundary, so persist the newly-minted variant now
+                # before returning the match. Later ingestion steps
+                # (listing create, price history, alerts) all expect
+                # the variant_id to be committed.
+                database_session.commit()
+                return ProductMatchResponse(
+                    matched=True,
+                    confidence=best_confidence,
+                    product_variant_id=(
+                        auto_created.product_variant_id
+                    ),
+                    canonical_product_id=(
+                        auto_created.canonical_product_id
+                    ),
+                    product_name=auto_created.product_name,
+                    brand_name=auto_created.brand_name,
+                    model=auto_created.model,
+                    ram_gb=auto_created.ram_gb,
+                    storage_gb=auto_created.storage_gb,
+                    color=auto_created.color,
+                    reason=(
+                        "Auto-created a colour variant "
+                        f"'{auto_created.color}' from the strongest "
+                        "catalog match because the marketplace "
+                        "reported a colour the catalog did not yet "
+                        "track."
+                    ),
+                )
 
             return ProductMatchResponse(
                 matched=False,
@@ -727,4 +804,76 @@ class ProductMatchingService:
                 "unambiguous catalog variant "
                 "match was found."
             ),
+        )
+
+    def _maybe_auto_create_color_sibling(
+        self,
+        database_session: Session,
+        *,
+        best_candidate: ProductMatchCandidate,
+        best_name_score: float,
+        rejection_reason: str | None,
+        requested_color: str | None,
+        requested_ram: int | None,
+        requested_storage: int | None,
+    ) -> ProductMatchCandidate | None:
+        """Clone the strongest match into a new colour when it is safe.
+
+        Returns the new (or newly reused) ``ProductMatchCandidate`` on
+        success, or ``None`` when any of the safety checks fail.
+
+        Rules:
+        - The rejection must call out a colour mismatch; any other
+          rejection (ram/storage/name identity) is a real catalog gap
+          that an administrator should resolve, not something to
+          paper over by creating variants.
+        - The product-identity signal (name score) must clear the
+          same threshold a normal match would need, so we never
+          create a variant for a title that is only vaguely similar.
+        - RAM and storage must match the reference variant whenever
+          the request specifies them. If either side is ``None`` we
+          leave that dimension as-is, so a stray partial-spec listing
+          does not spawn mystery variants.
+        - The requested colour must be a clean non-empty string of
+          at least two characters, so marketplace values like ``N/A``
+          or ``'-'`` never leak into the catalog as colour names.
+        """
+
+        if rejection_reason is None:
+            return None
+        reason_lower = rejection_reason.lower()
+        if "colour" not in reason_lower and "color" not in reason_lower:
+            return None
+
+        if best_name_score < MIN_NAME_IDENTITY_SCORE:
+            return None
+
+        cleaned_color = (requested_color or "").strip()
+        if len(cleaned_color) < 2 or cleaned_color.lower() in {
+            "n/a", "na", "none", "standard", "unknown",
+        }:
+            return None
+
+        # Mismatched RAM or storage are only a hard veto when both
+        # sides actually report a value. Catalog seeds for brand-new
+        # phones often leave RAM/storage NULL on the first imported
+        # variant; we would rather clone that generic row with the
+        # requested colour than wedge every scrape into pending.
+        if (
+            requested_ram is not None
+            and best_candidate.ram_gb is not None
+            and best_candidate.ram_gb != requested_ram
+        ):
+            return None
+        if (
+            requested_storage is not None
+            and best_candidate.storage_gb is not None
+            and best_candidate.storage_gb != requested_storage
+        ):
+            return None
+
+        return self.repository.create_color_sibling_variant(
+            database_session,
+            reference_candidate=best_candidate,
+            color=cleaned_color,
         )

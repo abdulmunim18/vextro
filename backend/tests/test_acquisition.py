@@ -1164,16 +1164,21 @@ def test_product_match_rejects_wrong_storage(
     )
 
 
-def test_product_match_rejects_wrong_color(
+def test_product_match_never_maps_wrong_color_onto_existing_variant(
     client: TestClient,
     acquisition_context: dict[str, object],
 ) -> None:
-    """Reject a candidate whose colour disagrees with the request."""
+    """A White request must never land on the Black catalog variant.
+
+    The fixture creates a Black variant. A White listing with an
+    otherwise perfect identity gets its own colour sibling instead of
+    collapsing onto Black, which is what made two different colours
+    show up as the same offer in the comparison view.
+    """
 
     token = str(acquisition_context["token"])
+    reference_variant_id = int(acquisition_context["variant_id"])
 
-    # The fixture creates a Black variant; ask for White with an
-    # otherwise perfect brand/model/RAM/storage match.
     response = client.post(
         MATCH_ENDPOINT,
         headers=ingestion_headers(),
@@ -1189,10 +1194,9 @@ def test_product_match_rejects_wrong_color(
     assert response.status_code == 200
     body = response.json()
 
-    assert body["matched"] is False
-    assert body["product_variant_id"] is None
-    assert body["canonical_product_id"] is None
-    assert "colour" in body["reason"].lower() or "color" in body["reason"].lower()
+    assert body["matched"] is True
+    assert body["color"] == "White"
+    assert body["product_variant_id"] != reference_variant_id
 
 
 def test_product_match_accepts_marketing_suffix_color(
@@ -1202,6 +1206,7 @@ def test_product_match_accepts_marketing_suffix_color(
     """Accept 'Awesome Black' against a 'Black' catalog variant."""
 
     token = str(acquisition_context["token"])
+    reference_variant_id = int(acquisition_context["variant_id"])
 
     response = client.post(
         MATCH_ENDPOINT,
@@ -1220,6 +1225,7 @@ def test_product_match_accepts_marketing_suffix_color(
 
     assert body["matched"] is True
     assert body["confidence"] >= 75
+    assert body["product_variant_id"] == reference_variant_id
 
 
 def test_product_match_without_color_still_matches(
@@ -1251,6 +1257,134 @@ def test_product_match_without_color_still_matches(
     body = response.json()
 
     assert body["matched"] is True
+
+
+def test_product_match_auto_creates_color_sibling_variant(
+    client: TestClient,
+    acquisition_context: dict[str, object],
+    database_session: Session,
+) -> None:
+    """A clean colour that is missing from the catalog is auto-added.
+
+    The acquisition fixture seeds a single Black variant. A request
+    for the same product in Sage (same RAM, same storage, strong
+    name identity) must clone the Black variant's spec into a new
+    Sage sibling and return a successful match pointing at the new
+    variant, so the per-colour scrape does not need admin resolution.
+    """
+
+    token = str(acquisition_context["token"])
+    reference_variant_id = int(
+        acquisition_context["variant_id"]
+    )
+
+    response = client.post(
+        MATCH_ENDPOINT,
+        headers=ingestion_headers(),
+        json={
+            "title": (
+                f"Acquisition Test Phone "
+                f"{token} 8GB 256GB Sage"
+            ),
+            "color": "Sage",
+            "ram_gb": 8,
+            "storage_gb": 256,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["matched"] is True
+    assert body["color"] == "Sage"
+    assert body["ram_gb"] == 8
+    assert body["storage_gb"] == 256
+    assert body["product_variant_id"] != reference_variant_id
+    assert "auto-created" in body["reason"].lower()
+
+    # Confirm the sibling is persisted and marks itself as such.
+    # The matcher commits on its own session; our fixture session
+    # needs to drop cached identity rows before it will see it.
+    from app.models.product_variant import ProductVariant
+
+    database_session.expire_all()
+    new_variant = database_session.get(
+        ProductVariant, body["product_variant_id"],
+    )
+    assert new_variant is not None
+    assert new_variant.color == "Sage"
+    assert new_variant.ram_gb == 8
+    assert new_variant.storage_gb == 256
+    assert new_variant.canonical_product_id == int(
+        acquisition_context["product_id"]
+    )
+    assert (new_variant.variant_attributes or {}).get(
+        "auto_created"
+    ) is True
+
+
+def test_product_match_refuses_to_auto_create_when_ram_mismatches(
+    client: TestClient,
+    acquisition_context: dict[str, object],
+) -> None:
+    """Auto-create only clones RAM/storage-matching candidates.
+
+    If the request's RAM disagrees with the reference variant, the
+    catalog is genuinely missing a different RAM tier — not a colour
+    variant — so the auto-create path refuses and the item falls
+    into pending review as before.
+    """
+
+    token = str(acquisition_context["token"])
+
+    response = client.post(
+        MATCH_ENDPOINT,
+        headers=ingestion_headers(),
+        json={
+            "title": (
+                f"Acquisition Test Phone "
+                f"{token} 12GB 256GB Sage"
+            ),
+            "color": "Sage",
+            "ram_gb": 12,
+            "storage_gb": 256,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["matched"] is False
+    assert body["product_variant_id"] is None
+
+
+def test_product_match_refuses_to_auto_create_for_junk_color(
+    client: TestClient,
+    acquisition_context: dict[str, object],
+) -> None:
+    """Scraper placeholders like 'N/A' never become catalog colours."""
+
+    token = str(acquisition_context["token"])
+
+    response = client.post(
+        MATCH_ENDPOINT,
+        headers=ingestion_headers(),
+        json={
+            "title": (
+                f"Acquisition Test Phone "
+                f"{token} 8GB 256GB"
+            ),
+            "color": "N/A",
+            "ram_gb": 8,
+            "storage_gb": 256,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    # Without a clean colour the request matches the existing Black
+    # variant on name/brand/ram/storage identity; no auto-create.
+    assert body["matched"] is True
+    assert "auto-created" not in body["reason"].lower()
 
 
 def test_product_match_rejects_vague_title(

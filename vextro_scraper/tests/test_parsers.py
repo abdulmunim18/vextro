@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from scrapy.http import HtmlResponse, Request, TextResponse
 
+from vextro_scraper.items import SmartphoneItem
 from vextro_scraper.pipelines import (
     VextroCleaningPipeline,
     infer_brand,
@@ -288,3 +289,165 @@ def test_priceoye_review_parser_rejects_advertised_broken_markup():
 
     with pytest.raises(PriceOyeReviewParserError):
         list(spider.parse_reviews(response, 'broken-listing'))
+
+
+def _load_iphone17_response():
+    fixture = (
+        Path(__file__).parent
+        / 'fixtures'
+        / 'priceoye_iphone17_colors.html'
+    ).read_bytes()
+    return HtmlResponse(
+        url='https://priceoye.pk/mobiles/apple/apple-iphone-17',
+        encoding='utf-8',
+        body=fixture,
+        request=Request(
+            url='https://priceoye.pk/mobiles/apple/apple-iphone-17',
+            meta={
+                'item': {
+                    'platform': 'PriceOye',
+                    'model': 'Apple Iphone 17',
+                    'external_id': 'apple-iphone-17',
+                },
+            },
+        ),
+    )
+
+
+def test_priceoye_color_variants_parsing_is_accurate():
+    """Every <ul.colors> li must map to a distinct variant entry.
+
+    Live PriceOye markup for the iPhone 17 as of 2026-10-01 lists five
+    colours; Black, White and Mist Blue carry a <span class="sold-out-tag">
+    marker while Sage (active) and Lavender do not. The parser must
+    reflect that split exactly, since the UI reads is_available
+    directly from this signal.
+    """
+
+    response = _load_iphone17_response()
+    variants = PriceoyeSpider.extract_color_variants(response)
+
+    assert [variant['color'] for variant in variants] == [
+        'Black', 'White', 'Sage', 'Lavender', 'Mist Blue',
+    ]
+    assert [variant['slug'] for variant in variants] == [
+        'black', 'white', 'sage', 'lavender', 'mist_blue',
+    ]
+    assert [variant['is_available'] for variant in variants] == [
+        False, False, True, True, False,
+    ]
+    assert [variant['active'] for variant in variants] == [
+        False, False, True, False, False,
+    ]
+    assert variants[2]['thumbnail_url'].endswith(
+        'apple-iphone-17-pakistan-priceoye-yknw6-100x100.webp',
+    )
+
+
+def test_priceoye_extract_prices_captures_discount():
+    """The scraper reads both the headline price and the pre-discount
+    original. ``<sup>Rs</sup>`` and the numeric text sit in sibling
+    nodes, so a single space between them is expected and the
+    downstream cleaning pipeline strips it."""
+
+    response = _load_iphone17_response()
+    current, original = PriceoyeSpider.extract_prices(response)
+    assert current == 'Rs 384,999'
+    assert original == 'Rs 399,000'
+
+
+def test_priceoye_parse_product_yields_one_item_per_color():
+    """parse_product must fan out one SmartphoneItem per colour.
+
+    Each colour gets a stable external_id (base slug + '--' + colour
+    slug), the correct availability, and a 500x500 image rewritten
+    from the inline 100x100 swatch when it is not the active colour.
+    Exactly one review-fetch Request is scheduled against the
+    alphabetically-first colour (``apple-iphone-17--black`` here) so
+    reviews land on a deterministic listing across runs.
+    """
+
+    spider = PriceoyeSpider()
+    response = _load_iphone17_response()
+
+    emitted = list(spider.parse_product(response))
+
+    items = [entry for entry in emitted if isinstance(entry, SmartphoneItem)]
+    requests = [entry for entry in emitted if isinstance(entry, Request)]
+
+    assert len(items) == 5
+    assert [item['color'] for item in items] == [
+        'Black', 'White', 'Sage', 'Lavender', 'Mist Blue',
+    ]
+    assert [item['availability'] for item in items] == [
+        'Out of Stock', 'Out of Stock', 'In Stock', 'In Stock', 'Out of Stock',
+    ]
+    assert [item['external_id'] for item in items] == [
+        'apple-iphone-17--black',
+        'apple-iphone-17--white',
+        'apple-iphone-17--sage',
+        'apple-iphone-17--lavender',
+        'apple-iphone-17--mist_blue',
+    ]
+    # Every colour variant inherits the same product-level pricing.
+    for item in items:
+        assert item['price'] == 'Rs 384,999'
+        assert item['original_price'] == 'Rs 399,000'
+        assert item['model'] == 'Apple Iphone 17'
+        assert item['warranty'] == '1 Year Official Warranty'
+
+    # Active colour (Sage) reuses the full-size gallery image; the
+    # other colours promote their 100x100 swatch into 500x500.
+    sage_item = next(item for item in items if item['color'] == 'Sage')
+    assert any(
+        'mxvta-500x500.webp' in url for url in sage_item['image_urls']
+    )
+    black_item = next(item for item in items if item['color'] == 'Black')
+    assert black_item['image_urls'] == [
+        'https://images.priceoye.pk/apple-iphone-17-pakistan-priceoye-wr7vg-500x500.webp',
+    ]
+
+    # Reviews attach to the alphabetically-first colour (Black) so the
+    # mapping stays stable even when PriceOye swaps the active colour.
+    assert len(requests) == 1
+    review_request = requests[0]
+    assert review_request.url.endswith('/apple-iphone-17/reviews')
+    assert review_request.cb_kwargs['external_listing_id'] == (
+        'apple-iphone-17--black'
+    )
+
+
+def test_priceoye_parse_product_falls_back_when_no_color_selector():
+    """Products without ``ul.colors`` must still produce one listing.
+
+    This preserves the old single-item behaviour for SKUs that
+    PriceOye lists as a single-colour product, so a markup change
+    does not silently drop them from the catalog.
+    """
+
+    body = (
+        b"<html><body><h1>Mono Phone</h1>"
+        b"<div class='product-price'><span class='summary-price'>Rs10,000</span></div>"
+        b"</body></html>"
+    )
+    response = HtmlResponse(
+        url='https://priceoye.pk/mobiles/test/mono-phone',
+        encoding='utf-8',
+        body=body,
+        request=Request(
+            url='https://priceoye.pk/mobiles/test/mono-phone',
+            meta={
+                'item': {
+                    'platform': 'PriceOye',
+                    'model': 'Mono Phone',
+                    'external_id': 'mono-phone',
+                },
+            },
+        ),
+    )
+
+    emitted = list(PriceoyeSpider().parse_product(response))
+    items = [entry for entry in emitted if isinstance(entry, SmartphoneItem)]
+    assert len(items) == 1
+    assert items[0]['color'] == 'N/A'
+    assert items[0]['external_id'] == 'mono-phone'
