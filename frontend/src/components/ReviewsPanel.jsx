@@ -365,7 +365,9 @@ function TrustRecommendation({ groups }) {
   );
 }
 
-function ReviewsPanel({ productId, listings = [] }) {
+// The parent renders this with key={productId}, so each product gets a
+// fresh instance that starts in the loading state.
+function ReviewsPanel({ productId }) {
   const [reviewsResponse, setReviewsResponse] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -377,7 +379,6 @@ function ReviewsPanel({ productId, listings = [] }) {
     }
 
     let isMounted = true;
-    setIsLoading(true);
 
     async function loadReviews() {
       try {
@@ -421,26 +422,6 @@ function ReviewsPanel({ productId, listings = [] }) {
     };
   }, [productId]);
 
-  // Map every listing_id to its platform_code so we can partition the
-  // analysis payload (whose per-review items only carry listing_id).
-  const listingToPlatform = useMemo(() => {
-    const map = new Map();
-    const platformNameById = new Map();
-    listings.forEach((listing) => {
-      map.set(listing.id, listing.platform_id);
-      if (listing.platform_code && listing.platform_id) {
-        platformNameById.set(
-          listing.platform_id,
-          listing.platform_code,
-        );
-      }
-    });
-    // Reviews response items carry platform_code directly, so we can
-    // reverse-derive it from any observed review when the listing
-    // response has been trimmed elsewhere.
-    return { map, platformNameById };
-  }, [listings]);
-
   const platformGroups = useMemo(() => {
     const reviews = reviewsResponse?.items ?? [];
     const analysisReviews = analysis?.reviews ?? [];
@@ -464,9 +445,8 @@ function ReviewsPanel({ productId, listings = [] }) {
       });
       const averageRating = total > 0 ? sumRating / total : null;
 
-      // Correlate analysis items to this platform via listing_id ->
-      // platform_code from the reviews list, since analysis payload
-      // does not include platform_code itself.
+      // The analysis payload does not name the marketplace, so tie
+      // each scored review back to it through the review list.
       const reviewIdToPlatform = new Map(
         reviews.map((review) => [review.id, review.platform_code]),
       );

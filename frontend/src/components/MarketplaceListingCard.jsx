@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import {
   formatDate,
   formatPrice,
@@ -45,6 +47,17 @@ function MarketplaceListingCard({
     getMarketplaceDestination(listing, platformName);
 
   const isUnavailable = !listing.is_available;
+
+  // Crawls run every 12 hours. An offer not confirmed for two days was
+  // missed by several crawls in a row, so its price is shown as dated
+  // rather than presented as current.
+  const [renderedAt] = useState(() => Date.now());
+  const lastSeen = listing.last_seen_at
+    ? new Date(listing.last_seen_at).getTime()
+    : Number.NaN;
+  const isPriceStale =
+    Number.isFinite(lastSeen) &&
+    renderedAt - lastSeen > 48 * 60 * 60 * 1000;
 
   return (
     <article
@@ -104,6 +117,12 @@ function MarketplaceListingCard({
             {discountPercentage ? (
               <span className="rounded-full bg-amber-50 px-3 py-1.5 text-[10px] font-black text-amber-700">
                 {discountPercentage}% off
+              </span>
+            ) : null}
+
+            {isPriceStale ? (
+              <span className="rounded-full border border-amber-200 bg-white px-3 py-1.5 text-[10px] font-black text-amber-700">
+                Price last confirmed {formatDate(listing.last_seen_at)}
               </span>
             ) : null}
           </div>
