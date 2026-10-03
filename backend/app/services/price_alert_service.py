@@ -4,7 +4,11 @@ from sqlalchemy.orm import Session
 from datetime import UTC, datetime
 from app.models.price_alert import PriceAlert
 from decimal import Decimal
-from app.services.notification_service import create_price_drop_notification
+from app.models.notification_event import EVENT_TYPE_PRICE_DROP
+from app.services.notification_dispatcher import (
+    NotificationEventRequest,
+    dispatch_event,
+)
 from app.repositories.price_alert_repository import (
     create_price_alert,
     deactivate_price_alert,
@@ -22,6 +26,25 @@ from app.schemas.price_intelligence import (
     PriceAlertResponse,
     PriceAlertUpdate,
 )
+
+
+def build_price_alert_event_key(
+    *,
+    alert_id: int,
+    arming_generation: int,
+) -> str:
+    """Return the idempotency key for one price-alert trigger.
+
+    Price alerts are one-time: ``is_triggered`` latches on the first
+    qualifying observation and is only cleared when the owner reactivates
+    the alert, which starts a new arming generation. Keying on
+    ``(alert_id, generation)`` therefore makes a replayed or retried price
+    observation a no-op while still allowing a genuine re-arm to notify.
+    """
+
+    return f"price_alert:{alert_id}:trigger:{arming_generation}"
+
+
 def evaluate_price_alerts_for_capture(
     database_session: Session,
     *,
@@ -29,8 +52,13 @@ def evaluate_price_alerts_for_capture(
     listing_id: int,
     current_price: Decimal,
     currency: str,
+    marketplace_name: str | None = None,
 ) -> int:
-    """Evaluate active alerts affected by one marketplace price capture."""
+    """Evaluate active alerts affected by one marketplace price capture.
+
+    In-app notifications, email and Web Push are all queued through the
+    central dispatcher; this function contains no SMTP or push logic.
+    """
 
     alerts = list_active_price_alerts_for_capture(
         database_session,
@@ -66,19 +94,53 @@ def evaluate_price_alerts_for_capture(
         if current_price > alert.target_price:
             continue
 
+        event = dispatch_event(
+            database_session,
+            NotificationEventRequest(
+                user_id=alert.user_id,
+                event_key=build_price_alert_event_key(
+                    alert_id=alert.id,
+                    arming_generation=alert.notification_count,
+                ),
+                event_type=EVENT_TYPE_PRICE_DROP,
+                title="Price target reached",
+                message=(
+                    f"{product_name} is now available at "
+                    f"{currency} {current_price:,.2f}. "
+                    f"Your target was "
+                    f"{currency} {alert.target_price:,.2f}."
+                ),
+                push_body=(
+                    f"{product_name} is now "
+                    f"{currency} {current_price:,.2f}. "
+                    f"Your target was "
+                    f"{currency} {alert.target_price:,.2f}."
+                ),
+                action_path=f"/products/{canonical_product_id}",
+                price_alert_id=alert.id,
+                canonical_product_id=canonical_product_id,
+                payload={
+                    "product_name": product_name,
+                    "current_price": str(current_price),
+                    "target_price": str(alert.target_price),
+                    "savings": str(
+                        alert.target_price - current_price
+                    ),
+                    "currency": currency,
+                    "marketplace": marketplace_name or "",
+                    "listing_id": listing_id,
+                    "observed_at": checked_at.isoformat(),
+                },
+            ),
+        )
+
         alert.is_triggered = True
         alert.triggered_at = checked_at
 
-        create_price_drop_notification(
-            database_session,
-            user_id=alert.user_id,
-            price_alert_id=alert.id,
-            canonical_product_id=canonical_product_id,
-            product_name=product_name,
-            current_price=current_price,
-            target_price=alert.target_price,
-            currency=currency,
-        )
+        if event is None:
+            # This trigger was already dispatched; keep the latch but do
+            # not inflate the user-visible notification counters.
+            continue
 
         alert.notification_count += 1
         alert.last_notified_at = checked_at

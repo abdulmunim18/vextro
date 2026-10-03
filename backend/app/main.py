@@ -1,3 +1,4 @@
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,6 +8,10 @@ from app.api.routes.product_catalog import router as product_catalog_router
 
 from app.api.routes.health import router as health_router
 from app.core.config import settings
+from app.core.scheduler import (
+    shutdown_notification_scheduler,
+    start_notification_scheduler,
+)
 from app.core.scraper_supervisor import (
     scraper_scheduler_supervisor,
 )
@@ -36,20 +41,36 @@ from app.api.routes.warehouse import router as warehouse_router
 from app.api.routes.seller_trust import router as seller_trust_router
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
-    """Optionally run the scraper scheduler for the life of the API.
+async def lifespan(
+    _app: FastAPI,
+) -> AsyncGenerator[None, None]:
+    """Run both background workers for the life of the API.
 
-    The scheduler runs as its own process and guards itself with an
-    operating-system lock, so ``uvicorn --reload`` and multi-worker runs
-    cannot produce two of them.
+    Two independent things attach to the application lifecycle:
+
+    * the notification digest scheduler, an in-process APScheduler enabled by
+      ``DIGEST_SCHEDULER_ENABLED``;
+    * the smartphone crawl scheduler, a separate process enabled by
+      ``SCRAPER_AUTOSTART_WITH_API``, which guards itself with an
+      operating-system lock so ``uvicorn --reload`` and multi-worker runs
+      cannot produce two of them.
+
+    Both are opt-in and start independently, so neither feature's
+    configuration can switch the other on or off.
     """
 
+    start_notification_scheduler()
     scraper_scheduler_supervisor.start()
 
     try:
         yield
     finally:
-        scraper_scheduler_supervisor.stop()
+        # Shut down in reverse order, and keep the two teardowns
+        # independent: a failure stopping one must not leak the other.
+        try:
+            scraper_scheduler_supervisor.stop()
+        finally:
+            shutdown_notification_scheduler()
 
 
 app = FastAPI(

@@ -994,6 +994,108 @@ page_size
 
 ---
 
+## PATCH `/api/v1/notifications/read-all`
+
+**Access:** Authenticated  
+**Purpose:** Mark every unread notification belonging to the caller as read.
+
+---
+
+## GET `/api/v1/notifications/preferences`
+
+**Access:** Authenticated  
+**Purpose:** Read the caller's delivery preferences, the server's email and
+push capability flags, and the public VAPID application server key.
+
+### Response
+
+```json
+{
+  "price_alert_in_app": true,
+  "price_alert_email": true,
+  "price_alert_push": true,
+  "competitor_alert_in_app": true,
+  "competitor_alert_email": true,
+  "competitor_alert_push": true,
+  "digest_frequency": "off",
+  "digest_timezone": "Asia/Karachi",
+  "is_email_configured": true,
+  "is_push_configured": true,
+  "active_push_subscription_count": 1,
+  "vapid_public_key": "<public key>"
+}
+```
+
+In-app channels are always enabled and are reported read-only. The VAPID
+private key and SMTP credentials are never returned.
+
+---
+
+## PATCH `/api/v1/notifications/preferences`
+
+**Access:** Authenticated  
+**Purpose:** Update only the caller's own preferences. Omitted fields are
+left unchanged; unknown fields are rejected with `422`.
+
+### Request
+
+```json
+{
+  "price_alert_email": false,
+  "price_alert_push": true,
+  "competitor_alert_email": true,
+  "competitor_alert_push": true,
+  "digest_frequency": "daily"
+}
+```
+
+`digest_frequency` accepts `off`, `daily` or `weekly`.
+
+---
+
+## POST `/api/v1/notifications/push/subscribe`
+
+**Access:** Authenticated  
+**Purpose:** Register a browser Web Push subscription for the caller.
+Re-sending the same endpoint updates the existing row instead of creating
+a duplicate.
+
+### Request
+
+```json
+{
+  "endpoint": "https://fcm.googleapis.com/fcm/send/...",
+  "keys": {
+    "p256dh": "<browser public key>",
+    "auth": "<browser auth secret>"
+  }
+}
+```
+
+`endpoint` must be an absolute `https://` URL. Returns `201` with the
+stored subscription id and active flag.
+
+---
+
+## DELETE `/api/v1/notifications/push/unsubscribe`
+
+**Access:** Subscription owner  
+**Purpose:** Disable a browser subscription the caller owns.
+
+### Request
+
+```json
+{
+  "endpoint": "https://fcm.googleapis.com/fcm/send/..."
+}
+```
+
+Returns `{"deactivated": true}` when the caller owned the endpoint, and
+`{"deactivated": false}` otherwise, so the endpoint cannot be used to
+disable another user's subscription.
+
+---
+
 ## POST `/api/v1/reports`
 
 **Access:** Authenticated  
@@ -1187,6 +1289,7 @@ The following contracts complete the consumer decision-support, SME intelligence
 - `GET /api/v1/products/{product_id}/personalized-buy-guidance` requires a consumer/admin bearer token and overlays the user's active product or listing price alert on the historical signal. A product-wide alert is preferred; otherwise the newest available listing alert is used.
 - `/api/v1/price-alerts` manages authenticated price alerts; alert evaluation is connected to acquisition ingestion.
 - `/api/v1/notifications` lists and acknowledges consumer and SME notifications.
+- `/api/v1/notifications/preferences` and `/api/v1/notifications/push/*` manage per-user email, browser-push and digest delivery. See `docs/notification-and-reporting-engine.md` for the delivery architecture, SMTP and VAPID setup, and the digest scheduler.
 
 Personalized guidance returns the base history fields plus:
 
