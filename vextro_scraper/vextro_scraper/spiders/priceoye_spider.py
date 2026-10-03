@@ -2,6 +2,15 @@ import scrapy
 import re
 from datetime import datetime, timezone
 from vextro_scraper.items import ReviewBatchItem, SmartphoneItem
+from vextro_scraper.normalizers import (
+    extract_json_ld_products,
+    json_ld_availability,
+    json_ld_offer,
+    optional_text,
+    parse_count,
+    parse_price,
+    parse_rating,
+)
 
 
 class PriceOyeReviewParserError(ValueError):
@@ -20,7 +29,7 @@ class PriceOyeReviewFetchError(RuntimeError):
 class PriceoyeSpider(scrapy.Spider):
     name = "priceoye_smartphones"
     platform_code = "priceoye"
-    parser_version = "priceoye-v2-reviews"
+    parser_version = "priceoye-v3-structured-offers"
     allowed_domains = ["priceoye.pk"]
     start_urls = ["https://priceoye.pk/mobiles"]
 
@@ -76,8 +85,28 @@ class PriceoyeSpider(scrapy.Spider):
         return specifications
 
     @staticmethod
-    def extract_availability(response):
-        """Read PriceOye's embedded variant data before text fallbacks."""
+    def extract_offer(response):
+        """Return PriceOye's own structured offer for this product.
+
+        The product page embeds a schema.org ``Product`` block holding the
+        current price, availability and aggregate rating. That is the
+        marketplace stating those facts in machine-readable form, so it is
+        preferred over presentation markup, which changes without notice.
+        """
+
+        for product in extract_json_ld_products(response.text):
+            if json_ld_offer(product) is not None:
+                return product
+
+        return None
+
+    @staticmethod
+    def extract_availability(response, product=None):
+        """Read PriceOye's structured availability before text fallbacks."""
+
+        structured = json_ld_availability(product)
+        if structured is not None:
+            return structured
 
         page_source = response.text
         structured_availability = re.findall(
@@ -156,6 +185,68 @@ class PriceoyeSpider(scrapy.Spider):
             yield response.follow(next_page, callback=self.parse)
 
 
+    @staticmethod
+    def extract_prices(response, product=None):
+        """Return ``(current_price, original_price)`` for a product page.
+
+        The structured offer carries the current price. The struck-through
+        retail price only exists in markup, so it is read from the pricing
+        box and discarded unless it is genuinely above the selling price.
+        """
+
+        offer = json_ld_offer(product)
+        current_price = (
+            parse_price(offer.get('price')) if offer is not None else None
+        )
+
+        pricing_text = "".join(
+            part.strip()
+            for part in response.css('div.product-price ::text').getall()
+            if part.strip()
+        )
+
+        if current_price is None:
+            current_price = parse_price(
+                next(
+                    iter(
+                        re.findall(r'Rs\s?[\d,]+', pricing_text)
+                    ),
+                    None,
+                )
+            )
+
+        original_price = parse_price(
+            response.css(
+                '.retail-price .summary-price::text, '
+                '.retail-price ::text, '
+                '.market-price ::text, '
+                '.summary-price.line-through::text'
+            ).re_first(r'[\d,]{3,}')
+        )
+
+        if (
+            original_price is not None
+            and current_price is not None
+            and original_price <= current_price
+        ):
+            original_price = None
+
+        return current_price, original_price
+
+    @staticmethod
+    def extract_rating(product):
+        """Return ``(rating, review_count)`` from the structured aggregate."""
+
+        aggregate = (product or {}).get('aggregateRating')
+
+        if not isinstance(aggregate, dict):
+            return None, 0
+
+        return (
+            parse_rating(aggregate.get('ratingValue')),
+            parse_count(aggregate.get('ratingCount')) or 0,
+        )
+
     def parse_product(self, response):
         item = response.meta['item']
         item['product_url'] = response.url
@@ -164,8 +255,11 @@ class PriceoyeSpider(scrapy.Spider):
             or response.url.rstrip('/').split('/')[-1]
         )
 
+        product = self.extract_offer(response)
+
         item['brand'] = (
-            response.css(
+            optional_text((product or {}).get('brand'), max_length=120)
+            or response.css(
                 '[itemprop="brand"]::attr(content), '
                 '[itemprop="brand"] ::text, '
                 '.product-brand ::text, '
@@ -175,40 +269,58 @@ class PriceoyeSpider(scrapy.Spider):
                 'meta[property="product:brand"]::attr(content)'
             ).get()
         )
-        
-        # 1. Clean Price: Extract ONLY the first price matching pattern "Rs X,XXX" or "Rs XX,XXX"
-        price_raw = response.css('div.product-price ::text').getall()
-        full_price_str = "".join([p.strip() for p in price_raw if p.strip()])
-        price_match = re.search(r'Rs\s?[\d,]+', full_price_str)
-        if price_match:
-            item['price'] = price_match.group(0)
+        item['sku'] = optional_text(
+            (product or {}).get('productID')
+            or (product or {}).get('sku'),
+            max_length=120,
+        )
 
-        # 2. Extract Color
-        color = response.css('ul.colors li.active ::text').get()
-        item['color'] = color.strip() if color else 'N/A'
-        
-        # 3. Extract Variant (RAM/Storage):
+        # 1. Price: the structured offer first, pricing markup as a fallback.
+        current_price, original_price = self.extract_prices(
+            response,
+            product,
+        )
+        if current_price is not None:
+            item['price'] = current_price
+        item['original_price'] = original_price
+
+        # 2. Review aggregate published alongside the offer.
+        rating, review_count = self.extract_rating(product)
+        item['rating'] = rating
+        item['review_count'] = review_count
+
+        # 3. Extract Color
+        item['color'] = optional_text(
+            response.css('ul.colors li.active .color-name::text').get()
+            or response.css('ul.colors li.active ::text').get(),
+            max_length=80,
+        )
+
+        # 4. Extract Variant (RAM/Storage):
         # First check title regex, then check page active buttons
         title_variant = re.search(r'\(\d+GB.*?\)', item.get('model', ''))
         variant_btn = response.css('div.po-variant-card ul.variants li.active ::text').get()
-        
+
         if title_variant:
             item['variant'] = title_variant.group(0)
-        elif variant_btn:
-            item['variant'] = variant_btn.strip()
         else:
-            item['variant'] = 'Standard'
+            item['variant'] = optional_text(variant_btn, max_length=120)
 
-        # 4. Availability
+        # 5. Availability
         item['availability'] = (
             'In Stock'
-            if self.extract_availability(response)
+            if self.extract_availability(response, product)
             else 'Out of Stock'
         )
 
-        # 5. Warranty: Set clean default unless explicitly found
-        warranty_text = response.xpath('//table//td[contains(text(), "Warranty")]/following-sibling::td/text()').get()
-        item['warranty'] = warranty_text.strip() if warranty_text else 'Official Brand Warranty'
+        # 6. Warranty: only record what the page actually states.
+        item['warranty'] = optional_text(
+            response.xpath(
+                '//table//td[contains(text(), "Warranty")]'
+                '/following-sibling::td/text()'
+            ).get(),
+            max_length=255,
+        )
 
         # PriceOye's current product gallery uses full-size main-product-img
         # elements. OpenGraph is retained as a fallback for markup changes.

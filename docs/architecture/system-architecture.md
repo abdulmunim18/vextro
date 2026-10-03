@@ -314,3 +314,45 @@ During development, all services may run locally:
 - Background jobs started manually or through a local scheduler
 
 For final deployment, frontend, backend, database and worker processes may be deployed independently.
+
+---
+
+## Notification Delivery (Module 6.14)
+
+The "Notification & Reports API" and "Scheduled Jobs" boxes above are
+implemented as a single dispatcher fanning one event out to three
+channels, with a transactional outbox between the business transaction and
+the network transports:
+
+```mermaid
+flowchart TD
+    PRICE["Price Alert Service"] --> DISPATCH["Notification Dispatcher"]
+    RISK["Competitor Alert Service"] --> DISPATCH
+
+    DISPATCH --> INAPP["In-App Channel<br/>notifications"]
+    DISPATCH --> EMAILQ["Email Channel<br/>notification_deliveries (pending)"]
+    DISPATCH --> PUSHQ["Web Push Channel<br/>notification_deliveries (pending)"]
+
+    EMAILQ --> COMMIT["Business Transaction Commit"]
+    PUSHQ --> COMMIT
+    INAPP --> COMMIT
+
+    COMMIT --> OUTBOX["dispatch_pending_deliveries"]
+    SCHED["APScheduler / cron outbox job"] --> OUTBOX
+
+    OUTBOX --> SMTP["SMTP (smtplib + TLS)"]
+    OUTBOX --> VAPID["Web Push (pywebpush + VAPID)"]
+
+    SCHED --> DIGEST["Digest Service"]
+    DIGEST --> REPORTS["Existing PDF / Excel Report Services"]
+    DIGEST --> SMTP
+```
+
+Email and Web Push are secondary channels contacted only after the price
+observation is durably committed, so a transport failure can never roll
+back a price capture, a price alert or an in-app notification.
+`notification_events.event_key` is unique, which makes a retried job or a
+re-processed observation produce no duplicate on any channel.
+
+See `docs/notification-and-reporting-engine.md` for configuration, the
+digest scheduler, security properties and known limitations.

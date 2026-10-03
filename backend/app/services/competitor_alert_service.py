@@ -8,8 +8,33 @@ from sqlalchemy.orm import Session
 
 from app.models.business_product import BusinessProduct
 from app.models.competitor_watchlist import CompetitorWatchlist
+from app.models.notification_event import EVENT_TYPE_COMPETITOR_RISK
 from app.models.organization import Organization
-from app.repositories.notification_repository import create_notification
+from app.services.notification_dispatcher import (
+    NotificationEventRequest,
+    dispatch_event,
+)
+
+
+def build_competitor_risk_event_key(
+    *,
+    watchlist_id: int,
+    own_price: Decimal,
+    competitor_price: Decimal,
+) -> str:
+    """Return the idempotency key for one competitor-risk transition.
+
+    Risk alerts are edge-triggered on ``last_risk_level`` moving into
+    ``high``, so a replayed observation is normally stopped by that latch.
+    Keying additionally on both prices makes the dispatch itself
+    idempotent: re-processing the exact same observation produces the same
+    key and delivers nothing further.
+    """
+
+    return (
+        "competitor_risk:"
+        f"{watchlist_id}:{own_price}:{competitor_price}"
+    )
 
 
 def evaluate_competitor_risk_alerts(
@@ -18,6 +43,7 @@ def evaluate_competitor_risk_alerts(
     listing_id: int,
     competitor_price: Decimal,
     currency: str,
+    marketplace_name: str | None = None,
 ) -> int:
     """Notify organization owners only when risk crosses into high."""
 
@@ -46,6 +72,7 @@ def evaluate_competitor_risk_alerts(
         .with_for_update()
     )
     triggered = 0
+    detected_at = datetime.now(timezone.utc)
 
     for watchlist, product, organization in database_session.execute(
         statement
@@ -70,21 +97,46 @@ def evaluate_competitor_risk_alerts(
             risk_level = "low"
 
         if risk_level == "high" and watchlist.last_risk_level != "high":
-            create_notification(
+            event = dispatch_event(
                 database_session,
-                user_id=organization.owner_user_id,
-                canonical_product_id=product.canonical_product_id,
-                notification_type="competitor_risk",
-                title="Competitor price risk detected",
-                message=(
-                    f"{product.name} is {gap_percentage}% above a "
-                    f"monitored competitor at {currency} "
-                    f"{competitor_price:,.2f}."
+                NotificationEventRequest(
+                    user_id=organization.owner_user_id,
+                    event_key=build_competitor_risk_event_key(
+                        watchlist_id=watchlist.id,
+                        own_price=product.selling_price,
+                        competitor_price=competitor_price,
+                    ),
+                    event_type=EVENT_TYPE_COMPETITOR_RISK,
+                    title="Competitor price risk detected",
+                    message=(
+                        f"{product.name} is {gap_percentage}% above a "
+                        f"monitored competitor at {currency} "
+                        f"{competitor_price:,.2f}."
+                    ),
+                    push_body=(
+                        "A competitor price change may affect your "
+                        "pricing position."
+                    ),
+                    action_path="/sme",
+                    canonical_product_id=product.canonical_product_id,
+                    payload={
+                        "product_name": product.name,
+                        "own_price": str(product.selling_price),
+                        "competitor_price": str(competitor_price),
+                        "price_gap_percentage": str(gap_percentage),
+                        "risk_level": risk_level,
+                        "currency": currency,
+                        "marketplace": marketplace_name or "",
+                        "listing_id": listing_id,
+                        "organization_id": organization.id,
+                        "observed_at": detected_at.isoformat(),
+                    },
                 ),
-                action_path="/sme",
             )
-            watchlist.last_alerted_at = datetime.now(timezone.utc)
-            triggered += 1
+
+            if event is not None:
+                watchlist.last_alerted_at = detected_at
+                triggered += 1
 
         watchlist.last_risk_level = risk_level
 

@@ -13,6 +13,8 @@ from scrapy.exceptions import DropItem
 BULK_ITEM_QUEUED = object()
 BULK_ITEM_DELIVERED = object()
 BULK_ITEM_FAILED = object()
+CANONICAL_PRODUCT_CREATED = object()
+REVIEWS_INGESTED = object()
 
 
 BRAND_ALIASES = (
@@ -236,6 +238,42 @@ class VextroCleaningPipeline:
                 raw_value=raw_price_context,
             ) from exc
 
+        # 1b. An original/list price is optional. A malformed one is simply
+        # dropped: a missing discount must never reject a valid price update.
+        try:
+            original_price = normalize_marketplace_price(
+                adapter.get('original_price')
+            )
+        except ValueError:
+            original_price = None
+
+        if (
+            original_price is not None
+            and original_price <= adapter['price']
+        ):
+            original_price = None
+
+        adapter['original_price'] = original_price
+
+        # 1c. Marketplace review aggregates, bounded to their valid ranges.
+        try:
+            rating = float(adapter.get('rating'))
+        except (TypeError, ValueError):
+            rating = None
+
+        adapter['rating'] = (
+            round(rating, 2)
+            if rating is not None and 0 < rating <= 5
+            else None
+        )
+
+        try:
+            review_count = int(adapter.get('review_count') or 0)
+        except (TypeError, ValueError):
+            review_count = 0
+
+        adapter['review_count'] = max(0, review_count)
+
         # 2. Clean Availability: Convert 'In Stock' to Boolean (True/False)
         avail = adapter.get('availability', '')
         adapter['is_available'] = True if 'In Stock' in avail else False
@@ -373,6 +411,7 @@ class AcquisitionDeliveryError(DropItem):
 
 class VextroApiIngestionPipeline:
     MATCH_PATH = '/api/v1/internal/acquisition/match-product'
+    RESOLVE_PATH = '/api/v1/internal/acquisition/resolve-product'
     PENDING_MATCHES_PATH = '/api/v1/internal/acquisition/pending-matches'
     LISTINGS_PATH = '/api/v1/internal/acquisition/listings'
     BULK_LISTINGS_PATH = '/api/v1/internal/acquisition/listings/bulk'
@@ -680,6 +719,14 @@ class VextroApiIngestionPipeline:
             'ram_gb': ram_gb,
             'storage_gb': storage_gb,
             'color': _optional_text(payload.get('color')),
+            'sku': _optional_text(payload.get('sku')),
+            # The normalized specification sheet lets the backend register a
+            # genuinely new phone with real specs instead of guessing from
+            # the title alone.
+            'specifications': {
+                str(label)[:80]: str(value)[:2000]
+                for label, value in list(specifications.items())[:60]
+            },
         }
 
         return match_payload
@@ -719,6 +766,7 @@ class VextroApiIngestionPipeline:
             'model': payload.get('model'),
             'variant': payload.get('variant'),
             'color': payload.get('color'),
+            'sku': payload.get('sku'),
             'availability': payload.get('availability'),
             'specifications': payload.get('specifications') or {},
             'image_urls': payload.get('image_urls') or [],
@@ -734,7 +782,7 @@ class VextroApiIngestionPipeline:
             'original_price': payload.get('original_price'),
             'currency': str(payload.get('currency') or 'PKR').upper(),
             'rating': payload.get('rating'),
-            'review_count': payload.get('review_count', 0),
+            'review_count': payload.get('review_count') or 0,
             'warranty': _optional_text(payload.get('warranty')),
             'is_available': bool(payload.get('is_available')),
             'scraped_at': _normalize_scraped_at(
@@ -752,6 +800,12 @@ class VextroApiIngestionPipeline:
         context = self._context(payload)
 
         if payload.get('reviews') is not None:
+            # Reviews are resolved by (platform, external listing id), so the
+            # listing must already be in the database. Buffered listings are
+            # delivered first, otherwise a brand-new product's reviews would
+            # be rejected as "listing unresolved" until the next crawl.
+            self._flush_listing_buffer(spider)
+
             review_payload = {
                 'platform_code': str(
                     payload.get('platform') or ''
@@ -802,13 +856,33 @@ class VextroApiIngestionPipeline:
                 ingestion_result.get('created_count'),
                 ingestion_result.get('duplicate_count'),
             )
+            self._send_signal(
+                REVIEWS_INGESTED,
+                created_count=int(
+                    ingestion_result.get('created_count') or 0
+                ),
+                duplicate_count=int(
+                    ingestion_result.get('duplicate_count') or 0
+                ),
+                spider=spider,
+            )
             return item
 
         match_result = self._post_json(
-            self.MATCH_PATH,
+            self.RESOLVE_PATH,
             self._build_match_payload(payload),
             context,
         )
+
+        if match_result.get('product_created'):
+            logging.info(
+                'Canonical product created from marketplace discovery (%s).',
+                context,
+            )
+            self._send_signal(
+                CANONICAL_PRODUCT_CREATED,
+                spider=spider,
+            )
 
         product_variant_id = match_result.get('product_variant_id')
         if not match_result.get('matched') or not product_variant_id:

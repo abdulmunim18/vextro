@@ -1,12 +1,18 @@
 """Schemas for marketplace product-to-variant matching."""
 
+from typing import Any, Literal
+
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    field_validator,
 )
 
 from app.schemas.acquisition import PlatformCode
+
+
+MatchTier = Literal["EXACT", "HIGH", "MEDIUM", "LOW"]
 
 
 class ProductMatchRequest(BaseModel):
@@ -57,6 +63,41 @@ class ProductMatchRequest(BaseModel):
         max_length=120,
     )
 
+    sku: str | None = Field(
+        default=None,
+        max_length=120,
+    )
+
+    specifications: dict[str, Any] = Field(
+        default_factory=dict,
+    )
+
+    @field_validator("specifications")
+    @classmethod
+    def bound_specifications(
+        cls,
+        value: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Keep normalized specification payloads deliberately small."""
+
+        if len(value) > 60:
+            raise ValueError(
+                "specifications must contain at most 60 fields"
+            )
+
+        return value
+
+
+class ProductResolveRequest(ProductMatchRequest):
+    """A match request that may also create missing catalog records."""
+
+    allow_create: bool = True
+
+    category_slug: str | None = Field(
+        default=None,
+        max_length=120,
+    )
+
 
 class ProductMatchResponse(BaseModel):
     """Best VEXTRO product variant match."""
@@ -71,6 +112,8 @@ class ProductMatchResponse(BaseModel):
         ge=0,
         le=100,
     )
+
+    match_tier: MatchTier = "LOW"
 
     product_variant_id: int | None = Field(
         default=None,
@@ -104,3 +147,10 @@ class ProductMatchResponse(BaseModel):
     color: str | None = None
 
     reason: str
+
+
+class ProductResolveResponse(ProductMatchResponse):
+    """A match response that reports any catalog records it created."""
+
+    product_created: bool = False
+    variant_created: bool = False

@@ -39,6 +39,12 @@ class ScrapeRunFinishInput(BaseModel):
     items_rejected: int = Field(ge=0)
     items_failed: int = Field(ge=0)
     error_count: int = Field(ge=0)
+    products_created: int = Field(default=0, ge=0)
+    listings_created: int = Field(default=0, ge=0)
+    listings_updated: int = Field(default=0, ge=0)
+    price_changes: int = Field(default=0, ge=0)
+    reviews_added: int = Field(default=0, ge=0)
+    error_summary: str | None = Field(default=None, max_length=500)
 
 
 class ScrapeErrorInput(BaseModel):
@@ -103,6 +109,12 @@ class ScrapeRunResponse(BaseModel):
     items_rejected: int
     items_failed: int
     error_count: int
+    products_created: int
+    listings_created: int
+    listings_updated: int
+    price_changes: int
+    reviews_added: int
+    error_summary: str | None
     trigger_type: TriggerType
     parser_version: str
     created_at: datetime

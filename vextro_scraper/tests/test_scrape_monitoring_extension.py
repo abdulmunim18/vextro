@@ -92,6 +92,11 @@ def test_extension_records_partial_run_lifecycle_and_counters():
         'items_rejected': 1,
         'items_failed': 1,
         'error_count': 2,
+        'products_created': 0,
+        'listings_created': 0,
+        'listings_updated': 0,
+        'price_changes': 0,
+        'reviews_added': 0,
     }
     assert [(call[0], call[1]) for call in session.calls] == [
         ('POST', 'http://backend.test/api/v1/internal/acquisition/runs'),
@@ -132,6 +137,8 @@ def test_extension_records_partial_run_lifecycle_and_counters():
     finish_payload = session.calls[4][2]['json']
     assert finish_payload == {
         'crawl_succeeded': True,
+        # The run explains itself: the dominant failure reasons, ranked.
+        'error_summary': 'backend_timeout=1, invalid_price=1',
         **extension.counters,
     }
     assert all(
@@ -309,6 +316,11 @@ def test_bulk_outcomes_count_items_not_http_requests():
         'items_rejected': 1,
         'items_failed': 1,
         'error_count': 2,
+        'products_created': 0,
+        'listings_created': 1,
+        'listings_updated': 0,
+        'price_changes': 0,
+        'reviews_added': 0,
     }
     assert len(session.calls) == 4
     assert session.calls[2][2]['json']['metadata']['batch_index'] == 1

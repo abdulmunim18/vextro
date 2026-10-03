@@ -111,6 +111,7 @@ def test_bulk_reuses_competitor_alert_evaluation(
         listing_id: int,
         competitor_price: object,
         currency: str,
+        marketplace_name: str | None = None,
     ) -> int:
         calls.append(listing_id)
         assert competitor_price == 120000

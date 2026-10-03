@@ -10,12 +10,18 @@ class SmartphoneItem(scrapy.Item):
     warranty = scrapy.Field()
     is_available = scrapy.Field()
     external_id = scrapy.Field()
-    
+    sku = scrapy.Field()          # Stable marketplace SKU/model code
+
     # Time-Series Data (12-hour refresh cycle)
     price = scrapy.Field()
+    original_price = scrapy.Field()  # Strike-through / list price
     availability = scrapy.Field() # In Stock / Out of Stock
     seller = scrapy.Field()
-    
+
+    # Marketplace review aggregates shown on the listing itself
+    rating = scrapy.Field()
+    review_count = scrapy.Field()
+
     # NLP & Operational Data
     platform = scrapy.Field()     # 'Daraz' or 'PriceOye'
     product_url = scrapy.Field()

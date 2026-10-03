@@ -1,6 +1,8 @@
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
+    Header,
     HTTPException,
     Path,
     Query,
@@ -8,14 +10,26 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session
 
-from app.api.dependencies.roles import consumer_or_admin
+from app.api.dependencies.roles import authenticated_role
 from app.core.database import get_db
 from app.models.user import User
 from app.schemas.notification import (
     NotificationListResponse,
     NotificationMarkAllReadResponse,
+    NotificationPreferenceResponse,
+    NotificationPreferenceUpdate,
     NotificationResponse,
     NotificationUnreadCountResponse,
+    PushSubscriptionCreate,
+    PushSubscriptionResponse,
+    PushUnsubscribeRequest,
+    PushUnsubscribeResponse,
+)
+from app.services.notification_preference_service import (
+    get_user_notification_preferences,
+    register_user_push_subscription,
+    remove_user_push_subscription,
+    update_user_notification_preferences,
 )
 from app.services.notification_service import (
     NotificationNotFoundError,
@@ -67,7 +81,7 @@ def list_notifications_endpoint(
         ge=0,
         description="Number of matching notifications to skip.",
     ),
-    current_user: User = Depends(consumer_or_admin),
+    current_user: User = Depends(authenticated_role),
     database_session: Session = Depends(get_db),
 ) -> NotificationListResponse:
     """Return notifications belonging to the authenticated user."""
@@ -87,7 +101,7 @@ def list_notifications_endpoint(
     status_code=status.HTTP_200_OK,
 )
 def unread_notification_count_endpoint(
-    current_user: User = Depends(consumer_or_admin),
+    current_user: User = Depends(authenticated_role),
     database_session: Session = Depends(get_db),
 ) -> NotificationUnreadCountResponse:
     """Return the authenticated user's unread notification count."""
@@ -104,7 +118,7 @@ def unread_notification_count_endpoint(
     status_code=status.HTTP_200_OK,
 )
 def mark_all_notifications_read_endpoint(
-    current_user: User = Depends(consumer_or_admin),
+    current_user: User = Depends(authenticated_role),
     database_session: Session = Depends(get_db),
 ) -> NotificationMarkAllReadResponse:
     """Mark all notifications belonging to the user as read."""
@@ -126,7 +140,7 @@ def mark_notification_read_endpoint(
         ge=1,
         description="Notification ID.",
     ),
-    current_user: User = Depends(consumer_or_admin),
+    current_user: User = Depends(authenticated_role),
     database_session: Session = Depends(get_db),
 ) -> NotificationResponse:
     """Mark one notification belonging to the user as read."""
@@ -140,3 +154,90 @@ def mark_notification_read_endpoint(
 
     except NotificationNotFoundError as error:
         raise _notification_not_found_exception(error) from error
+
+
+@router.get(
+    "/preferences",
+    response_model=NotificationPreferenceResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Read Notification Preferences",
+)
+def read_notification_preferences_endpoint(
+    current_user: User = Depends(authenticated_role),
+    database_session: Session = Depends(get_db),
+) -> NotificationPreferenceResponse:
+    """Return the authenticated user's own delivery preferences."""
+
+    return get_user_notification_preferences(
+        database_session,
+        user_id=current_user.id,
+    )
+
+
+@router.patch(
+    "/preferences",
+    response_model=NotificationPreferenceResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Update Notification Preferences",
+)
+def update_notification_preferences_endpoint(
+    payload: NotificationPreferenceUpdate,
+    current_user: User = Depends(authenticated_role),
+    database_session: Session = Depends(get_db),
+) -> NotificationPreferenceResponse:
+    """Update only the authenticated user's own delivery preferences."""
+
+    return update_user_notification_preferences(
+        database_session,
+        user_id=current_user.id,
+        payload=payload,
+    )
+
+
+@router.post(
+    "/push/subscribe",
+    response_model=PushSubscriptionResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register Browser Push Subscription",
+)
+def subscribe_push_endpoint(
+    payload: PushSubscriptionCreate,
+    user_agent: str | None = Header(
+        default=None,
+        alias="User-Agent",
+    ),
+    current_user: User = Depends(authenticated_role),
+    database_session: Session = Depends(get_db),
+) -> PushSubscriptionResponse:
+    """Attach a browser push subscription to the authenticated user."""
+
+    return register_user_push_subscription(
+        database_session,
+        user_id=current_user.id,
+        payload=payload,
+        user_agent=(
+            user_agent[:255]
+            if user_agent
+            else None
+        ),
+    )
+
+
+@router.delete(
+    "/push/unsubscribe",
+    response_model=PushUnsubscribeResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Remove Browser Push Subscription",
+)
+def unsubscribe_push_endpoint(
+    payload: PushUnsubscribeRequest = Body(...),
+    current_user: User = Depends(authenticated_role),
+    database_session: Session = Depends(get_db),
+) -> PushUnsubscribeResponse:
+    """Disable a browser push subscription owned by the current user."""
+
+    return remove_user_push_subscription(
+        database_session,
+        user_id=current_user.id,
+        endpoint=payload.endpoint,
+    )

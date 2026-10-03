@@ -112,3 +112,15 @@ VEXTRO_SCRAPE_TRIGGER = os.getenv(
 MAX_REVIEWS_PER_LISTING = int(
     os.getenv("MAX_REVIEWS_PER_LISTING", "50")
 )
+
+# Daraz publishes reviews through its own JSON API, one request per listing.
+# Only listings that advertise reviews are fetched, and the per-run ceiling
+# keeps a 2000-item catalog crawl from turning into thousands of extra
+# requests. Set DARAZ_REVIEWS_ENABLED=false to skip review collection.
+DARAZ_REVIEWS_ENABLED = os.getenv(
+    "DARAZ_REVIEWS_ENABLED",
+    "true",
+).strip().lower() in {"1", "true", "yes", "on"}
+MAX_REVIEW_LISTINGS_PER_RUN = int(
+    os.getenv("MAX_REVIEW_LISTINGS_PER_RUN", "150")
+)

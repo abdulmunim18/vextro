@@ -6,6 +6,7 @@ import {
 } from "react";
 import { Link } from "react-router-dom";
 
+import NotificationSettings from "../components/NotificationSettings";
 import RouteLoadingState from "../components/RouteLoadingState";
 import { useAuth } from "../context/useAuth";
 import { getProductById } from "../services/catalogService";
@@ -728,6 +729,10 @@ const canUseSmeWorkspace = hasRole(
               </div>
             </section>
           </div>
+        </div>
+
+        <div className="mt-10">
+          <NotificationSettings />
         </div>
       </div>
     </section>

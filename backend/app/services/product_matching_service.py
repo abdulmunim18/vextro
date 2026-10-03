@@ -1,5 +1,6 @@
 import re
 import unicodedata
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 
 from sqlalchemy.orm import Session
@@ -12,6 +13,13 @@ from app.schemas.product_matching import (
     ProductMatchRequest,
     ProductMatchResponse,
 )
+from app.services.cross_marketplace_matching import (
+    normalized_product_identity,
+)
+from app.services.smartphone_normalization import (
+    extract_memory_capacities,
+    normalize_color,
+)
 
 
 MATCH_THRESHOLD = 75
@@ -19,6 +27,19 @@ AMBIGUITY_MARGIN = 8
 
 MIN_NAME_IDENTITY_SCORE = 0.65
 MIN_MODEL_IDENTITY_SCORE = 0.90
+
+# Matching tiers. Only EXACT and HIGH are safe to attach automatically;
+# MEDIUM and LOW are routed to the pending-match queue for an administrator.
+TIER_EXACT = "EXACT"
+TIER_HIGH = "HIGH"
+TIER_MEDIUM = "MEDIUM"
+TIER_LOW = "LOW"
+
+HIGH_TIER_CONFIDENCE = 90
+
+# Below this, two normalized brands are treated as genuinely different
+# manufacturers and the candidate is eliminated rather than demoted.
+MIN_BRAND_IDENTITY_SCORE = 0.85
 
 # When both the marketplace title and the candidate variant carry a
 # concrete colour, require this much fuzzy similarity before we treat
@@ -299,6 +320,260 @@ def _detect_unique_text_value(
     return None
 
 
+_MODEL_NUMBER_TOKEN = re.compile(r"\b(?=[a-z0-9]*\d)[a-z0-9]{2,}\b")
+
+
+def _model_number_tokens(value: str | None) -> set[str]:
+    """Return the model-code tokens in a product name or marketplace title.
+
+    ``normalized_product_identity`` first strips capacities, network
+    generations and marketing words, so what remains with a digit in it is a
+    model code: ``a55`` from "Galaxy A55", ``x6851`` from "Infinix X6851",
+    ``40`` from "Note 40".
+    """
+
+    identity = normalized_product_identity(value)
+
+    return set(_MODEL_NUMBER_TOKEN.findall(identity))
+
+
+def _model_numbers_conflict(
+    title: str | None,
+    candidate: ProductMatchCandidate,
+) -> bool:
+    """Report whether two model codes describe different phones.
+
+    Title similarity alone happily rates "Galaxy A55" and "Galaxy A35" as the
+    same product, because one character in thirty differs. Model codes are
+    the part that actually identifies the phone, so a disagreement between
+    them vetoes the match however well the rest of the text reads. A shorter
+    code that prefixes a longer one ("A55" against the catalog's "A556E") is
+    the same phone written at different precision, not a conflict.
+    """
+
+    requested = _model_number_tokens(title)
+    known = _model_number_tokens(candidate.model) | _model_number_tokens(
+        candidate.product_name
+    )
+
+    if not requested or not known:
+        return False
+
+    if requested & known:
+        return False
+
+    return not any(
+        requested_token.startswith(known_token)
+        or known_token.startswith(requested_token)
+        for requested_token in requested
+        for known_token in known
+    )
+
+
+@dataclass(frozen=True)
+class _ScoredCandidate:
+    """One catalog variant weighed against the scraped listing."""
+
+    candidate: ProductMatchCandidate
+    confidence: int
+    name_score: float
+    model_score: float
+    confirmed_signals: int
+    rejection_reason: str | None
+
+
+def _confidence_tier(confidence: int) -> str:
+    """Return the matching tier one confidence score belongs to."""
+
+    if confidence >= 100:
+        return TIER_EXACT
+
+    if confidence >= HIGH_TIER_CONFIDENCE:
+        return TIER_HIGH
+
+    if confidence >= MATCH_THRESHOLD:
+        return TIER_MEDIUM
+
+    return TIER_LOW
+
+
+def _ranking_key(item: _ScoredCandidate) -> tuple[int, int, float, float, int]:
+    """Order candidates by confidence, then by confirmed hard signals.
+
+    ``confirmed_signals`` breaks ties between variants of the same phone: the
+    variant whose RAM, storage and colour were actually confirmed wins over a
+    variant that merely failed to contradict the listing.
+    """
+
+    return (
+        item.confidence,
+        item.confirmed_signals,
+        item.name_score,
+        item.model_score,
+        -item.candidate.product_variant_id,
+    )
+
+
+def _unmatched_response(
+    item: _ScoredCandidate,
+    reason: str,
+) -> ProductMatchResponse:
+    """Return an unmatched response that still suggests the best candidate."""
+
+    return ProductMatchResponse(
+        matched=False,
+        confidence=item.confidence,
+        match_tier=_confidence_tier(item.confidence),
+        suggested_product_variant_id=(
+            item.candidate.product_variant_id
+        ),
+        product_name=item.candidate.product_name,
+        brand_name=item.candidate.brand_name,
+        model=item.candidate.model,
+        ram_gb=item.candidate.ram_gb,
+        storage_gb=item.candidate.storage_gb,
+        color=item.candidate.color,
+        reason=reason,
+    )
+
+
+def _score_candidate(
+    candidate: ProductMatchCandidate,
+    *,
+    title: str,
+    requested_brand: str | None,
+    requested_model: str | None,
+    requested_ram: int | None,
+    requested_storage: int | None,
+    requested_color: str | None,
+) -> _ScoredCandidate:
+    """Weigh every available identity signal for one catalog variant."""
+
+    score = 0.0
+    possible_score = 35.0
+    confirmed_signals = 0
+
+    rejection_reason: str | None = None
+
+    name_score = _name_similarity(title, candidate.product_name)
+    score += name_score * 35.0
+
+    model_score = 0.0
+
+    if requested_brand:
+        possible_score += 20.0
+
+        brand_score = _text_similarity(
+            requested_brand,
+            candidate.brand_name,
+        )
+        score += brand_score * 20.0
+
+        # A different manufacturer is never the same product, however well
+        # the rest of the title happens to read.
+        if (
+            candidate.brand_name
+            and brand_score < MIN_BRAND_IDENTITY_SCORE
+        ):
+            rejection_reason = (
+                "The requested brand does not "
+                "match this catalog product."
+            )
+        elif brand_score >= MIN_BRAND_IDENTITY_SCORE:
+            confirmed_signals += 1
+
+    if requested_model:
+        possible_score += 20.0
+
+        model_score = _text_similarity(
+            requested_model,
+            candidate.model,
+        )
+        score += model_score * 20.0
+
+        if model_score >= MIN_MODEL_IDENTITY_SCORE:
+            confirmed_signals += 1
+
+    if requested_ram is not None:
+        possible_score += 10.0
+
+        if candidate.ram_gb == requested_ram:
+            score += 10.0
+            confirmed_signals += 1
+        elif candidate.ram_gb is not None:
+            rejection_reason = (
+                "The requested RAM does not "
+                "match this catalog variant."
+            )
+
+    if requested_storage is not None:
+        possible_score += 10.0
+
+        if candidate.storage_gb == requested_storage:
+            score += 10.0
+            confirmed_signals += 1
+        elif candidate.storage_gb is not None:
+            rejection_reason = (
+                "The requested storage does "
+                "not match this catalog variant."
+            )
+
+    if requested_color:
+        possible_score += 5.0
+
+        color_score = _color_similarity(
+            requested_color,
+            candidate.color,
+        )
+        score += color_score * 5.0
+
+        # Colour identifies a variant, not a product. A "Titan Blue"
+        # listing must not be filed under a "Titan Red" variant, so a
+        # colour conflict still eliminates that candidate; the resolution
+        # service then registers the missing colour as a new variant of the
+        # same canonical product instead of queueing the whole listing.
+        if candidate.color:
+            if color_score >= MIN_COLOR_IDENTITY_SCORE:
+                confirmed_signals += 1
+            else:
+                rejection_reason = (
+                    "The requested colour does not "
+                    "match this catalog variant."
+                )
+
+    if _model_numbers_conflict(title, candidate):
+        rejection_reason = (
+            "The requested model code does not "
+            "match this catalog product."
+        )
+
+    strong_product_identity = (
+        name_score >= MIN_NAME_IDENTITY_SCORE
+        or model_score >= MIN_MODEL_IDENTITY_SCORE
+    )
+
+    if not strong_product_identity:
+        rejection_reason = rejection_reason or (
+            "The product title or model "
+            "is not specific enough for "
+            "a safe automatic match."
+        )
+
+    confidence = max(
+        0,
+        min(round((score / possible_score) * 100), 100),
+    )
+
+    return _ScoredCandidate(
+        candidate=candidate,
+        confidence=confidence,
+        name_score=name_score,
+        model_score=model_score,
+        confirmed_signals=confirmed_signals,
+        rejection_reason=rejection_reason,
+    )
+
+
 class ProductMatchingService:
     """Match marketplace product data to active VEXTRO variants."""
 
@@ -311,12 +586,38 @@ class ProductMatchingService:
             or ProductMatchingRepository()
         )
 
-    def match_product(
+    @staticmethod
+    def _exact_response(
+        candidate: ProductMatchCandidate,
+        reason: str,
+    ) -> ProductMatchResponse:
+        """Return a settled, highest-confidence match response."""
+
+        return ProductMatchResponse(
+            matched=True,
+            confidence=100,
+            match_tier=TIER_EXACT,
+            product_variant_id=candidate.product_variant_id,
+            canonical_product_id=candidate.canonical_product_id,
+            product_name=candidate.product_name,
+            brand_name=candidate.brand_name,
+            model=candidate.model,
+            ram_gb=candidate.ram_gb,
+            storage_gb=candidate.storage_gb,
+            color=candidate.color,
+            reason=reason,
+        )
+
+    def resolve_exact_identity(
         self,
         database_session: Session,
         payload: ProductMatchRequest,
-    ) -> ProductMatchResponse:
-        """Return the best safe product variant match."""
+    ) -> ProductMatchResponse | None:
+        """Resolve the identity signals that need no scoring at all.
+
+        Ordered by authority: an administrator's decision, the marketplace
+        listing VEXTRO already stores, then an exact SKU code.
+        """
 
         if payload.platform_code and payload.external_id:
             manual_match = self.repository.get_manual_match(
@@ -325,19 +626,48 @@ class ProductMatchingService:
                 external_id=payload.external_id,
             )
             if manual_match is not None:
-                return ProductMatchResponse(
-                    matched=True,
-                    confidence=100,
-                    product_variant_id=manual_match.product_variant_id,
-                    canonical_product_id=manual_match.canonical_product_id,
-                    product_name=manual_match.product_name,
-                    brand_name=manual_match.brand_name,
-                    model=manual_match.model,
-                    ram_gb=manual_match.ram_gb,
-                    storage_gb=manual_match.storage_gb,
-                    color=manual_match.color,
-                    reason="Administrator-approved marketplace mapping reused.",
+                return self._exact_response(
+                    manual_match,
+                    "Administrator-approved marketplace mapping reused.",
                 )
+
+            listing_match = self.repository.get_listing_match(
+                database_session,
+                platform_code=payload.platform_code,
+                external_id=payload.external_id,
+            )
+            if listing_match is not None:
+                return self._exact_response(
+                    listing_match,
+                    "Existing marketplace listing mapping reused.",
+                )
+
+        if payload.sku:
+            sku_match = self.repository.get_sku_match(
+                database_session,
+                sku=payload.sku,
+            )
+            if sku_match is not None:
+                return self._exact_response(
+                    sku_match,
+                    "Exact marketplace SKU code matched a catalog variant.",
+                )
+
+        return None
+
+    def match_product(
+        self,
+        database_session: Session,
+        payload: ProductMatchRequest,
+    ) -> ProductMatchResponse:
+        """Return the best safe product variant match."""
+
+        exact_match = self.resolve_exact_identity(
+            database_session,
+            payload,
+        )
+        if exact_match is not None:
+            return exact_match
 
         candidates = (
             self.repository.list_match_candidates(
@@ -369,6 +699,18 @@ class ProductMatchingService:
         requested_ram = payload.ram_gb
         requested_storage = payload.storage_gb
 
+        # Memory is the signal that separates one variant from another, so
+        # take it from the best source available: the explicit request, then
+        # the normalized specification sheet, then the title. Reading only
+        # the title let an 8/256 listing attach to an 8/128 variant whenever
+        # the marketplace kept the configuration out of the product name.
+        specification_ram, specification_storage = (
+            extract_memory_capacities(
+                specifications=payload.specifications,
+                title=payload.title,
+            )
+        )
+
         extracted_ram, extracted_storage = (
             _extract_memory_values(
                 payload.title,
@@ -376,11 +718,11 @@ class ProductMatchingService:
         )
 
         if requested_ram is None:
-            requested_ram = extracted_ram
+            requested_ram = specification_ram or extracted_ram
 
         if requested_storage is None:
             requested_storage = (
-                extracted_storage
+                specification_storage or extracted_storage
             )
 
         requested_brand = (
@@ -406,7 +748,7 @@ class ProductMatchingService:
         )
 
         requested_color = (
-            payload.color
+            normalize_color(payload.color)
             or _detect_unique_text_value(
                 payload.title,
                 [
@@ -416,285 +758,73 @@ class ProductMatchingService:
             )
         )
 
-        scored_candidates: list[
-            tuple[
-                int,
-                float,
-                ProductMatchCandidate,
-                str | None,
-            ]
-        ] = []
-
-        for candidate in candidates:
-            score = 0.0
-            possible_score = 35.0
-
-            rejection_reason: str | None = None
-
-            name_score = _name_similarity(
-                payload.title,
-                candidate.product_name,
+        scored_candidates: list[_ScoredCandidate] = [
+            _score_candidate(
+                candidate,
+                title=payload.title,
+                requested_brand=requested_brand,
+                requested_model=requested_model,
+                requested_ram=requested_ram,
+                requested_storage=requested_storage,
+                requested_color=requested_color,
             )
+            for candidate in candidates
+        ]
 
-            score += (
-                name_score
-                * 35.0
-            )
-
-            model_score = 0.0
-
-            if requested_brand:
-                possible_score += 20.0
-
-                brand_score = _text_similarity(
-                    requested_brand,
-                    candidate.brand_name,
-                )
-
-                score += (
-                    brand_score
-                    * 20.0
-                )
-
-            if requested_model:
-                possible_score += 20.0
-
-                model_score = _text_similarity(
-                    requested_model,
-                    candidate.model,
-                )
-
-                score += (
-                    model_score
-                    * 20.0
-                )
-
-            if requested_ram is not None:
-                possible_score += 10.0
-
-                if (
-                    candidate.ram_gb
-                    == requested_ram
-                ):
-                    score += 10.0
-
-                elif candidate.ram_gb is not None:
-                    rejection_reason = (
-                        "The requested RAM does not "
-                        "match this catalog variant."
-                    )
-
-            if requested_storage is not None:
-                possible_score += 10.0
-
-                if (
-                    candidate.storage_gb
-                    == requested_storage
-                ):
-                    score += 10.0
-
-                elif (
-                    candidate.storage_gb
-                    is not None
-                ):
-                    rejection_reason = (
-                        "The requested storage does "
-                        "not match this catalog variant."
-                    )
-
-            if requested_color:
-                possible_score += 5.0
-
-                color_score = _color_similarity(
-                    requested_color,
-                    candidate.color,
-                )
-
-                score += (
-                    color_score
-                    * 5.0
-                )
-
-                # Only reject when the candidate itself asserts a
-                # colour and it does not match. A candidate with no
-                # colour recorded is left to lose points, not to be
-                # eliminated, so a colourful listing can still adopt
-                # a generic variant when nothing more specific exists.
-                if (
-                    candidate.color
-                    and color_score
-                    < MIN_COLOR_IDENTITY_SCORE
-                ):
-                    rejection_reason = (
-                        "The requested colour does not "
-                        "match this catalog variant."
-                    )
-
-            strong_product_identity = (
-                name_score
-                >= MIN_NAME_IDENTITY_SCORE
-                or model_score
-                >= MIN_MODEL_IDENTITY_SCORE
-            )
-
-            if not strong_product_identity:
-                rejection_reason = (
-                    rejection_reason
-                    or (
-                        "The product title or model "
-                        "is not specific enough for "
-                        "a safe automatic match."
-                    )
-                )
-
-            confidence = round(
-                (
-                    score
-                    / possible_score
-                )
-                * 100
-            )
-
-            confidence = max(
-                0,
-                min(
-                    confidence,
-                    100,
-                ),
-            )
-
-            scored_candidates.append(
-                (
-                    confidence,
-                    name_score,
-                    candidate,
-                    rejection_reason,
-                )
-            )
         eligible_candidates = [
             item
             for item in scored_candidates
-            if item[3] is None
+            if item.rejection_reason is None
         ]
 
         if not eligible_candidates:
-            scored_candidates.sort(
-                key=lambda item: (
-                    item[0],
-                    item[1],
-                    -item[2].product_variant_id,
-                ),
-                reverse=True,
-            )
+            best = max(scored_candidates, key=_ranking_key)
 
-            (
-                best_confidence,
-                _,
-                best_candidate,
-                rejection_reason,
-            ) = scored_candidates[0]
-
-            return ProductMatchResponse(
-                matched=False,
-                confidence=best_confidence,
-                suggested_product_variant_id=(
-                    best_candidate.product_variant_id
-                ),
-                product_name=(
-                    best_candidate.product_name
-                ),
-                brand_name=(
-                    best_candidate.brand_name
-                ),
-                model=best_candidate.model,
-                ram_gb=best_candidate.ram_gb,
-                storage_gb=(
-                    best_candidate.storage_gb
-                ),
-                color=best_candidate.color,
-                reason=(
-                    rejection_reason
-                    or (
-                        "No safe automatic product "
-                        "variant match was found."
-                    )
+            return _unmatched_response(
+                best,
+                best.rejection_reason
+                or (
+                    "No safe automatic product "
+                    "variant match was found."
                 ),
             )
 
-        eligible_candidates.sort(
-            key=lambda item: (
-                item[0],
-                item[1],
-                -item[2].product_variant_id,
-            ),
-            reverse=True,
-        )
+        eligible_candidates.sort(key=_ranking_key, reverse=True)
 
-        best_confidence = (
-            eligible_candidates[0][0]
-        )
+        best = eligible_candidates[0]
 
-        best_candidate = (
-            eligible_candidates[0][2]
-        )
-
-        second_confidence = (
-            eligible_candidates[1][0]
-            if len(eligible_candidates) > 1
-            else None
-        )
-        if best_confidence < MATCH_THRESHOLD:
-            return ProductMatchResponse(
-                matched=False,
-                confidence=best_confidence,
-                suggested_product_variant_id=(
-                    best_candidate.product_variant_id
-                ),
-                product_name=(
-                    best_candidate.product_name
-                ),
-                brand_name=(
-                    best_candidate.brand_name
-                ),
-                model=best_candidate.model,
-                ram_gb=best_candidate.ram_gb,
-                storage_gb=(
-                    best_candidate.storage_gb
-                ),
-                color=best_candidate.color,
-                reason=(
+        if best.confidence < MATCH_THRESHOLD:
+            return _unmatched_response(
+                best,
+                (
                     "The best candidate did not "
                     "meet the automatic matching "
                     f"threshold of {MATCH_THRESHOLD}%."
                 ),
             )
 
+        # Ambiguity is only dangerous across different real-world products.
+        # Several variants of one phone scoring alike simply means the
+        # listing did not spell out its configuration, and the ranking key
+        # already prefers the variant whose RAM, storage and colour were
+        # confirmed. Rejecting those froze existing listings mid-refresh.
+        competing = next(
+            (
+                item
+                for item in eligible_candidates[1:]
+                if item.candidate.canonical_product_id
+                != best.candidate.canonical_product_id
+            ),
+            None,
+        )
+
         if (
-            second_confidence is not None
-            and (
-                best_confidence
-                - second_confidence
-            ) < AMBIGUITY_MARGIN
+            competing is not None
+            and (best.confidence - competing.confidence) < AMBIGUITY_MARGIN
         ):
-            return ProductMatchResponse(
-                matched=False,
-                confidence=best_confidence,
-                suggested_product_variant_id=(
-                    best_candidate.product_variant_id
-                ),
-                product_name=(
-                    best_candidate.product_name
-                ),
-                brand_name=(
-                    best_candidate.brand_name
-                ),
-                model=best_candidate.model,
-                ram_gb=best_candidate.ram_gb,
-                storage_gb=(
-                    best_candidate.storage_gb
-                ),
-                color=best_candidate.color,
-                reason=(
+            return _unmatched_response(
+                best,
+                (
                     "The best candidates are too "
                     "similar for a safe automatic "
                     "variant match."
@@ -703,25 +833,20 @@ class ProductMatchingService:
 
         return ProductMatchResponse(
             matched=True,
-            confidence=best_confidence,
+            confidence=best.confidence,
+            match_tier=_confidence_tier(best.confidence),
             product_variant_id=(
-                best_candidate.product_variant_id
+                best.candidate.product_variant_id
             ),
             canonical_product_id=(
-                best_candidate.canonical_product_id
+                best.candidate.canonical_product_id
             ),
-            product_name=(
-                best_candidate.product_name
-            ),
-            brand_name=(
-                best_candidate.brand_name
-            ),
-            model=best_candidate.model,
-            ram_gb=best_candidate.ram_gb,
-            storage_gb=(
-                best_candidate.storage_gb
-            ),
-            color=best_candidate.color,
+            product_name=best.candidate.product_name,
+            brand_name=best.candidate.brand_name,
+            model=best.candidate.model,
+            ram_gb=best.candidate.ram_gb,
+            storage_gb=best.candidate.storage_gb,
+            color=best.candidate.color,
             reason=(
                 "A sufficiently confident and "
                 "unambiguous catalog variant "

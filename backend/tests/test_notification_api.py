@@ -98,10 +98,17 @@ def create_test_notification(
     return notification
 
 
-def test_notification_routes_require_allowed_role(
+def test_notification_routes_require_authentication(
     client: TestClient,
 ) -> None:
-    """Unauthenticated and SME users cannot access consumer notifications."""
+    """Notification routes reject anonymous callers.
+
+    SME owners receive ``competitor_risk`` notifications, so they are
+    authenticated callers of their own inbox. Every query is scoped to the
+    token's user, which is covered by
+    ``test_consumer_can_mark_one_notification_read_with_ownership_
+    protection``.
+    """
 
     unauthenticated_response = client.get(
         "/api/v1/notifications"
@@ -119,7 +126,8 @@ def test_notification_routes_require_allowed_role(
         headers=sme_headers,
     )
 
-    assert sme_response.status_code == 403
+    assert sme_response.status_code == 200
+    assert sme_response.json()["items"] == []
 
 
 def test_consumer_starts_with_empty_notifications(

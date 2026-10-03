@@ -1,9 +1,12 @@
 """Business logic for marketplace acquisition ingestion."""
 
+import logging
+
 from fastapi import HTTPException, status
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from app.models.price_history import PriceHistory
 from app.repositories.acquisition_repository import (
     AcquisitionRepository,
 )
@@ -20,6 +23,12 @@ from app.services.price_alert_service import (
 from app.services.competitor_alert_service import (
     evaluate_competitor_risk_alerts,
 )
+from app.services.notification_dispatcher import (
+    dispatch_pending_deliveries,
+)
+
+
+logger = logging.getLogger(__name__)
 
 class AcquisitionService:
     """Process normalized marketplace listing captures."""
@@ -187,6 +196,12 @@ class AcquisitionService:
                 existing_listing is None
             )
 
+            previous_price = (
+                existing_listing.current_price
+                if existing_listing is not None
+                else None
+            )
+
             if existing_listing is None:
                 listing = self.repository.create_listing(
                     database_session,
@@ -237,19 +252,30 @@ class AcquisitionService:
                     scraped_at=payload.scraped_at,
                 )
 
-            price_history = (
-                self.repository.create_price_history(
-                    database_session,
-                    listing_id=listing.id,
-                    price=payload.current_price,
-                    original_price=(
-                        payload.original_price
-                    ),
-                    currency=payload.currency,
-                    is_available=payload.is_available,
-                    captured_at=payload.scraped_at,
-                )
+            (
+                price_history,
+                price_history_created,
+            ) = self._record_price_observation(
+                database_session,
+                listing_id=listing.id,
+                payload=payload,
             )
+
+            price_changed = (
+                previous_price is not None
+                and previous_price != listing.current_price
+            )
+
+            if price_changed:
+                logging.info(
+                    "Marketplace price changed: platform=%s external_id=%s "
+                    "listing_id=%s previous=%s current=%s",
+                    payload.platform_code,
+                    payload.external_id,
+                    listing.id,
+                    previous_price,
+                    listing.current_price,
+                )
 
             alerts_triggered = evaluate_price_alerts_for_capture(
                 database_session,
@@ -257,6 +283,7 @@ class AcquisitionService:
                 listing_id=listing.id,
                 current_price=payload.current_price,
                 currency=payload.currency,
+                marketplace_name=platform.name,
             )
             competitor_alerts_triggered = (
                 evaluate_competitor_risk_alerts(
@@ -264,10 +291,17 @@ class AcquisitionService:
                     listing_id=listing.id,
                     competitor_price=payload.current_price,
                     currency=payload.currency,
+                    marketplace_name=platform.name,
                 )
             )
 
             database_session.commit()
+
+            if alerts_triggered or competitor_alerts_triggered:
+                # Email and Web Push are secondary channels dispatched
+                # only after the price capture is durably committed, so a
+                # transport failure can never roll back the observation.
+                self._dispatch_queued_notifications(database_session)
 
             database_session.refresh(listing)
             database_session.refresh(price_history)
@@ -291,7 +325,9 @@ class AcquisitionService:
                 price_history_id=price_history.id,
                 listing_created=listing_created,
                 seller_created=seller_created,
-                price_history_created=True,
+                price_history_created=price_history_created,
+                price_changed=price_changed,
+                previous_price=previous_price,
                 alerts_triggered=alerts_triggered,
                 competitor_alerts_triggered=(
                     competitor_alerts_triggered
@@ -306,6 +342,81 @@ class AcquisitionService:
         except Exception:
             database_session.rollback()
             raise
+
+    def _record_price_observation(
+        self,
+        database_session: Session,
+        *,
+        listing_id: int,
+        payload: AcquisitionListingInput,
+    ) -> tuple[PriceHistory, bool]:
+        """Store a price observation, collapsing unchanged repeats.
+
+        Every genuine price move becomes its own historical point so the chart
+        and the historical-low calculation see it. A repeat of the price
+        already standing extends that observation's timestamp instead of
+        adding a flat duplicate every twelve hours.
+        """
+
+        latest = self.repository.get_latest_price_history(
+            database_session,
+            listing_id=listing_id,
+        )
+
+        unchanged = (
+            latest is not None
+            and latest.price == payload.current_price
+            and latest.original_price == payload.original_price
+            and latest.currency == payload.currency
+            and latest.is_available == payload.is_available
+        )
+
+        if unchanged:
+            return (
+                self.repository.touch_price_history(
+                    database_session,
+                    latest,
+                    captured_at=payload.scraped_at,
+                ),
+                False,
+            )
+
+        price_history = self.repository.create_price_history(
+            database_session,
+            listing_id=listing_id,
+            price=payload.current_price,
+            original_price=payload.original_price,
+            currency=payload.currency,
+            is_available=payload.is_available,
+            captured_at=payload.scraped_at,
+        )
+
+        logging.info(
+            "Price history observation inserted: listing_id=%s price=%s "
+            "available=%s captured_at=%s",
+            listing_id,
+            payload.current_price,
+            payload.is_available,
+            payload.scraped_at.isoformat(),
+        )
+
+        return price_history, True
+
+    @staticmethod
+    def _dispatch_queued_notifications(
+        database_session: Session,
+    ) -> None:
+        """Flush the notification outbox without failing the ingestion."""
+
+        try:
+            dispatch_pending_deliveries(database_session)
+
+        except Exception:  # noqa: BLE001 - delivery must stay secondary
+            database_session.rollback()
+
+            logger.exception(
+                "notification.outbox.dispatch_failed",
+            )
 
     @staticmethod
     def _http_error_code(error: HTTPException) -> str:
@@ -429,6 +540,7 @@ class AcquisitionService:
                     listing_id=result.listing_id,
                     price_history_id=result.price_history_id,
                     price_history_created=result.price_history_created,
+                    price_changed=result.price_changed,
                     alerts_triggered=result.alerts_triggered,
                     competitor_alerts_triggered=(
                         result.competitor_alerts_triggered

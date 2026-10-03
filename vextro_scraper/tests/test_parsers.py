@@ -60,7 +60,9 @@ def test_daraz_parser():
     assert item['platform'] == 'Daraz'
     assert item['external_id'] == 'daraz-test-123'
     assert item['model'] == 'Samsung Galaxy A55 5G 8GB RAM'
-    assert item['price'] == '125000'
+    # The spider now parses prices into numbers so every platform delivers
+    # one comparable type.
+    assert item['price'] == 125000.0
     assert item['availability'] == 'In Stock'
     assert item['product_url'] == 'https://www.daraz.pk/products/test.html'
     assert item['image_urls'] == [

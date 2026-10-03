@@ -36,4 +36,6 @@ Thumbs.db
 
 # Backups
 backups/*.sql
+backups/*.dump
+backups/*.tar
 

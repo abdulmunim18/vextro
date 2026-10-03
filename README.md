@@ -57,6 +57,7 @@ vextro/
 │   ├── package.json
 │   └── package-lock.json
 ├── docs/
+│   └── notification-and-reporting-engine.md
 ├── scraper/
 ├── ml/
 └── README.md
@@ -159,6 +160,39 @@ python -c "import secrets; print(secrets.token_urlsafe(64))"
 
 Never commit `.env`.
 
+### Notifications (optional, module 6.14)
+
+Email and browser-push notifications stay switched off until you configure
+them. Without configuration, in-app notifications keep working and the
+other channels are recorded as `skipped`.
+
+```env
+FRONTEND_BASE_URL=http://localhost:5173
+
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USERNAME=
+SMTP_PASSWORD=
+SMTP_FROM_EMAIL=
+SMTP_USE_TLS=true
+
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=
+
+DIGEST_SCHEDULER_ENABLED=false
+```
+
+Generate a VAPID key pair (printed to the terminal, never written to disk):
+
+```powershell
+python -m scripts.generate_vapid_keys
+```
+
+Never commit `VAPID_PRIVATE_KEY` or `SMTP_PASSWORD`. For SMTP and push
+setup, digest scheduling and the delivery architecture, see
+`docs/notification-and-reporting-engine.md`.
+
 ## 6. Apply Database Migrations
 
 Run inside the `backend` folder:
@@ -235,6 +269,21 @@ cd path\to\vextro\frontend
 npm run dev
 ```
 
+Scraper scheduler terminal (crawls once immediately, then every 12 hours):
+
+```powershell
+cd path\to\vextro\vextro_scraper
+$env:INGESTION_API_KEY = "<same value as backend\.env>"
+..\backend\.venv\Scripts\python.exe -m vextro_scraper.scheduler
+```
+
+Only one scheduler can run at a time; a second copy exits on its own file
+lock. To have the backend start it for you instead, set
+`SCRAPER_AUTOSTART_WITH_API=true` in `backend\.env`. See
+`docs/smartphone-price-sync.md` for the full configuration, the optional
+Windows startup task, and how marketplace prices, history and reviews flow
+through the system.
+
 # Docker Startup
 
 From the repository root:
@@ -292,6 +341,13 @@ Backend:
 ```powershell
 cd backend
 python -m pytest -q
+```
+
+Scraper:
+
+```powershell
+cd vextro_scraper
+..\backend\.venv\Scripts\python.exe -m pytest -q
 ```
 
 Frontend:

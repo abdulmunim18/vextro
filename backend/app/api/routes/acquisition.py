@@ -21,6 +21,8 @@ from app.schemas.acquisition import (
 from app.schemas.product_matching import (
     ProductMatchRequest,
     ProductMatchResponse,
+    ProductResolveRequest,
+    ProductResolveResponse,
 )
 from app.schemas.pending_product_match import (
     PendingProductMatchCreate,
@@ -41,6 +43,9 @@ from app.services.acquisition_service import (
 from app.services.product_matching_service import (
     ProductMatchingService,
 )
+from app.services.product_resolution_service import (
+    ProductResolutionService,
+)
 from app.services.pending_product_match_service import PendingProductMatchService
 from app.services.scrape_monitoring_service import ScrapeMonitoringService
 from app.services.review_service import ReviewService
@@ -57,6 +62,7 @@ router = APIRouter(
 
 acquisition_service = AcquisitionService()
 product_matching_service = ProductMatchingService()
+product_resolution_service = ProductResolutionService()
 scrape_monitoring_service = ScrapeMonitoringService()
 review_service = ReviewService()
 pending_product_match_service = PendingProductMatchService()
@@ -256,6 +262,29 @@ def match_marketplace_product(
     """Match scraped marketplace product data to a catalog variant."""
 
     return product_matching_service.match_product(
+        database_session,
+        payload,
+    )
+
+
+@router.post(
+    "/resolve-product",
+    response_model=ProductResolveResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Resolve or register a marketplace smartphone",
+)
+def resolve_marketplace_product(
+    payload: ProductResolveRequest,
+    database_session: Session = Depends(get_db),
+) -> ProductResolveResponse:
+    """Return a usable catalog variant, registering new phones when safe.
+
+    This is the endpoint the crawler uses. Unlike ``/match-product`` it also
+    covers newly discovered marketplace smartphones, so a crawl can grow the
+    catalog instead of queueing every unknown phone for an administrator.
+    """
+
+    return product_resolution_service.resolve_product(
         database_session,
         payload,
     )
