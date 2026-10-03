@@ -1,3 +1,6 @@
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from app.api.routes import ingest
 from fastapi.middleware.cors import CORSMiddleware
@@ -5,6 +8,10 @@ from app.api.routes.product_catalog import router as product_catalog_router
 
 from app.api.routes.health import router as health_router
 from app.core.config import settings
+from app.core.scheduler import (
+    shutdown_notification_scheduler,
+    start_notification_scheduler,
+)
 
 from app.api.routes.access import router as access_router
 
@@ -30,11 +37,26 @@ from app.api.routes.price_alerts import (
 from app.api.routes.warehouse import router as warehouse_router
 from app.api.routes.seller_trust import router as seller_trust_router
 
+@asynccontextmanager
+async def lifespan(
+    _app: FastAPI,
+) -> AsyncGenerator[None, None]:
+    """Run the notification digest scheduler alongside the API."""
+
+    start_notification_scheduler()
+
+    try:
+        yield
+    finally:
+        shutdown_notification_scheduler()
+
+
 app = FastAPI(
     title=settings.app_name,
     description="AI-powered e-commerce market intelligence system",
     version=settings.app_version,
     debug=settings.app_debug,
+    lifespan=lifespan,
 )
 
 

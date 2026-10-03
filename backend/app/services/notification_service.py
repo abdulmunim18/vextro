@@ -1,11 +1,6 @@
-from decimal import Decimal
-
 from sqlalchemy.orm import Session
 
-from app.models.notification import Notification
-
 from app.repositories.notification_repository import (
-    create_notification,
     count_unread_notifications,
     count_user_notifications,
     get_user_notification,
@@ -20,36 +15,6 @@ from app.schemas.notification import (
     NotificationUnreadCountResponse,
 )
 
-
-
-def create_price_drop_notification(
-    database_session: Session,
-    *,
-    user_id: int,
-    price_alert_id: int,
-    canonical_product_id: int,
-    product_name: str,
-    current_price: Decimal,
-    target_price: Decimal,
-    currency: str,
-) -> Notification:
-    """Create an in-app notification when a price target is reached."""
-
-    return create_notification(
-        database_session,
-        user_id=user_id,
-        price_alert_id=price_alert_id,
-        canonical_product_id=canonical_product_id,
-        notification_type="price_drop",
-        title="Price target reached",
-        message=(
-            f"{product_name} is now available at "
-            f"{currency} {current_price:,.2f}. "
-            f"Your target was "
-            f"{currency} {target_price:,.2f}."
-        ),
-        action_path=f"/products/{canonical_product_id}",
-    )
 
 
 class NotificationNotFoundError(Exception):

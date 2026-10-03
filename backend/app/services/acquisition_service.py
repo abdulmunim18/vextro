@@ -1,5 +1,7 @@
 """Business logic for marketplace acquisition ingestion."""
 
+import logging
+
 from fastapi import HTTPException, status
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
@@ -20,6 +22,12 @@ from app.services.price_alert_service import (
 from app.services.competitor_alert_service import (
     evaluate_competitor_risk_alerts,
 )
+from app.services.notification_dispatcher import (
+    dispatch_pending_deliveries,
+)
+
+
+logger = logging.getLogger(__name__)
 
 class AcquisitionService:
     """Process normalized marketplace listing captures."""
@@ -257,6 +265,7 @@ class AcquisitionService:
                 listing_id=listing.id,
                 current_price=payload.current_price,
                 currency=payload.currency,
+                marketplace_name=platform.name,
             )
             competitor_alerts_triggered = (
                 evaluate_competitor_risk_alerts(
@@ -264,10 +273,17 @@ class AcquisitionService:
                     listing_id=listing.id,
                     competitor_price=payload.current_price,
                     currency=payload.currency,
+                    marketplace_name=platform.name,
                 )
             )
 
             database_session.commit()
+
+            if alerts_triggered or competitor_alerts_triggered:
+                # Email and Web Push are secondary channels dispatched
+                # only after the price capture is durably committed, so a
+                # transport failure can never roll back the observation.
+                self._dispatch_queued_notifications(database_session)
 
             database_session.refresh(listing)
             database_session.refresh(price_history)
@@ -306,6 +322,22 @@ class AcquisitionService:
         except Exception:
             database_session.rollback()
             raise
+
+    @staticmethod
+    def _dispatch_queued_notifications(
+        database_session: Session,
+    ) -> None:
+        """Flush the notification outbox without failing the ingestion."""
+
+        try:
+            dispatch_pending_deliveries(database_session)
+
+        except Exception:  # noqa: BLE001 - delivery must stay secondary
+            database_session.rollback()
+
+            logger.exception(
+                "notification.outbox.dispatch_failed",
+            )
 
     @staticmethod
     def _http_error_code(error: HTTPException) -> str:

@@ -6,6 +6,10 @@ from app.models.notification import Notification
 from app.models.canonical_product import CanonicalProduct
 from app.models.category import Category
 from app.models.competitor_watchlist import CompetitorWatchlist
+from app.models.digest_run import DigestRun
+from app.models.notification_delivery import NotificationDelivery
+from app.models.notification_event import NotificationEvent
+from app.models.notification_preference import NotificationPreference
 from app.models.organization import Organization
 from app.models.organization_user import OrganizationUser
 from app.models.pending_product_match import PendingProductMatch
@@ -16,6 +20,7 @@ from app.models.price_forecast import PriceForecast
 from app.models.product_image import ProductImage
 from app.models.product_listing import ProductListing
 from app.models.product_variant import ProductVariant
+from app.models.push_subscription import PushSubscription
 from app.models.refresh_token import RefreshToken
 from app.models.raw_review import RawReview
 from app.models.review_analysis import ReviewAnalysis
@@ -38,6 +43,10 @@ __all__ = [
     "CanonicalProduct",
     "Category",
     "CompetitorWatchlist",
+    "DigestRun",
+    "NotificationDelivery",
+    "NotificationEvent",
+    "NotificationPreference",
     "Organization",
     "OrganizationUser",
     "PendingProductMatch",
@@ -48,6 +57,7 @@ __all__ = [
     "ProductImage",
     "ProductListing",
     "ProductVariant",
+    "PushSubscription",
     "RefreshToken",
     "RawReview",
     "ReviewAnalysis",
