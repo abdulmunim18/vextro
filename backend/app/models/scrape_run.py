@@ -59,6 +59,26 @@ class ScrapeRun(Base):
             "error_count >= 0",
             name="ck_scrape_runs_error_count_non_negative",
         ),
+        CheckConstraint(
+            "products_created >= 0",
+            name="ck_scrape_runs_products_created_non_negative",
+        ),
+        CheckConstraint(
+            "listings_created >= 0",
+            name="ck_scrape_runs_listings_created_non_negative",
+        ),
+        CheckConstraint(
+            "listings_updated >= 0",
+            name="ck_scrape_runs_listings_updated_non_negative",
+        ),
+        CheckConstraint(
+            "price_changes >= 0",
+            name="ck_scrape_runs_price_changes_non_negative",
+        ),
+        CheckConstraint(
+            "reviews_added >= 0",
+            name="ck_scrape_runs_reviews_added_non_negative",
+        ),
     )
 
     id: Mapped[int] = mapped_column(
@@ -115,6 +135,35 @@ class ScrapeRun(Base):
         Integer,
         nullable=False,
         server_default=text("0"),
+    )
+    products_created: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+    listings_created: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+    listings_updated: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+    price_changes: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+    reviews_added: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+    error_summary: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
     )
     trigger_type: Mapped[str] = mapped_column(
         String(20),

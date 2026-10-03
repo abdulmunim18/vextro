@@ -151,7 +151,7 @@ def test_pipeline_matches_then_uses_secure_listing_contract():
     assert pipeline.process_item(item, spider=None) is item
 
     assert [call[0] for call in session.calls] == [
-        'http://backend.test/api/v1/internal/acquisition/match-product',
+        'http://backend.test/api/v1/internal/acquisition/resolve-product',
         'http://backend.test/api/v1/internal/acquisition/listings/bulk',
     ]
     assert all(
@@ -175,6 +175,11 @@ def test_pipeline_matches_then_uses_secure_listing_contract():
         'ram_gb': 8,
         'storage_gb': 256,
         'color': 'Black',
+        'sku': None,
+        'specifications': {
+            'ram': '8GB',
+            'storage_capacity': '256GB',
+        },
     }
 
     listing_payload = session.calls[1][1]['json']['items'][0]
@@ -255,7 +260,7 @@ def test_pipeline_does_not_ingest_an_unmatched_product():
         )
 
     assert len(session.calls) == 2
-    assert session.calls[0][0].endswith('/match-product')
+    assert session.calls[0][0].endswith('/resolve-product')
     assert session.calls[1][0].endswith('/pending-matches')
     pending_payload = session.calls[1][1]['json']
     assert pending_payload['external_id'] == 'daraz-secure-123'

@@ -27,6 +27,11 @@ from app.services.cross_marketplace_matching import (
     clean_product_display_name,
     find_cross_platform_canonical,
 )
+from app.services.smartphone_normalization import (
+    BRAND_ALIASES as _BRAND_ALIASES,
+    infer_brand_name as _infer_brand_name,
+    infer_title_specifications as _infer_title_specifications,
+)
 
 # Create the router for the ingestion URL
 router = APIRouter(
@@ -106,127 +111,21 @@ class ScrapedItemPayload(BaseModel):
         return normalized
 
 
-BRAND_ALIASES = (
-    ("Samsung", ("samsung", "galaxy")),
-    ("Apple", ("apple", "iphone")),
-    ("Xiaomi", ("xiaomi", "redmi", "poco")),
-    ("Infinix", ("infinix",)),
-    ("Tecno", ("tecno",)),
-    ("Oppo", ("oppo",)),
-    ("Vivo", ("vivo",)),
-    ("Realme", ("realme",)),
-    ("OnePlus", ("oneplus", "one plus")),
-    ("Huawei", ("huawei",)),
-    ("Honor", ("honor",)),
-    ("Nokia", ("nokia",)),
-    ("Google", ("google pixel", "pixel")),
-    ("Motorola", ("motorola", "moto")),
-    ("Itel", ("itel",)),
-    ("Sparx", ("sparx",)),
-    ("Dcode", ("dcode", "d-code")),
-    ("QMobile", ("qmobile", "q mobile")),
-    ("Faywa", ("faywa",)),
-    ("Nothing", ("nothing", "cmf phone")),
-    ("Sego", ("sego",)),
-    ("Villaon", ("villaon",)),
-    ("LG", ("lg",)),
-    ("Balmuda", ("balmuda",)),
-    ("Sony", ("sony", "xperia")),
-    ("Sharp", ("sharp", "aquos")),
-    ("ZTE", ("zte", "nubia")),
-    ("VGOTEL", ("vgotel",)),
-)
+# Brand and specification vocabulary lives in one shared module so the
+# legacy route and the active acquisition pipeline normalize identically.
+BRAND_ALIASES = _BRAND_ALIASES
 
 
 def infer_brand_name(model: str, provided_brand: str | None = None) -> str | None:
     """Normalize an explicit brand or infer a known brand from a title."""
 
-    if provided_brand:
-        cleaned_brand = provided_brand.strip()
-        if cleaned_brand.lower() not in {
-            "n/a", "na", "none", "no brand", "unbranded",
-        }:
-            return cleaned_brand[:120]
-
-    normalized_model = f" {model.lower()} "
-    for canonical_name, aliases in BRAND_ALIASES:
-        if any(
-            re.search(
-                rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])",
-                normalized_model,
-            )
-            for alias in aliases
-        ):
-            return canonical_name
-
-    return None
+    return _infer_brand_name(model, provided_brand)
 
 
 def infer_title_specifications(model: str) -> dict[str, str]:
     """Extract common technical values embedded in marketplace titles."""
 
-    inferred: dict[str, str] = {}
-    patterns = (
-        ("ram", (
-            r"\b(\d{1,2})\s*GB\s*RAM\b",
-            r"\bRAM\s*[:\-]?\s*(\d{1,2})\s*GB\b",
-        ), "GB"),
-        ("storage_capacity", (
-            r"\b(\d{2,4})\s*GB\s*(?:ROM|Storage|Memory)\b",
-            r"\b(?:ROM|Storage|Memory)\s*[:\-]?\s*(\d{2,4})\s*GB\b",
-        ), "GB"),
-        ("battery_capacity", (r"\b(\d{3,5})\s*mAh\b",), " mAh"),
-        ("display", (
-            r"\b(\d{1,2}(?:\.\d{1,2})?)\s*(?:inches|inch|\")\s*(?:display|screen)?",
-        ), " inches"),
-        ("front_camera", (
-            r"\b(\d{1,3})\s*MP\s*Front\s*Camera\b",
-            r"\bFront\s*Camera\s*[:\-]?\s*(\d{1,3})\s*MP\b",
-        ), "MP"),
-    )
-
-    for key, key_patterns, suffix in patterns:
-        for pattern in key_patterns:
-            match = re.search(pattern, model, re.I)
-            if match:
-                inferred[key] = f"{match.group(1)}{suffix}"
-                break
-
-    capacity_pair = re.search(
-        r"\b(\d{1,2})\s*(?:GB)?\s*[/+|]\s*(\d{2,4})\s*GB\b",
-        model,
-        re.I,
-    )
-    if capacity_pair:
-        inferred.setdefault("ram", f"{capacity_pair.group(1)}GB")
-        inferred.setdefault(
-            "storage_capacity",
-            f"{capacity_pair.group(2)}GB",
-        )
-
-    storage_options = list(dict.fromkeys(
-        match.group(1)
-        for match in re.finditer(r"\b(\d{2,4})\s*GB\b", model, re.I)
-        if int(match.group(1)) >= 32
-    ))
-    if storage_options:
-        inferred.setdefault(
-            "storage_options",
-            ", ".join(f"{value}GB" for value in storage_options),
-        )
-    if re.search(r"\bPTA\s*Approved\b", model, re.I):
-        inferred.setdefault("pta_status", "PTA Approved")
-    if re.search(r"\bDual\s*SIM\b|\b2\s*SIM\b", model, re.I):
-        inferred.setdefault("sim", "Dual SIM")
-    if re.search(r"\bType[ -]?C\b|\bUSB[ -]?C\b", model, re.I):
-        inferred.setdefault("charging", "USB Type-C")
-    if re.search(r"\bBluetooth\b", model, re.I):
-        inferred.setdefault("connectivity", "Bluetooth")
-    warranty = re.search(r"\b(\d+\s*Year\s*Warranty)\b", model, re.I)
-    if warranty:
-        inferred.setdefault("warranty", warranty.group(1))
-
-    return inferred
+    return _infer_title_specifications(model)
 
 
 def resolve_brand(db: Session, payload: ScrapedItemPayload) -> Brand | None:

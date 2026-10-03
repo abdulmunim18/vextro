@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from app.api.routes import ingest
 from fastapi.middleware.cors import CORSMiddleware
@@ -5,6 +7,9 @@ from app.api.routes.product_catalog import router as product_catalog_router
 
 from app.api.routes.health import router as health_router
 from app.core.config import settings
+from app.core.scraper_supervisor import (
+    scraper_scheduler_supervisor,
+)
 
 from app.api.routes.access import router as access_router
 
@@ -30,11 +35,29 @@ from app.api.routes.price_alerts import (
 from app.api.routes.warehouse import router as warehouse_router
 from app.api.routes.seller_trust import router as seller_trust_router
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Optionally run the scraper scheduler for the life of the API.
+
+    The scheduler runs as its own process and guards itself with an
+    operating-system lock, so ``uvicorn --reload`` and multi-worker runs
+    cannot produce two of them.
+    """
+
+    scraper_scheduler_supervisor.start()
+
+    try:
+        yield
+    finally:
+        scraper_scheduler_supervisor.stop()
+
+
 app = FastAPI(
     title=settings.app_name,
     description="AI-powered e-commerce market intelligence system",
     version=settings.app_version,
     debug=settings.app_debug,
+    lifespan=lifespan,
 )
 
 

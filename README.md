@@ -235,6 +235,21 @@ cd path\to\vextro\frontend
 npm run dev
 ```
 
+Scraper scheduler terminal (crawls once immediately, then every 12 hours):
+
+```powershell
+cd path\to\vextro\vextro_scraper
+$env:INGESTION_API_KEY = "<same value as backend\.env>"
+..\backend\.venv\Scripts\python.exe -m vextro_scraper.scheduler
+```
+
+Only one scheduler can run at a time; a second copy exits on its own file
+lock. To have the backend start it for you instead, set
+`SCRAPER_AUTOSTART_WITH_API=true` in `backend\.env`. See
+`docs/smartphone-price-sync.md` for the full configuration, the optional
+Windows startup task, and how marketplace prices, history and reviews flow
+through the system.
+
 # Docker Startup
 
 From the repository root:
@@ -292,6 +307,13 @@ Backend:
 ```powershell
 cd backend
 python -m pytest -q
+```
+
+Scraper:
+
+```powershell
+cd vextro_scraper
+..\backend\.venv\Scripts\python.exe -m pytest -q
 ```
 
 Frontend:

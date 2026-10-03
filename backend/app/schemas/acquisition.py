@@ -192,6 +192,13 @@ class AcquisitionListingResponse(BaseModel):
 
     price_history_created: bool
 
+    price_changed: bool = False
+
+    previous_price: Decimal | None = Field(
+        default=None,
+        gt=0,
+    )
+
     alerts_triggered: int = Field(
         default=0,
         ge=0,
@@ -235,6 +242,7 @@ class AcquisitionBulkItemResponse(BaseModel):
     listing_id: int | None = Field(default=None, ge=1)
     price_history_id: int | None = Field(default=None, ge=1)
     price_history_created: bool = False
+    price_changed: bool = False
     alerts_triggered: int = Field(default=0, ge=0)
     competitor_alerts_triggered: int = Field(default=0, ge=0)
     error_code: str | None = None

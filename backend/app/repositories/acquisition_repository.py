@@ -233,23 +233,58 @@ class AcquisitionRepository:
         raw_payload: dict[str, Any],
         scraped_at: datetime,
     ) -> ProductListing:
-        """Refresh an existing listing with the latest capture."""
+        """Refresh an existing listing with the latest capture.
+
+        Price, availability and currency always come from the fresh scrape:
+        they are the facts the crawl exists to collect. Everything else is
+        only overwritten when the scrape actually carried a value, because a
+        parser that failed to read a seller, a rating or a discount must not
+        erase one VEXTRO already holds. ``rating`` and ``review_count`` in
+        particular are recomputed from stored reviews, so a listing payload
+        that omits them would otherwise reset the review aggregate on every
+        refresh.
+        """
 
         listing.product_variant_id = (
             product_variant_id
         )
-        listing.seller_id = seller_id
-        listing.title = title
-        listing.product_url = product_url
         listing.current_price = current_price
-        listing.original_price = original_price
         listing.currency = currency
-        listing.rating = rating
-        listing.review_count = review_count
-        listing.warranty = warranty
         listing.is_available = is_available
-        listing.raw_payload = raw_payload
         listing.last_seen_at = scraped_at
+
+        if seller_id is not None:
+            listing.seller_id = seller_id
+
+        if title:
+            listing.title = title
+
+        if product_url:
+            listing.product_url = product_url
+
+        if original_price is not None:
+            listing.original_price = original_price
+        elif (
+            listing.original_price is not None
+            and listing.original_price <= current_price
+        ):
+            # A stored list price at or below the new selling price would
+            # render as a fake discount, so drop that stale baseline.
+            listing.original_price = None
+
+        if rating is not None:
+            listing.rating = rating
+
+        if review_count:
+            listing.review_count = review_count
+
+        if warranty:
+            listing.warranty = warranty
+
+        listing.raw_payload = {
+            **(listing.raw_payload or {}),
+            **(raw_payload or {}),
+        }
 
         database_session.flush()
 
@@ -274,6 +309,46 @@ class AcquisitionRepository:
         )
 
         return database_session.scalar(statement)
+
+    @staticmethod
+    def get_latest_price_history(
+        database_session: Session,
+        *,
+        listing_id: int,
+    ) -> PriceHistory | None:
+        """Return the newest stored observation for one listing."""
+
+        statement = (
+            select(PriceHistory)
+            .where(PriceHistory.listing_id == listing_id)
+            .order_by(
+                PriceHistory.captured_at.desc(),
+                PriceHistory.id.desc(),
+            )
+            .limit(1)
+        )
+
+        return database_session.scalar(statement)
+
+    @staticmethod
+    def touch_price_history(
+        database_session: Session,
+        price_history: PriceHistory,
+        *,
+        captured_at: datetime,
+    ) -> PriceHistory:
+        """Extend an unchanged observation to the latest scrape time.
+
+        Repeating an identical price is not a new data point. Moving the
+        timestamp keeps "this price was still live at" accurate without
+        filling the chart with flat duplicates every twelve hours.
+        """
+
+        if captured_at > price_history.captured_at:
+            price_history.captured_at = captured_at
+            database_session.flush()
+
+        return price_history
 
     @staticmethod
     def create_price_history(

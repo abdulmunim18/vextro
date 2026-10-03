@@ -100,6 +100,7 @@ class ProductListingResponse(ORMResponse):
     is_available: bool
     first_seen_at: datetime
     last_seen_at: datetime
+    updated_at: datetime
 
     seller: SellerResponse | None = None
     images: list[ProductImageResponse] = Field(default_factory=list)

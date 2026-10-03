@@ -98,6 +98,12 @@ class ScrapeMonitoringRepository:
         items_rejected: int,
         items_failed: int,
         error_count: int,
+        products_created: int = 0,
+        listings_created: int = 0,
+        listings_updated: int = 0,
+        price_changes: int = 0,
+        reviews_added: int = 0,
+        error_summary: str | None = None,
     ) -> None:
         run.status = status
         run.finished_at = datetime.now(UTC)
@@ -106,6 +112,12 @@ class ScrapeMonitoringRepository:
         run.items_rejected = max(run.items_rejected, items_rejected)
         run.items_failed = max(run.items_failed, items_failed)
         run.error_count = max(run.error_count, error_count)
+        run.products_created = max(run.products_created, products_created)
+        run.listings_created = max(run.listings_created, listings_created)
+        run.listings_updated = max(run.listings_updated, listings_updated)
+        run.price_changes = max(run.price_changes, price_changes)
+        run.reviews_added = max(run.reviews_added, reviews_added)
+        run.error_summary = error_summary
 
     @staticmethod
     def list_runs(

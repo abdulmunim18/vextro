@@ -174,6 +174,12 @@ class ScrapeMonitoringService:
                 items_rejected=payload.items_rejected,
                 items_failed=payload.items_failed,
                 error_count=payload.error_count,
+                products_created=payload.products_created,
+                listings_created=payload.listings_created,
+                listings_updated=payload.listings_updated,
+                price_changes=payload.price_changes,
+                reviews_added=payload.reviews_added,
+                error_summary=self._sanitize_text(payload.error_summary),
             )
             database_session.commit()
             database_session.refresh(run)

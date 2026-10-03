@@ -10,6 +10,8 @@ from vextro_scraper.pipelines import (
     BULK_ITEM_DELIVERED,
     BULK_ITEM_FAILED,
     BULK_ITEM_QUEUED,
+    CANONICAL_PRODUCT_CREATED,
+    REVIEWS_INGESTED,
     InvalidMarketplacePriceError,
 )
 
@@ -39,8 +41,14 @@ class ScrapeMonitoringExtension:
             'items_rejected': 0,
             'items_failed': 0,
             'error_count': 0,
+            'products_created': 0,
+            'listings_created': 0,
+            'listings_updated': 0,
+            'price_changes': 0,
+            'reviews_added': 0,
         }
         self.bulk_item_ids = set()
+        self.error_types = {}
 
     @classmethod
     def from_crawler(cls, crawler):
@@ -68,6 +76,14 @@ class ScrapeMonitoringExtension:
         crawler.signals.connect(extension.bulk_item_queued, BULK_ITEM_QUEUED)
         crawler.signals.connect(extension.bulk_item_delivered, BULK_ITEM_DELIVERED)
         crawler.signals.connect(extension.bulk_item_failed, BULK_ITEM_FAILED)
+        crawler.signals.connect(
+            extension.canonical_product_created,
+            CANONICAL_PRODUCT_CREATED,
+        )
+        crawler.signals.connect(
+            extension.reviews_ingested,
+            REVIEWS_INGESTED,
+        )
         return extension
 
     @property
@@ -190,11 +206,27 @@ class ScrapeMonitoringExtension:
 
     def bulk_item_delivered(self, item, result, spider):
         self.counters['items_ingested'] += 1
+
+        status = (result or {}).get('status')
+        if status == 'created':
+            self.counters['listings_created'] += 1
+        elif status == 'updated':
+            self.counters['listings_updated'] += 1
+
+        if (result or {}).get('price_changed'):
+            self.counters['price_changes'] += 1
+
         if self.run_id is not None:
             self._request(
                 'POST',
                 f'{self.RUNS_PATH}/{self.run_id}/items/ingested',
             )
+
+    def canonical_product_created(self, spider):
+        self.counters['products_created'] += 1
+
+    def reviews_ingested(self, created_count, duplicate_count, spider):
+        self.counters['reviews_added'] += max(0, int(created_count or 0))
 
     def bulk_item_failed(self, item, exception, spider):
         self._record_error(
@@ -222,6 +254,13 @@ class ScrapeMonitoringExtension:
             'items_rejected' if outcome == 'rejected' else 'items_failed'
         ] += 1
         self.counters['error_count'] += 1
+
+        error_type = str(
+            getattr(exception, 'error_type', default_type) or default_type
+        )[:80]
+        self.error_types[error_type] = (
+            self.error_types.get(error_type, 0) + 1
+        )
 
         if self.run_id is None:
             return
@@ -317,6 +356,24 @@ class ScrapeMonitoringExtension:
             default_stage='fetch' if is_fetch_error else 'parse',
         )
 
+    def _error_summary(self):
+        """Summarize why a run rejected or failed items, most common first."""
+
+        if not self.error_types:
+            return None
+
+        ranked = sorted(
+            self.error_types.items(),
+            key=lambda entry: (-entry[1], entry[0]),
+        )
+
+        return self._safe_message(
+            ', '.join(
+                f'{error_type}={count}'
+                for error_type, count in ranked[:10]
+            )
+        )
+
     def spider_closed(self, spider, reason):
         if self.run_id is None:
             logging.error(
@@ -332,6 +389,7 @@ class ScrapeMonitoringExtension:
                     'finished',
                     'closespider_itemcount',
                 },
+                'error_summary': self._error_summary(),
                 **self.counters,
             },
         )

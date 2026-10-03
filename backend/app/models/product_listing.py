@@ -170,6 +170,13 @@ class ProductListing(Base):
         server_default=func.now(),
     )
 
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
     product_variant: Mapped["ProductVariant"] = relationship(
         back_populates="listings",
     )

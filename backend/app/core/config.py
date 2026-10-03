@@ -24,6 +24,16 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
     ingestion_api_key: str | None = None
+
+    # Scraper scheduler. The scheduler is a dedicated process so a crawl can
+    # never block request handling; set ``scraper_autostart_with_api`` to
+    # have the API launch it on startup during local development.
+    scraper_enabled: bool = True
+    scraper_run_on_startup: bool = True
+    scraper_interval_hours: float = 12.0
+    scraper_autostart_with_api: bool = False
+    scraper_lock_path: str | None = None
+
     cors_origins: str = (
         "http://localhost:5173,http://127.0.0.1:5173"
     )

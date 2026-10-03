@@ -176,12 +176,23 @@ function MarketplaceListingCard({
                   </strong>
                 </span>
 
+                {/* Two different questions: when VEXTRO last confirmed this
+                    offer exists, and when the stored row last changed. */}
                 <span>
-                  Updated:{" "}
+                  Last checked:{" "}
                   <strong className="text-vextro-ink">
                     {formatDate(listing.last_seen_at)}
                   </strong>
                 </span>
+
+                {listing.updated_at ? (
+                  <span>
+                    Updated:{" "}
+                    <strong className="text-vextro-ink">
+                      {formatDate(listing.updated_at)}
+                    </strong>
+                  </span>
+                ) : null}
               </div>
             </div>
 
