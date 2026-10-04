@@ -6,7 +6,10 @@ import {
 import { getApiErrorMessage } from "../utils/apiError";
 import { formatPrice } from "../utils/productDisplay";
 
-function SMECompetitorIntelligence({ organizationId }) {
+function SMECompetitorIntelligence({
+  organizationId,
+  productsRevision = 0,
+}) {
   const [data, setData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [downloadFormat, setDownloadFormat] = useState("");
@@ -28,7 +31,8 @@ function SMECompetitorIntelligence({ organizationId }) {
   useEffect(() => {
     const timeoutId = window.setTimeout(loadData, 0);
     return () => window.clearTimeout(timeoutId);
-  }, [loadData]);
+    // Product changes above alter the intelligence shown here.
+  }, [loadData, productsRevision]);
 
   async function handleDownload(format) {
     setDownloadFormat(format);

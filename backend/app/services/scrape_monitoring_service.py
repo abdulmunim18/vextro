@@ -1,5 +1,7 @@
 """Transactional lifecycle operations for scraper monitoring."""
 
+from datetime import UTC, datetime, timedelta
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -71,12 +73,65 @@ class ScrapeMonitoringService:
             )
         return run
 
+    # A crawl that has not reported anything for this long is not running
+    # any more: the process was killed, crashed or lost the backend.
+    STALE_RUN_HOURS = 6
+
+    def reconcile_stale_runs(
+        self,
+        database_session: Session,
+        *,
+        platform: str | None = None,
+        max_age_hours: int | None = None,
+    ) -> int:
+        """Close runs left marked running by a crawl that never finished."""
+
+        # ``0`` is a deliberate caller choice ("close every running row"),
+        # so it must not fall through to the default.
+        if max_age_hours is None:
+            max_age_hours = self.STALE_RUN_HOURS
+
+        cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
+        stale_runs = self.repository.list_stale_running_runs(
+            database_session,
+            started_before=cutoff,
+            platform=platform,
+        )
+
+        for run in stale_runs:
+            self.repository.finalize_run(
+                run,
+                status="failed",
+                items_discovered=run.items_discovered,
+                items_ingested=run.items_ingested,
+                items_rejected=run.items_rejected,
+                items_failed=run.items_failed,
+                error_count=run.error_count,
+                products_created=run.products_created,
+                listings_created=run.listings_created,
+                listings_updated=run.listings_updated,
+                price_changes=run.price_changes,
+                reviews_added=run.reviews_added,
+                error_summary=(
+                    "The crawl stopped without reporting completion and was "
+                    "closed by VEXTRO."
+                ),
+            )
+
+        return len(stale_runs)
+
     def start_run(
         self,
         database_session: Session,
         payload: ScrapeRunStartInput,
     ) -> ScrapeRunResponse:
         try:
+            # A new crawl for this platform proves any older "running" row
+            # belongs to a process that is gone.
+            self.reconcile_stale_runs(
+                database_session,
+                platform=payload.platform,
+            )
             run = self.repository.create_run(
                 database_session,
                 platform=payload.platform,
@@ -160,8 +215,19 @@ class ScrapeMonitoringService:
                     for_update=True,
                 )
             )
+            error_summary = payload.error_summary
+
             if not payload.crawl_succeeded:
                 run_status = "failed"
+            elif not payload.items_discovered:
+                # A marketplace crawl that discovered nothing has not
+                # succeeded: the catalog page changed shape or the request
+                # was blocked. Reporting it as completed hid both.
+                run_status = "failed"
+                error_summary = error_summary or (
+                    "The crawl finished without discovering any marketplace "
+                    "items."
+                )
             elif payload.items_rejected or payload.items_failed:
                 run_status = "partial"
             else:
@@ -179,7 +245,7 @@ class ScrapeMonitoringService:
                 listings_updated=payload.listings_updated,
                 price_changes=payload.price_changes,
                 reviews_added=payload.reviews_added,
-                error_summary=self._sanitize_text(payload.error_summary),
+                error_summary=self._sanitize_text(error_summary),
             )
             database_session.commit()
             database_session.refresh(run)

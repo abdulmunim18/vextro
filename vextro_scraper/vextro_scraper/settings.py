@@ -109,6 +109,13 @@ VEXTRO_SCRAPE_TRIGGER = os.getenv(
     "VEXTRO_SCRAPE_TRIGGER",
     "manual",
 )
+# PriceOye paginates its catalog with ?page=N and publishes several
+# hundred phones. The crawl walks pages until one comes back empty; this is
+# the safety stop so a marketplace change cannot produce an endless crawl.
+PRICEOYE_MAX_CATALOG_PAGES = int(
+    os.getenv("PRICEOYE_MAX_CATALOG_PAGES", "40")
+)
+
 MAX_REVIEWS_PER_LISTING = int(
     os.getenv("MAX_REVIEWS_PER_LISTING", "50")
 )

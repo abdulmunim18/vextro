@@ -26,6 +26,12 @@ from app.services.competitor_alert_service import (
 from app.services.notification_dispatcher import (
     dispatch_pending_deliveries,
 )
+from app.services.product_image_service import (
+    sync_product_images,
+)
+from app.services.smartphone_normalization import (
+    clean_marketplace_title,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -196,6 +202,14 @@ class AcquisitionService:
                 existing_listing is None
             )
 
+            # Daraz sellers put their store name and a stock code into every
+            # title they publish. The catalog shows this text to shoppers, so
+            # the listing is stored under the phone's own name.
+            listing_title = clean_marketplace_title(
+                payload.title,
+                payload.seller.name if payload.seller is not None else None,
+            )
+
             previous_price = (
                 existing_listing.current_price
                 if existing_listing is not None
@@ -211,7 +225,7 @@ class AcquisitionService:
                     ),
                     seller_id=seller_id,
                     external_id=payload.external_id,
-                    title=payload.title,
+                    title=listing_title,
                     product_url=str(
                         payload.product_url,
                     ),
@@ -235,7 +249,7 @@ class AcquisitionService:
                         payload.product_variant_id
                     ),
                     seller_id=seller_id,
-                    title=payload.title,
+                    title=listing_title,
                     product_url=str(
                         payload.product_url,
                     ),
@@ -250,6 +264,27 @@ class AcquisitionService:
                     is_available=payload.is_available,
                     raw_payload=payload.raw_payload,
                     scraped_at=payload.scraped_at,
+                )
+
+            # The gallery is stored with the listing and seeds the canonical
+            # product, which is what the catalog renders. A scrape that read
+            # no image leaves the stored gallery alone rather than clearing
+            # a product card that was already working.
+            if payload.image_urls:
+                sync_product_images(
+                    database_session,
+                    listing=listing,
+                    canonical_product=canonical_product,
+                    image_urls=payload.image_urls,
+                    alt_text=listing_title,
+                )
+            else:
+                logger.warning(
+                    "Marketplace listing captured without images: "
+                    "platform=%s external_id=%s listing_id=%s",
+                    payload.platform_code,
+                    payload.external_id,
+                    listing.id,
                 )
 
             (

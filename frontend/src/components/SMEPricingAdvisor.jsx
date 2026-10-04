@@ -6,7 +6,10 @@ import {
 import { getApiErrorMessage } from "../utils/apiError";
 import { formatPrice } from "../utils/productDisplay";
 
-function SMEPricingAdvisor({ organizationId }) {
+function SMEPricingAdvisor({
+  organizationId,
+  productsRevision = 0,
+}) {
   const [products, setProducts] = useState([]);
   const [productId, setProductId] = useState("");
   const [baselineUnits, setBaselineUnits] = useState("100");
@@ -38,7 +41,8 @@ function SMEPricingAdvisor({ organizationId }) {
   useEffect(() => {
     const timeoutId = window.setTimeout(loadProducts, 0);
     return () => window.clearTimeout(timeoutId);
-  }, [loadProducts]);
+    // A product added above must be selectable here straight away.
+  }, [loadProducts, productsRevision]);
 
   async function handleSubmit(event) {
     event.preventDefault();

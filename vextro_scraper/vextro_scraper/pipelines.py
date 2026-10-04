@@ -3,11 +3,17 @@ import re
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from math import isfinite
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 from itemadapter import ItemAdapter
 from scrapy.exceptions import DropItem
+
+from vextro_scraper.normalizers import (
+    BRAND_ALIASES,
+    clean_listing_title,
+    is_accessory_title,
+)
 
 
 BULK_ITEM_QUEUED = object()
@@ -17,43 +23,23 @@ CANONICAL_PRODUCT_CREATED = object()
 REVIEWS_INGESTED = object()
 
 
-BRAND_ALIASES = (
-    ('Samsung', ('samsung', 'galaxy')),
-    ('Apple', ('apple', 'iphone')),
-    ('Xiaomi', ('xiaomi', 'redmi', 'poco')),
-    ('Infinix', ('infinix',)),
-    ('Tecno', ('tecno',)),
-    ('Oppo', ('oppo',)),
-    ('Vivo', ('vivo',)),
-    ('Realme', ('realme',)),
-    ('OnePlus', ('oneplus', 'one plus')),
-    ('Huawei', ('huawei',)),
-    ('Honor', ('honor',)),
-    ('Nokia', ('nokia',)),
-    ('Google', ('google pixel', 'pixel')),
-    ('Motorola', ('motorola', 'moto')),
-    ('Itel', ('itel',)),
-    ('Sparx', ('sparx',)),
-    ('Dcode', ('dcode', 'd-code')),
-    ('QMobile', ('qmobile', 'q mobile')),
-    ('Faywa', ('faywa',)),
-    ('Nothing', ('nothing', 'cmf phone')),
-    ('Sego', ('sego',)),
-    ('Villaon', ('villaon',)),
-    ('LG', ('lg',)),
-    ('Balmuda', ('balmuda',)),
-    ('Sony', ('sony', 'xperia')),
-    ('Sharp', ('sharp', 'aquos')),
-    ('ZTE', ('zte', 'nubia')),
-    ('VGOTEL', ('vgotel',)),
-)
-
-
 MARKETPLACE_PRICE_PATTERN = re.compile(
     r'^\s*(?:(?:rs\.?|pkr)\s*)?'
     r'([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)\s*$',
     re.I,
 )
+
+
+class NonSmartphoneItemError(DropItem):
+    """Reject a catalog item that is an accessory rather than a phone.
+
+    The marketplace's smartphones category also serves cables, chargers and
+    covers. Delivering them registered accessories as catalog products and
+    filled the pending-match queue with items nobody can map to a phone.
+    """
+
+    error_type = 'non_smartphone_item'
+    error_stage = 'validation'
 
 
 class InvalidMarketplacePriceError(DropItem):
@@ -106,25 +92,111 @@ def normalize_marketplace_price(raw_price):
     return normalized_price
 
 
-def infer_brand(model, provided_brand=None):
-    """Return a clean marketplace brand with title-based fallbacks."""
+PLACEHOLDER_IMAGE_HOSTS = frozenset(
+    {
+        'placehold.co',
+        'via.placeholder.com',
+        'placeholder.com',
+        'dummyimage.com',
+    }
+)
 
-    if provided_brand:
-        cleaned_brand = str(provided_brand).strip()
-        if cleaned_brand.lower() not in {
-            'n/a', 'na', 'none', 'no brand', 'unbranded',
-        }:
-            return cleaned_brand
+# Marketplace galleries are served as real image files. Tracking
+# pixels, inline data URIs and lazy-loading spacers are not product
+# photography. Daraz and PriceOye both append resize directives after
+# the extension ("...jpg_720x720q80.jpg_.webp"), so the extension is
+# searched for anywhere in the path rather than only at its end.
+IMAGE_FILE_PATTERN = re.compile(
+    r'\.(?:jpe?g|png|webp|avif|gif|bmp)(?![a-z0-9])',
+    re.I,
+)
 
-    normalized_model = f" {str(model or '').lower()} "
+
+def is_usable_image_url(image_url):
+    """Report whether a normalized gallery URL points at a real photo."""
+
+    if not image_url.startswith(('http://', 'https://')):
+        return False
+
+    parsed = urlparse(image_url)
+
+    if parsed.netloc.lower() in PLACEHOLDER_IMAGE_HOSTS:
+        return False
+
+    return bool(IMAGE_FILE_PATTERN.search(parsed.path))
+
+
+# Words that mark a value as the shop selling the phone rather than the
+# company that made it. Daraz publishes the store in its ``brandName``
+# field ("OPPO Pakistan Official", "FAYWA TRADING (PVT) LTD"), which filled
+# the catalog's brand filter with sellers. "Mobile" is deliberately absent:
+# it is part of real brand names such as "me Mobile".
+BRAND_RESELLER_WORDS = frozenset(
+    {
+        'co', 'collection', 'corner', 'enterprise', 'enterprises',
+        'flagship', 'gallery', 'hub', 'inc', 'ltd', 'mall', 'mart',
+        'official', 'officials', 'pvt', 'retail', 'retailer', 'seller',
+        'shop', 'shops', 'store', 'stores', 'trader', 'traders', 'trading',
+    }
+)
+
+BRAND_PLACEHOLDERS = frozenset(
+    {'n/a', 'na', 'none', 'no brand', 'nobrand', 'unbranded', 'unknown', ''}
+)
+
+
+def _brand_words(value):
+    """Return the comparable words inside a brand value."""
+
+    return re.sub(r'[^a-z0-9]+', ' ', str(value or '').lower()).split()
+
+
+def canonical_brand(value):
+    """Return the manufacturer a piece of text names, if it names one."""
+
+    words = _brand_words(value)
+
+    if not words:
+        return None
+
+    normalized = f" {' '.join(words)} "
+
     for canonical_name, aliases in BRAND_ALIASES:
-        if any(
-            re.search(rf'(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])', normalized_model)
-            for alias in aliases
-        ):
+        if any(f' {alias} ' in normalized for alias in aliases):
             return canonical_name
 
     return None
+
+
+def infer_brand(model, provided_brand=None):
+    """Return the manufacturer behind a listing, never the seller.
+
+    The marketplace's own brand field is trusted only once it is recognised
+    as a manufacturer; otherwise the title decides, and a value that merely
+    names a shop is dropped instead of becoming a catalog brand.
+    """
+
+    cleaned_brand = ' '.join(str(provided_brand or '').split())
+    cleaned_brand = cleaned_brand.strip(' .,-|/_').strip()
+
+    if ' '.join(_brand_words(cleaned_brand)) in BRAND_PLACEHOLDERS:
+        cleaned_brand = ''
+
+    from_brand = canonical_brand(cleaned_brand)
+    if from_brand is not None:
+        return from_brand
+
+    from_title = canonical_brand(model)
+    if from_title is not None:
+        return from_title
+
+    if not cleaned_brand:
+        return None
+
+    if set(_brand_words(cleaned_brand)) & BRAND_RESELLER_WORDS:
+        return None
+
+    return cleaned_brand[:120]
 
 
 def infer_title_specifications(model, specifications=None):
@@ -274,17 +346,61 @@ class VextroCleaningPipeline:
 
         adapter['review_count'] = max(0, review_count)
 
-        # 2. Clean Availability: Convert 'In Stock' to Boolean (True/False)
+        # 2. Reduce the marketplace title to the product it describes. The
+        # seller's store name and the stock code Daraz appends belong to the
+        # offer, not to the phone, and every brand, specification and match
+        # below is derived from this title.
+        seller = adapter.get('seller')
+        seller_name = (
+            seller.get('name')
+            if isinstance(seller, dict)
+            else seller
+        )
+        cleaned_title = clean_listing_title(
+            adapter.get('model'),
+            seller_name=seller_name,
+        )
+
+        if cleaned_title != adapter.get('model'):
+            logging.debug(
+                'Cleaned marketplace title: platform=%s external_id=%s '
+                'original=%r cleaned=%r',
+                adapter.get('platform'),
+                adapter.get('external_id'),
+                str(adapter.get('model'))[:200],
+                cleaned_title[:200],
+            )
+
+        adapter['model'] = cleaned_title
+
+        if is_accessory_title(cleaned_title):
+            platform = str(adapter.get('platform') or 'unknown').lower()
+            external_id = str(adapter.get('external_id') or 'unknown')
+            logging.info(
+                'Dropped marketplace accessory: platform=%s external_id=%s '
+                'title=%r',
+                platform,
+                external_id,
+                cleaned_title[:200],
+            )
+            raise NonSmartphoneItemError(
+                'Marketplace item is an accessory, not a smartphone '
+                f'(platform={platform} external_id={external_id}).'
+            )
+
+        # 3. Clean Availability: Convert 'In Stock' to Boolean (True/False)
         avail = adapter.get('availability', '')
         adapter['is_available'] = True if 'In Stock' in avail else False
 
-        # 3. Generate External ID: Extract the unique slug from the URL
+        # 4. Generate External ID: Extract the unique slug from the URL
         url = adapter.get('product_url', '')
         if url and not adapter.get('external_id'):
             # Example: grabs "xiaomi-redmi-note-14-pro" from the end of the URL
             adapter['external_id'] = url.rstrip('/').split('/')[-1]
 
-        # 4. Normalize and deduplicate gallery URLs while preserving order.
+        # 5. Normalize and deduplicate gallery URLs while preserving order.
+        # A listing without a usable image reaches the catalog as a blank
+        # card, so an empty gallery is reported rather than passed silently.
         normalized_images = []
         for image_url in adapter.get('image_urls') or []:
             if not isinstance(image_url, str) or not image_url.strip():
@@ -292,19 +408,28 @@ class VextroCleaningPipeline:
 
             normalized_url = urljoin(url, image_url.strip())
             if (
-                normalized_url.startswith(('http://', 'https://'))
+                is_usable_image_url(normalized_url)
                 and normalized_url not in normalized_images
             ):
                 normalized_images.append(normalized_url)
 
         adapter['image_urls'] = normalized_images
 
+        if not normalized_images:
+            logging.warning(
+                'Marketplace item carries no usable image: platform=%s '
+                'external_id=%s product_url=%s',
+                str(adapter.get('platform') or 'unknown').lower(),
+                str(adapter.get('external_id') or 'unknown'),
+                str(url or 'unknown')[:500],
+            )
+
         adapter['brand'] = infer_brand(
             adapter.get('model'),
             adapter.get('brand'),
         )
 
-        # 5. Keep API-safe, consistently named specification pairs.
+        # 6. Keep API-safe, consistently named specification pairs.
         normalized_specifications = {}
         source_specifications = infer_title_specifications(
             adapter.get('model'),
@@ -720,6 +845,13 @@ class VextroApiIngestionPipeline:
             'storage_gb': storage_gb,
             'color': _optional_text(payload.get('color')),
             'sku': _optional_text(payload.get('sku')),
+            # The store name is sent so the backend can recognise, and
+            # discard, a seller prefix the spider did not know about.
+            'seller_name': _optional_text(
+                (payload.get('seller') or {}).get('name')
+                if isinstance(payload.get('seller'), dict)
+                else payload.get('seller')
+            ),
             # The normalized specification sheet lets the backend register a
             # genuinely new phone with real specs instead of guessing from
             # the title alone.
@@ -785,6 +917,13 @@ class VextroApiIngestionPipeline:
             'review_count': payload.get('review_count') or 0,
             'warranty': _optional_text(payload.get('warranty')),
             'is_available': bool(payload.get('is_available')),
+            # The gallery is a first-class field, not just raw context: the
+            # backend stores it so the catalog can show the product.
+            'image_urls': [
+                str(image_url)[:1000]
+                for image_url in (payload.get('image_urls') or [])
+                if image_url
+            ][:12],
             'scraped_at': _normalize_scraped_at(
                 payload.get('scrape_timestamp')
             ),

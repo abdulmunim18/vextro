@@ -198,6 +198,23 @@ def list_scrape_runs(
     ]
 
 
+def health_status(health_score: float) -> str:
+    """Return the one status vocabulary both warehouse views report.
+
+    The metrics card and the integrity audit used to grade the same score
+    with different words, so one screen could call the warehouse degraded
+    while the other called it healthy.
+    """
+
+    if health_score >= 90:
+        return "EXCELLENT"
+
+    if health_score >= 70:
+        return "GOOD"
+
+    return "NEEDS_ATTENTION"
+
+
 @router.get("/metrics", response_model=WarehouseMetricsResponse)
 def get_warehouse_metrics(
     db: Session = Depends(get_db),
@@ -264,7 +281,7 @@ def get_warehouse_metrics(
             "health_score_percentage": health_score,
             "missing_images_count": missing_images_count,
             "listings_without_price_history_count": listings_no_history,
-            "status": "EXCELLENT" if health_score >= 90 else "GOOD" if health_score >= 70 else "NEEDS_ATTENTION",
+            "status": health_status(health_score),
         },
     }
 
@@ -310,5 +327,5 @@ def run_warehouse_data_audit(
         "missing_image_listings_count": missing_images,
         "listings_without_price_history_count": no_history,
         "health_score_percentage": health_score,
-        "status": "HEALTHY" if health_score >= 80 else "DEGRADED",
+        "status": health_status(health_score),
     }

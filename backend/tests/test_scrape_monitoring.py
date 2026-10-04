@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,6 +9,9 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.scrape_error import ScrapeError
 from app.models.scrape_run import ScrapeRun
+from app.services.scrape_monitoring_service import (
+    ScrapeMonitoringService,
+)
 
 
 RUNS_ENDPOINT = "/api/v1/internal/acquisition/runs"
@@ -92,8 +96,8 @@ def test_run_lifecycle_finishes_completed(client: TestClient) -> None:
         client,
         run["id"],
         crawl_succeeded=True,
-        discovered=0,
-        ingested=0,
+        discovered=12,
+        ingested=12,
         rejected=0,
         failed=0,
         errors=0,
@@ -102,6 +106,77 @@ def test_run_lifecycle_finishes_completed(client: TestClient) -> None:
     body = response.json()
     assert body["status"] == "completed"
     assert body["finished_at"] is not None
+
+
+def test_a_crawl_that_discovered_nothing_is_not_a_success(
+    client: TestClient,
+) -> None:
+    """An empty marketplace crawl means the catalog page stopped parsing.
+
+    Reporting it as completed hid a PriceOye run that collected zero items
+    behind a green status in the operations dashboard.
+    """
+
+    run = start_run(client, platform="priceoye", spider_name="priceoye_smartphones")
+
+    response = finish_run(
+        client,
+        run["id"],
+        crawl_succeeded=True,
+        discovered=0,
+        ingested=0,
+        rejected=0,
+        failed=0,
+        errors=0,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert "without discovering" in body["error_summary"]
+
+
+def test_a_new_crawl_closes_the_run_its_predecessor_abandoned(
+    client: TestClient,
+    database_session: Session,
+) -> None:
+    """A killed crawl left its run marked running for weeks."""
+
+    abandoned = start_run(client)
+
+    database_session.rollback()
+    stale = database_session.get(ScrapeRun, abandoned["id"])
+    assert stale is not None
+    stale.started_at = datetime.now(UTC) - timedelta(days=13)
+    database_session.commit()
+
+    start_run(client)
+
+    database_session.rollback()
+    database_session.expire_all()
+    closed = database_session.get(ScrapeRun, abandoned["id"])
+
+    assert closed is not None
+    assert closed.status == "failed"
+    assert closed.finished_at is not None
+    assert "without reporting completion" in (closed.error_summary or "")
+
+
+def test_a_running_crawl_is_left_alone_while_it_is_still_young(
+    client: TestClient,
+    database_session: Session,
+) -> None:
+    """Two crawls started minutes apart must not cancel each other."""
+
+    first = start_run(client)
+    start_run(client)
+
+    database_session.rollback()
+    database_session.expire_all()
+    untouched = database_session.get(ScrapeRun, first["id"])
+
+    assert untouched is not None
+    assert untouched.status == "running"
 
 
 def test_partial_run_persists_counters_and_related_errors(
@@ -280,3 +355,38 @@ def test_run_detail_returns_related_errors(client: TestClient) -> None:
     assert response.status_code == 200
     assert len(response.json()["errors"]) == 1
     assert response.json()["errors"][0]["error_type"] == "invalid_price"
+
+
+def test_closing_every_running_row_is_an_option(
+    client: TestClient,
+    database_session: Session,
+) -> None:
+    """An operator closing a crawl they killed means every running row.
+
+    ``0`` once fell through to the six-hour default, so the run they had
+    just stopped stayed open.
+    """
+
+    run = start_run(client)
+
+    database_session.rollback()
+    started = database_session.get(ScrapeRun, run["id"])
+    assert started is not None
+    # A minute of age, so the assertion does not race the clock the cutoff
+    # is computed from.
+    started.started_at = datetime.now(UTC) - timedelta(minutes=1)
+    database_session.commit()
+
+    closed = ScrapeMonitoringService().reconcile_stale_runs(
+        database_session,
+        max_age_hours=0,
+    )
+    database_session.commit()
+
+    assert closed >= 1
+
+    database_session.expire_all()
+    stored = database_session.get(ScrapeRun, run["id"])
+
+    assert stored is not None
+    assert stored.status == "failed"

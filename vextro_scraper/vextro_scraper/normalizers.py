@@ -296,3 +296,360 @@ def json_ld_availability(product):
         return False
 
     return None
+
+
+# Daraz sellers prefix their own store name onto every listing title
+# ("Carrefour Samsung Galaxy A07 4+128GB Green-303662"). The store name is
+# not part of the phone's identity, so it has to come off before matching:
+# a title carrying it reads as a different product from the same phone on
+# PriceOye, and a canonical product created from it is a permanent duplicate.
+BRAND_ALIASES = (
+    ('Samsung', ('samsung', 'galaxy')),
+    ('Apple', ('apple', 'iphone')),
+    ('Xiaomi', ('xiaomi', 'redmi', 'poco')),
+    ('Infinix', ('infinix',)),
+    ('Tecno', ('tecno',)),
+    ('Oppo', ('oppo',)),
+    ('Vivo', ('vivo',)),
+    ('Realme', ('realme',)),
+    ('OnePlus', ('oneplus', 'one plus')),
+    ('Huawei', ('huawei',)),
+    ('Honor', ('honor',)),
+    ('Nokia', ('nokia',)),
+    ('Google', ('google pixel', 'pixel')),
+    ('Motorola', ('motorola', 'moto')),
+    ('Itel', ('itel',)),
+    ('Sparx', ('sparx',)),
+    ('Dcode', ('dcode', 'd-code')),
+    ('QMobile', ('qmobile', 'q mobile')),
+    ('Faywa', ('faywa',)),
+    ('Nothing', ('nothing', 'cmf phone')),
+    ('Sego', ('sego',)),
+    ('Villaon', ('villaon',)),
+    ('LG', ('lg',)),
+    ('Balmuda', ('balmuda',)),
+    ('Sony', ('sony', 'xperia')),
+    ('Sharp', ('sharp', 'aquos')),
+    ('ZTE', ('zte', 'nubia')),
+    ('VGOTEL', ('vgotel', 'vgo tel')),
+)
+
+
+_BRAND_TOKENS = frozenset(
+    token
+    for _, aliases in BRAND_ALIASES
+    for alias in aliases
+    for token in alias.split()
+)
+
+
+# Words that only ever describe a shop or a sales pitch, never a phone.
+# They are dropped from a seller name before it is compared with a title,
+# and a title may start with them only when a real brand follows.
+STORE_NAME_WORDS = frozenset(
+    {
+        'accessories', 'brand', 'center', 'centre', 'collection', 'company',
+        'corner', 'co', 'deal', 'deals', 'digital', 'electronic',
+        'electronics', 'enterprise', 'enterprises', 'flagship', 'gadget',
+        'gadgets', 'gallery', 'genuine', 'house', 'hub', 'inc',
+        'international', 'ltd', 'mall', 'mart', 'mobile', 'mobiles',
+        'official', 'officials', 'online', 'original', 'pakistan', 'pk',
+        'point', 'pvt', 'retail',
+        'retailer', 'sales', 'seller', 'shop', 'shoppe', 'shopping', 'shops',
+        'store', 'stores', 'tech', 'technologies', 'technology', 'telecom',
+        'trader', 'traders', 'trading', 'world', 'zone',
+    }
+)
+
+
+# A marketplace stock code glued to the end of a title
+# ("...Green-303662", "...Gold (306237)"). A four-digit model year
+# such as "Nokia 130 (2023)" is part of the phone's name, not a code.
+_STOCK_CODE = r'[a-z]{0,3}(?!(?:19|20)\d{2}\b)\d{4,}'
+
+_TRAILING_STOCK_CODE = re.compile(
+    r'[\s,:;|/]*(?:'
+    rf'[-–—_]\s*{_STOCK_CODE}'
+    rf'|\(\s*(?:sku[\s:#-]*)?{_STOCK_CODE}\s*\)'
+    rf'|\[\s*(?:sku[\s:#-]*)?{_STOCK_CODE}\s*\]'
+    r')\s*$',
+    re.I,
+)
+
+_TRAILING_SEPARATORS = ' -–—_|/,;:.'
+
+
+def _title_tokens(value):
+    """Split a title into display tokens, preserving their original text."""
+
+    return [token for token in str(value or '').split() if token]
+
+
+def _comparison_token(token):
+    """Fold one token to the letters and digits used for comparisons."""
+
+    return re.sub(r'[^a-z0-9]+', '', str(token).lower())
+
+
+def _store_name_tokens(seller_name):
+    """Return the identifying words of a seller's store name.
+
+    "Carrefour Pakistan" identifies itself as "carrefour"; a store called
+    "Mobile Zone" has nothing but shop words, so all of them are kept.
+    """
+
+    tokens = [
+        token
+        for token in (
+            _comparison_token(part) for part in _title_tokens(seller_name)
+        )
+        if token
+    ]
+    identifying = [
+        token for token in tokens if token not in STORE_NAME_WORDS
+    ]
+
+    return identifying or tokens
+
+
+def _contains_brand_token(tokens):
+    """Report whether a known phone brand appears among these tokens."""
+
+    return any(
+        _comparison_token(token) in _BRAND_TOKENS for token in tokens
+    )
+
+
+def _strip_store_prefix(tokens, store_tokens):
+    """Drop a leading store name from a listing title's tokens.
+
+    Sellers spell their own name inconsistently across their listings
+    ("AL Fatah" and "AL-Fatah"), so the leading tokens are compared with the
+    store name as one run of letters and digits. A brand token is never
+    consumed: a store called "Samsung Official Store" must not eat the
+    "Samsung" that identifies the phone.
+    """
+
+    target = ''.join(store_tokens)
+
+    if not target:
+        return tokens
+
+    matched = ''
+    index = 0
+
+    while index < len(tokens) and matched != target:
+        token = _comparison_token(tokens[index])
+
+        if not token:
+            index += 1
+            continue
+
+        if token in _BRAND_TOKENS:
+            break
+
+        if target.startswith(matched + token):
+            matched += token
+            index += 1
+        elif matched and token in STORE_NAME_WORDS:
+            # "Carrefour Official Store Samsung ..." - shop words inside the
+            # store name are part of the prefix, not of the phone.
+            index += 1
+        else:
+            break
+
+    if matched != target:
+        return tokens
+
+    while (
+        index < len(tokens)
+        and _comparison_token(tokens[index]) in STORE_NAME_WORDS
+    ):
+        index += 1
+
+    remainder = tokens[index:]
+
+    return remainder if len(remainder) >= 2 else tokens
+
+
+def _strip_store_word_prefix(tokens):
+    """Drop leading shop words when a real brand follows them.
+
+    Daraz titles such as "Official Store Infinix Hot 50" carry the shop in
+    front of the phone even when the seller name is unknown.
+    """
+
+    index = 0
+
+    while (
+        index < len(tokens)
+        and index < 3
+        and _comparison_token(tokens[index]) in STORE_NAME_WORDS
+    ):
+        index += 1
+
+    if not index:
+        return tokens
+
+    remainder = tokens[index:]
+
+    if len(remainder) < 2 or not _contains_brand_token(remainder):
+        return tokens
+
+    return remainder
+
+
+def clean_listing_title(title, seller_name=None):
+    """Return a marketplace title reduced to the product it describes.
+
+    Removes the seller's store name and the marketplace stock code that
+    Daraz glues to the end, so "Carrefour Samsung Galaxy A07 4+128GB
+    Green-303662" becomes "Samsung Galaxy A07 4+128GB Green". The original
+    title is returned unchanged whenever cleaning would leave something too
+    short to identify a phone.
+    """
+
+    original = ' '.join(str(title or '').split())
+
+    if not original:
+        return original
+
+    cleaned = original
+
+    # Marketplaces append at most one stock code, but a title may also end
+    # with the separator that preceded it.
+    for _ in range(2):
+        shortened = _TRAILING_STOCK_CODE.sub('', cleaned)
+        if shortened == cleaned:
+            break
+        cleaned = shortened.strip(_TRAILING_SEPARATORS)
+
+    tokens = _title_tokens(cleaned)
+    tokens = _strip_store_prefix(tokens, _store_name_tokens(seller_name))
+    tokens = _strip_store_word_prefix(tokens)
+
+    cleaned = ' '.join(tokens).strip(_TRAILING_SEPARATORS)
+    cleaned = ' '.join(cleaned.split())
+
+    if len(cleaned) < 3 or not re.search(r'[a-z]', cleaned, re.I):
+        return original
+
+    return cleaned
+
+
+# The Daraz smartphones category page also serves cables, chargers,
+# covers and screen protectors. Taken at face value they became
+# canonical products ("Original Samsung 45W GaN Charger" is one in the
+# catalog today) or filled the pending-match queue with items no
+# administrator will ever map to a phone.
+# The marketplace smartphones category also serves cables, chargers,
+# covers and screen protectors, which reached the catalog as products.
+# Some words never appear in a phone's own title. Others do, because a
+# phone's copy says what is in the box ("with Free Powerbank", "Box
+# Charger") or which accessories it supports ("Memory Card Support",
+# "+SD Card Supported"). Those are read as an accessory only when no
+# inclusion wording sits in front of them and no support wording
+# follows, so a phone that advertises its bundled charger stays a
+# phone.
+HARD_ACCESSORY_PATTERN = re.compile(
+    '|'.join(
+        (
+            r'\botg\b',
+            r'\bstickers?\b',
+            r'\bselfie\s+stick\b',
+            r'\btripod\b',
+            r'\bring\s+light\b',
+            r'\bsim\s+(?:ejector|tray)\b',
+            r'\bcamera\s+lens\s+protector\b',
+            r'\bwatch\s+strap\b',
+            r'\bpack\s+of\s+\d+\b',
+            r'\bspeaker\s+mesh\b',
+            r'\bdust\s*proof\b',
+            r'\bfaucet\b',
+            r'\bkeyboard\b',
+            r'\bmouse\b',
+            r'\bneckband\b',
+            r'\bairpods?\b',
+        )
+    ),
+    re.I,
+)
+
+SOFT_ACCESSORY_PATTERN = re.compile(
+    '|'.join(
+        (
+            r'\bcables?\b',
+            r'\bchargers?\b',
+            r'\bcharging\s+(?:adapter|brick|dock|pad|station)\b',
+            r'\badapter\b',
+            r'\bconverter\b',
+            r'\bpower\s*bank\b',
+            r'\bmemory\s+card\b',
+            r'\bsd\s+card\b',
+            r'\bback\s*cover\b',
+            r'\bphone\s+case\b',
+            r'\bcover\s+for\b',
+            r'\bpouch\b',
+            r'\btempered\s+glass\b',
+            r'\bscreen\s+(?:protector|guard)\b',
+            r'\bprotector\s+(?:pack|film)\b',
+            r'\bear\s*(?:buds?|phones?)\b',
+            r'\bhead\s*(?:phones?|sets?)\b',
+            r'\bhands?\s*free\b',
+            r'\bcar\s+(?:holder|mount|charger)\b',
+        )
+    ),
+    re.I,
+)
+
+# "Box Charger", "with Free Powerbank": the box, not the product.
+ACCESSORY_INCLUSION_PATTERN = re.compile(
+    r'(?:\b(?:free|with|incl|included|including|includes|bundle|bundled|box|boxed|plus|and|no|without|extra|gift)\b|[+&,])',
+    re.I,
+)
+
+# "Memory Card Support": a feature of the phone, not the product.
+ACCESSORY_FEATURE_PATTERN = re.compile(
+    r'^\s*(?:supp\w*|slot|compatible|expandable|support\w*|included|option\w*|available|only)\b',
+    re.I,
+)
+
+# How far either side of the keyword that wording may sit.
+CONTEXT_WINDOW = 30
+
+
+def is_accessory_title(title):
+    """Report whether a marketplace title describes an accessory."""
+
+    text = ' '.join(str(title or '').split())
+
+    if not text:
+        return False
+
+    if HARD_ACCESSORY_PATTERN.search(text):
+        return True
+
+    for match in SOFT_ACCESSORY_PATTERN.finditer(text):
+        before = text[max(0, match.start() - CONTEXT_WINDOW):match.start()]
+        after = text[match.end():match.end() + CONTEXT_WINDOW]
+
+        if ACCESSORY_INCLUSION_PATTERN.search(before):
+            continue
+
+        if ACCESSORY_FEATURE_PATTERN.search(after):
+            continue
+
+        return True
+
+    return False
+
+    if HARD_ACCESSORY_PATTERN.search(text):
+        return True
+
+    for match in SOFT_ACCESSORY_PATTERN.finditer(text):
+        context = text[max(0, match.start() - CONTEXT_WINDOW):match.start()]
+
+        if not ACCESSORY_INCLUSION_PATTERN.search(context):
+            return True
+
+    return False

@@ -68,6 +68,13 @@ class ProductMatchRequest(BaseModel):
         max_length=120,
     )
 
+    # Daraz sellers prefix their store name onto the listing title. Knowing
+    # the store lets the matcher strip it before comparing the phone.
+    seller_name: str | None = Field(
+        default=None,
+        max_length=255,
+    )
+
     specifications: dict[str, Any] = Field(
         default_factory=dict,
     )

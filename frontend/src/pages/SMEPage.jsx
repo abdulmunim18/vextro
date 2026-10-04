@@ -389,6 +389,15 @@ function SelectedOrganizationPanel({ organization }) {
 }
 
 function SMEPage() {
+  const [productsRevision, setProductsRevision] =
+    useState(0);
+
+  const handleProductsChanged = useCallback(() => {
+    setProductsRevision(
+      (revision) => revision + 1,
+    );
+  }, []);
+
   const [organizations, setOrganizations] = useState([]);
   const [selectedOrganizationId, setSelectedOrganizationId] =
     useState(null);
@@ -602,19 +611,26 @@ function SMEPage() {
       organization={selectedOrganization}
     />
 
+    {/* The watchlist and the advisor both pick from the product list,
+        so creating a product has to reach them. Without this they kept
+        showing "No business products available" until a page reload. */}
     <SMEBusinessProducts
       organizationId={selectedOrganization.id}
       organizationName={selectedOrganization.name}
+      onProductsChanged={handleProductsChanged}
     />
     <SMECompetitorWatchlist
   organizationId={selectedOrganization.id}
   organizationName={selectedOrganization.name}
+  productsRevision={productsRevision}
 />
 <SMECompetitorIntelligence
   organizationId={selectedOrganization.id}
+  productsRevision={productsRevision}
 />
 <SMEPricingAdvisor
   organizationId={selectedOrganization.id}
+  productsRevision={productsRevision}
 />
 <SMESalesImport
   organizationId={selectedOrganization.id}

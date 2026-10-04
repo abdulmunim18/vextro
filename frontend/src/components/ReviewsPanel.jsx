@@ -365,7 +365,7 @@ function TrustRecommendation({ groups }) {
   );
 }
 
-function ReviewsPanel({ productId, listings = [] }) {
+function ReviewsPanel({ productId }) {
   const [reviewsResponse, setReviewsResponse] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -377,9 +377,12 @@ function ReviewsPanel({ productId, listings = [] }) {
     }
 
     let isMounted = true;
-    setIsLoading(true);
 
     async function loadReviews() {
+      // Moving into the task keeps the effect body free of a synchronous
+      // setState, which React warns about as a cascading render.
+      setIsLoading(true);
+
       try {
         const [reviewsData, analysisData] = await Promise.all([
           getProductReviews(productId, {
@@ -414,32 +417,13 @@ function ReviewsPanel({ productId, listings = [] }) {
       }
     }
 
-    loadReviews();
+    const timeoutId = window.setTimeout(loadReviews, 0);
 
     return () => {
       isMounted = false;
+      window.clearTimeout(timeoutId);
     };
   }, [productId]);
-
-  // Map every listing_id to its platform_code so we can partition the
-  // analysis payload (whose per-review items only carry listing_id).
-  const listingToPlatform = useMemo(() => {
-    const map = new Map();
-    const platformNameById = new Map();
-    listings.forEach((listing) => {
-      map.set(listing.id, listing.platform_id);
-      if (listing.platform_code && listing.platform_id) {
-        platformNameById.set(
-          listing.platform_id,
-          listing.platform_code,
-        );
-      }
-    });
-    // Reviews response items carry platform_code directly, so we can
-    // reverse-derive it from any observed review when the listing
-    // response has been trimmed elsewhere.
-    return { map, platformNameById };
-  }, [listings]);
 
   const platformGroups = useMemo(() => {
     const reviews = reviewsResponse?.items ?? [];

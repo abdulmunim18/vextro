@@ -101,22 +101,54 @@ export default function WarehouseMonitoring() {
         </div>
       </div>
 
-      {/* Audit Report Banner if triggered */}
-      {auditReport && (
-        <div className="p-5 bg-emerald-950/40 border border-emerald-500/40 rounded-2xl text-emerald-200 flex items-center justify-between">
-          <div>
-            <div className="font-bold text-sm text-emerald-400">
-              Data Integrity Audit Passed — Health Score: {auditReport.health_score_percentage}% ({auditReport.status})
+      {/* Audit report banner. An audit that finds problems must not
+          report itself as passed in green: the warehouse once showed
+          "Audit Passed" beside a 25.4% health score. */}
+      {auditReport && (() => {
+        const auditHealthy =
+          auditReport.status !== "NEEDS_ATTENTION";
+        const tone = auditHealthy
+          ? {
+              box: "bg-emerald-950/40 border-emerald-500/40 text-emerald-200",
+              title: "text-emerald-400",
+              detail: "text-emerald-300/80",
+              stamp:
+                "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
+            }
+          : {
+              box: "bg-amber-950/40 border-amber-500/40 text-amber-100",
+              title: "text-amber-300",
+              detail: "text-amber-200/80",
+              stamp:
+                "bg-amber-500/20 text-amber-200 border-amber-500/30",
+            };
+
+        return (
+          <div
+            className={`p-5 border rounded-2xl flex items-center justify-between ${tone.box}`}
+          >
+            <div>
+              <div className={`font-bold text-sm ${tone.title}`}>
+                {auditHealthy
+                  ? "Data integrity audit passed"
+                  : "Data integrity audit found problems"}{" "}
+                — Health Score: {auditReport.health_score_percentage}% ({auditReport.status})
+              </div>
+              <div className={`text-xs mt-1 ${tone.detail}`}>
+                Checked {auditReport.total_canonical_products} canonical products & {auditReport.total_listings} active listings.
+                {auditHealthy
+                  ? null
+                  : ` ${auditReport.missing_image_listings_count} listings without images, ${auditReport.listings_without_price_history_count} without price history, ${auditReport.unlinked_listings_count} unlinked.`}
+              </div>
             </div>
-            <div className="text-xs text-emerald-300/80 mt-1">
-              Checked {auditReport.total_canonical_products} canonical products & {auditReport.total_listings} active listings.
-            </div>
+            <span
+              className={`text-xs px-3 py-1 font-mono rounded-full border ${tone.stamp}`}
+            >
+              {new Date(auditReport.audit_timestamp).toLocaleTimeString()}
+            </span>
           </div>
-          <span className="text-xs px-3 py-1 bg-emerald-500/20 text-emerald-300 font-mono rounded-full border border-emerald-500/30">
-            {new Date(auditReport.audit_timestamp).toLocaleTimeString()}
-          </span>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Stat KPI Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

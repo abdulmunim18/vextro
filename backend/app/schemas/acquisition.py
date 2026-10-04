@@ -128,6 +128,45 @@ class AcquisitionListingInput(BaseModel):
         default_factory=dict,
     )
 
+    # The marketplace gallery is stored, not just logged: a listing whose
+    # images are dropped reaches the catalog as a blank product card.
+    image_urls: list[str] = Field(
+        default_factory=list,
+        max_length=12,
+    )
+
+    @field_validator("image_urls", mode="before")
+    @classmethod
+    def normalize_image_urls(
+        cls,
+        value: Any,
+    ) -> list[str]:
+        """Keep absolute, deduplicated image URLs in their gallery order."""
+
+        if value is None:
+            return []
+
+        if not isinstance(value, (list, tuple)):
+            raise ValueError("image_urls must be a list of URLs.")
+
+        image_urls: list[str] = []
+
+        for raw_url in value:
+            if not isinstance(raw_url, str):
+                raise ValueError("Each image URL must be a string.")
+
+            image_url = raw_url.strip()[:1000]
+
+            if not image_url.startswith(("http://", "https://")):
+                raise ValueError(
+                    "Each image URL must be an absolute http(s) URL.",
+                )
+
+            if image_url not in image_urls:
+                image_urls.append(image_url)
+
+        return image_urls
+
     @field_validator("currency")
     @classmethod
     def normalize_currency(

@@ -38,4 +38,5 @@ Thumbs.db
 backups/*.sql
 backups/*.dump
 backups/*.tar
+backups/*.json
 
