@@ -111,6 +111,7 @@ def create_initial_admin() -> None:
                 email=email,
                 password_hash=hash_password(password),
                 role=admin_role,
+                is_verified=True,
             )
         except IntegrityError as error:
             raise SystemExit(

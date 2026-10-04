@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
+    email_otp_expire_minutes: int = 10
+    email_otp_resend_cooldown_seconds: int = 60
+    email_otp_max_attempts: int = 5
+    password_reset_expire_minutes: int = 30
+    oauth_state_expire_minutes: int = 10
+    oauth_login_code_expire_minutes: int = 2
     ingestion_api_key: str | None = None
 
     # Scraper scheduler. The scheduler is a dedicated process so a crawl can
@@ -40,6 +46,12 @@ class Settings(BaseSettings):
     )
 
     frontend_base_url: str = "http://localhost:5173"
+    api_public_base_url: str = "http://localhost:8000"
+
+    google_oauth_client_id: str | None = None
+    google_oauth_client_secret: str | None = None
+    facebook_oauth_client_id: str | None = None
+    facebook_oauth_client_secret: str | None = None
 
     smtp_host: str | None = None
     smtp_port: int = 587

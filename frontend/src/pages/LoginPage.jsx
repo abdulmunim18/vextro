@@ -6,6 +6,7 @@ import {
 } from "react-router-dom";
 
 import { useAuth } from "../context/useAuth";
+import { startOAuthLogin } from "../services/authService";
 import { getApiErrorMessage } from "../utils/apiError";
 
 function LoginPage() {
@@ -22,6 +23,7 @@ function LoginPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const successMessage = location.state?.message || "";
+  const oauthError = new URLSearchParams(location.search).get("oauth_error");
 
   function handleChange(event) {
     const { name, value } = event.target;
@@ -154,6 +156,12 @@ function LoginPage() {
               </div>
             ) : null}
 
+            {oauthError ? (
+              <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold leading-6 text-red-700" role="alert">
+                Social login could not be completed. Please try again.
+              </div>
+            ) : null}
+
             <form
               className="grid gap-5"
               onSubmit={handleSubmit}
@@ -177,6 +185,11 @@ function LoginPage() {
                   autoComplete="email"
                   required
                 />
+                <div className="text-right">
+                  <Link className="text-xs font-bold text-vextro-primary hover:text-vextro-primary-dark" to="/forgot-password">
+                    Forgot password?
+                  </Link>
+                </div>
               </div>
 
               <div className="grid gap-2">
@@ -210,6 +223,15 @@ function LoginPage() {
                   : "Login to VEXTRO"}
               </button>
             </form>
+
+            <div className="my-6 flex items-center gap-3 text-xs font-bold uppercase tracking-wider text-vextro-muted">
+              <span className="h-px flex-1 bg-vextro-border" /> or continue with <span className="h-px flex-1 bg-vextro-border" />
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button className="min-h-12 rounded-xl border border-vextro-border bg-white px-4 text-sm font-black text-vextro-ink transition hover:border-blue-300 hover:bg-blue-50" type="button" onClick={() => startOAuthLogin("google")}>Google</button>
+              <button className="min-h-12 rounded-xl border border-vextro-border bg-white px-4 text-sm font-black text-vextro-ink transition hover:border-blue-300 hover:bg-blue-50" type="button" onClick={() => startOAuthLogin("facebook")}>Facebook</button>
+            </div>
 
             <p className="mt-7 text-center text-sm text-vextro-muted">
               New to VEXTRO?{" "}

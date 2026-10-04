@@ -42,3 +42,43 @@ export async function logoutUser(refreshToken) {
     },
   );
 }
+
+export async function verifyEmail(payload) {
+  const response = await apiClient.post("/auth/verify-email", payload);
+  return response.data;
+}
+
+export async function resendVerification(email) {
+  const response = await apiClient.post("/auth/resend-verification", {
+    email,
+  });
+  return response.data;
+}
+
+export async function requestPasswordReset(email) {
+  const response = await apiClient.post("/auth/forgot-password", {
+    email,
+  });
+  return response.data;
+}
+
+export async function resetPassword(token, newPassword) {
+  const response = await apiClient.post("/auth/reset-password", {
+    token,
+    new_password: newPassword,
+  });
+  return response.data;
+}
+
+export async function exchangeOAuthCode(code) {
+  const response = await apiClient.post("/auth/oauth/exchange", {
+    code,
+  });
+  return response.data;
+}
+
+export function startOAuthLogin(provider, accountType = "consumer") {
+  const apiBase = import.meta.env.VITE_API_BASE_URL || "/api/v1";
+  const path = `${apiBase}/auth/oauth/${encodeURIComponent(provider)}/authorize?account_type=${encodeURIComponent(accountType)}`;
+  window.location.assign(path);
+}

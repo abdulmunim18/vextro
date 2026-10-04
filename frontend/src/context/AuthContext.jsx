@@ -8,6 +8,7 @@ import AuthContext from "./auth-context";
 
 import {
   getCurrentUser,
+  exchangeOAuthCode,
   loginUser,
   logoutUser,
   registerUser,
@@ -126,6 +127,13 @@ export function AuthProvider({ children }) {
     return registerUser(payload);
   }, []);
 
+  const completeOAuthLogin = useCallback(async (code) => {
+    const session = await exchangeOAuthCode(code);
+    storeSession(session);
+    setUser(session.user);
+    return session.user;
+  }, []);
+
   const logout = useCallback(async () => {
     const refreshToken = localStorage.getItem(
       STORAGE_KEYS.refreshToken,
@@ -164,6 +172,7 @@ export function AuthProvider({ children }) {
       isInitializing,
       login,
       register,
+      completeOAuthLogin,
       logout,
       hasRole,
     }),
@@ -172,6 +181,7 @@ export function AuthProvider({ children }) {
       isInitializing,
       login,
       register,
+      completeOAuthLogin,
       logout,
       hasRole,
     ],

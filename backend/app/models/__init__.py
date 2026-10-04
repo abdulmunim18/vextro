@@ -1,6 +1,7 @@
 from app.models.brand import Brand
 from app.models.assistant_conversation import AssistantConversation
 from app.models.assistant_message import AssistantMessage
+from app.models.auth_token import AuthToken
 from app.models.business_product import BusinessProduct
 from app.models.notification import Notification
 from app.models.canonical_product import CanonicalProduct
@@ -12,6 +13,7 @@ from app.models.notification_event import NotificationEvent
 from app.models.notification_preference import NotificationPreference
 from app.models.organization import Organization
 from app.models.organization_user import OrganizationUser
+from app.models.oauth_account import OAuthAccount
 from app.models.pending_product_match import PendingProductMatch
 from app.models.platform import Platform
 from app.models.price_alert import PriceAlert
@@ -39,6 +41,7 @@ __all__ = [
     "Brand",
     "AssistantConversation",
     "AssistantMessage",
+    "AuthToken",
     "BusinessProduct",
     "CanonicalProduct",
     "Category",
@@ -49,6 +52,7 @@ __all__ = [
     "NotificationPreference",
     "Organization",
     "OrganizationUser",
+    "OAuthAccount",
     "PendingProductMatch",
     "Platform",
     "PriceAlert",
