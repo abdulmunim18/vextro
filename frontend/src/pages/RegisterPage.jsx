@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../context/useAuth";
+import { startOAuthLogin } from "../services/authService";
 import { getApiErrorMessage } from "../utils/apiError";
 
 function RegisterPage() {
@@ -50,18 +51,18 @@ function RegisterPage() {
     setIsSubmitting(true);
 
     try {
-      await register({
+      const pendingRegistration = await register({
         full_name: formData.full_name.trim(),
         email: formData.email.trim().toLowerCase(),
         password: formData.password,
         account_type: formData.account_type,
       });
 
-      navigate("/login", {
+      navigate("/verify-email", {
         replace: true,
         state: {
-          message:
-            "Account created successfully. Please log in.",
+          email: pendingRegistration.email,
+          message: pendingRegistration.message,
         },
       });
     } catch (error) {
@@ -322,6 +323,15 @@ function RegisterPage() {
                   : "Create VEXTRO Account"}
               </button>
             </form>
+
+            <div className="my-6 flex items-center gap-3 text-xs font-bold uppercase tracking-wider text-vextro-muted">
+              <span className="h-px flex-1 bg-vextro-border" /> or sign up with <span className="h-px flex-1 bg-vextro-border" />
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button className="min-h-12 rounded-xl border border-vextro-border bg-white px-4 text-sm font-black text-vextro-ink transition hover:border-blue-300 hover:bg-blue-50" type="button" onClick={() => startOAuthLogin("google", formData.account_type)}>Google</button>
+              <button className="min-h-12 rounded-xl border border-vextro-border bg-white px-4 text-sm font-black text-vextro-ink transition hover:border-blue-300 hover:bg-blue-50" type="button" onClick={() => startOAuthLogin("facebook", formData.account_type)}>Facebook</button>
+            </div>
 
             <p className="mt-7 text-center text-sm text-vextro-muted">
               Already registered?{" "}

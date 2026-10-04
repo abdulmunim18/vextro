@@ -196,22 +196,24 @@ def create_admin_user(
 def register_consumer(
     client: TestClient,
 ) -> dict[str, object]:
+    email = f"{unique_value('consumer')}@example.com"
     response = client.post(
         "/api/v1/auth/register",
         json={
             "full_name": "Catalog Consumer",
-            "email": (
-                f"{unique_value('consumer')}"
-                "@example.com"
-            ),
+            "email": email,
             "password": TEST_PASSWORD,
             "account_type": "consumer",
         },
     )
 
-    assert response.status_code == 201
-
-    return response.json()
+    assert response.status_code == 202
+    verified = client.post(
+        "/api/v1/auth/verify-email",
+        json={"email": email, "otp": "123456"},
+    )
+    assert verified.status_code == 201
+    return verified.json()
 
 
 def login(

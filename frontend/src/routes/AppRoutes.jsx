@@ -12,6 +12,7 @@ const ComparisonPage = lazy(() => import("../pages/ComparisonPage"));
 const ContactPage = lazy(() => import("../pages/ContactPage"));
 const DashboardPage = lazy(() => import("../pages/DashboardPage"));
 const HomePage = lazy(() => import("../pages/HomePage"));
+const ForgotPasswordPage = lazy(() => import("../pages/ForgotPasswordPage"));
 const HowItWorksPage = lazy(() => import("../pages/HowItWorksPage"));
 const LoginPage = lazy(() => import("../pages/LoginPage"));
 const NotFoundPage = lazy(() => import("../pages/NotFoundPage"));
@@ -21,6 +22,9 @@ const PrivacyPage = lazy(() => import("../pages/PrivacyPage"));
 const ProductDetailPage = lazy(() => import("../pages/ProductDetailPage"));
 const ProductsPage = lazy(() => import("../pages/ProductsPage"));
 const RegisterPage = lazy(() => import("../pages/RegisterPage"));
+const ResetPasswordPage = lazy(() => import("../pages/ResetPasswordPage"));
+const VerifyEmailPage = lazy(() => import("../pages/VerifyEmailPage"));
+const OAuthCallbackPage = lazy(() => import("../pages/OAuthCallbackPage"));
 const ForBusinessesPage = lazy(() => import("../pages/ForBusinessesPage"));
 const SMEPage = lazy(() => import("../pages/SMEPage"));
 const TermsPage = lazy(() => import("../pages/TermsPage"));
@@ -68,7 +72,12 @@ function AppRoutes() {
             path="register"
             element={<RegisterPage />}
           />
+          <Route path="verify-email" element={<VerifyEmailPage />} />
+          <Route path="forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="reset-password" element={<ResetPasswordPage />} />
         </Route>
+
+        <Route path="oauth/callback" element={<OAuthCallbackPage />} />
 
         {/* Consumer, SME and Admin routes */}
         <Route

@@ -32,21 +32,24 @@ def register_user(
     full_name: str,
     account_type: str,
 ) -> dict[str, object]:
+    email = unique_email(account_type)
     response = client.post(
         "/api/v1/auth/register",
         json={
             "full_name": full_name,
-            "email": unique_email(
-                account_type
-            ),
+            "email": email,
             "password": TEST_PASSWORD,
             "account_type": account_type,
         },
     )
 
-    assert response.status_code == 201
-
-    return response.json()
+    assert response.status_code == 202
+    verified = client.post(
+        "/api/v1/auth/verify-email",
+        json={"email": email, "otp": "123456"},
+    )
+    assert verified.status_code == 201
+    return verified.json()
 
 
 def create_admin_user(

@@ -81,3 +81,43 @@ class RefreshTokenRequest(BaseModel):
         min_length=20,
         max_length=500,
     )
+
+
+class MessageResponse(BaseModel):
+    """A safe status message for an authentication action."""
+
+    message: str
+
+
+class RegistrationPendingResponse(MessageResponse):
+    """Response after an email verification OTP has been sent."""
+
+    email: EmailStr
+    expires_in: int
+
+
+class EmailVerificationRequest(BaseModel):
+    email: EmailStr
+    otp: str = Field(pattern=r"^\d{6}$")
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=500)
+    new_password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, value: str) -> str:
+        return validate_password_strength(value)
+
+
+class OAuthExchangeRequest(BaseModel):
+    code: str = Field(min_length=20, max_length=500)

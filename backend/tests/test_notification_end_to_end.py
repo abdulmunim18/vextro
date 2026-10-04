@@ -286,7 +286,12 @@ def test_notification_bell_regression_surface(
         },
     )
 
-    assert register_response.status_code == 201
+    assert register_response.status_code == 202
+    verify_response = client.post(
+        "/api/v1/auth/verify-email",
+        json={"email": email, "otp": "123456"},
+    )
+    assert verify_response.status_code == 201
 
     login_response = client.post(
         "/api/v1/auth/login",
