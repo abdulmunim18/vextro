@@ -2,7 +2,7 @@ import json
 import scrapy
 import re
 from datetime import datetime, timezone
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 from vextro_scraper.items import ReviewBatchItem, SmartphoneItem
 from vextro_scraper.normalizers import (
     extract_json_ld_products,
@@ -14,6 +14,8 @@ from vextro_scraper.normalizers import (
     parse_rating,
 )
 
+
+PRICEOYE_IMAGE_HOST = 'https://images.priceoye.pk/'
 
 # Specification labels that state RAM or storage, in the backend's spelling.
 RAM_SPEC_KEYS = frozenset({'ram', 'ram_capacity', 'memory_ram', 'memory'})
@@ -661,8 +663,14 @@ class PriceoyeSpider(scrapy.Spider):
                 images = [images]
             if not isinstance(images, list):
                 images = []
+            # Colour photos are published as bare file names that live on
+            # the image host, not beside the product page.
             item['image_urls'] = list(dict.fromkeys(
-                [image for image in images if isinstance(image, str)]
+                [
+                    urljoin(PRICEOYE_IMAGE_HOST, image.strip())
+                    for image in images
+                    if isinstance(image, str) and image.strip()
+                ]
                 + base_images
             ))
 

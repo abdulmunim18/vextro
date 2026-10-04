@@ -855,7 +855,8 @@ def test_priceoye_yields_one_listing_per_colour_and_storage():
             },
         },
         'product_color_images': {
-            'mist_blue': {'large': ['https://images.priceoye.pk/blue.jpg']},
+            # Published as a bare file name on the image host.
+            'mist_blue': {'large': ['blue.jpg']},
         },
     })
 
