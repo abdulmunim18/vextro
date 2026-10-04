@@ -1,5 +1,6 @@
 import scrapy
 import json
+from scrapy.exceptions import IgnoreRequest
 from math import ceil
 from datetime import datetime, timezone
 from urllib.parse import urljoin
@@ -25,6 +26,32 @@ class DarazReviewParserError(ValueError):
 
     error_type = "review_parse_error"
     error_stage = "parse"
+
+
+class DarazReviewBlockedError(RuntimeError):
+    """Daraz served its anti-bot page instead of the review payload.
+
+    The marketplace answers with a WAF challenge rather than an error
+    status, so every review request in a run would otherwise be recorded as
+    its own parse failure - 149 of them in one crawl - and the run would be
+    reported as degraded for a reason no code change can fix.
+    """
+
+    error_type = "review_api_blocked"
+    error_stage = "fetch"
+
+
+class DarazReviewDisallowedError(RuntimeError):
+    """Daraz's robots.txt does not allow crawling the review API.
+
+    VEXTRO obeys robots.txt, so the request is refused before it is sent.
+    That is a standing decision by the marketplace, not a transient
+    failure: it was recorded once per listing, 149 times in one crawl, and
+    reported the run as degraded for something no retry can change.
+    """
+
+    error_type = "review_api_disallowed"
+    error_stage = "fetch"
 
 
 class DarazReviewFetchError(RuntimeError):
@@ -56,9 +83,16 @@ class DarazSpider(scrapy.Spider):
         'DOWNLOAD_DELAY': 2, # Respectful scraping
     }
 
+    # Daraz answers review requests with an anti-bot page once a crawl
+    # looks automated. After this many blocked replies the run stops asking
+    # for reviews instead of repeating a request that cannot succeed.
+    MAX_BLOCKED_REVIEW_RESPONSES = 3
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.review_listings_requested = 0
+        self.blocked_review_responses = 0
+        self.reviews_blocked = False
 
     @staticmethod
     def extract_specifications(item_data):
@@ -100,6 +134,56 @@ class DarazSpider(scrapy.Spider):
             specifications.setdefault(label, value)
 
         return specifications
+
+    # Daraz exposes the catalog image under a different key depending on
+    # which surface rendered the AJAX payload. A listing that reaches the
+    # catalog without one shows as a blank card, so every known spelling is
+    # read and the first usable gallery wins.
+    IMAGE_FIELDS = (
+        'images',
+        'image',
+        'imageUrl',
+        'mainImage',
+        'itemImg',
+        'picture',
+        'thumbUrl',
+        'thumbnail',
+    )
+
+    @classmethod
+    def extract_image_urls(cls, item_data):
+        """Return the ordered gallery URLs for one Daraz catalog item."""
+
+        image_urls = []
+
+        for field in cls.IMAGE_FIELDS:
+            raw_images = item_data.get(field)
+
+            if isinstance(raw_images, (str, dict)):
+                raw_images = [raw_images]
+            elif not isinstance(raw_images, (list, tuple)):
+                continue
+
+            for raw_image in raw_images:
+                if isinstance(raw_image, dict):
+                    raw_image = (
+                        raw_image.get('url')
+                        or raw_image.get('src')
+                        or raw_image.get('image')
+                    )
+
+                image_url = optional_text(raw_image, max_length=1000)
+
+                if image_url is None:
+                    continue
+
+                if image_url.startswith('//'):
+                    image_url = f'https:{image_url}'
+
+                if image_url not in image_urls:
+                    image_urls.append(image_url)
+
+        return image_urls
 
     @staticmethod
     def extract_seller(item_data):
@@ -247,28 +331,7 @@ class DarazSpider(scrapy.Spider):
                 max_length=120,
             )
 
-            # Daraz currently exposes the primary catalog image on each
-            # AJAX list item. Keep fallbacks for payload variants seen on
-            # category pages and normalize protocol-relative URLs.
-            raw_images = (
-                item_data.get('images')
-                or item_data.get('image')
-                or item_data.get('imageUrl')
-                or item_data.get('thumbUrl')
-                or []
-            )
-            if isinstance(raw_images, str):
-                raw_images = [raw_images]
-            elif isinstance(raw_images, dict):
-                raw_images = list(raw_images.values())
-
-            item['image_urls'] = [
-                ('https:' + image_url)
-                if image_url.startswith('//')
-                else image_url
-                for image_url in raw_images
-                if isinstance(image_url, str) and image_url
-            ]
+            item['image_urls'] = self.extract_image_urls(item_data)
             item['specifications'] = self.extract_specifications(
                 item_data
             )
@@ -316,6 +379,7 @@ class DarazSpider(scrapy.Spider):
         if (
             not external_id
             or not review_count
+            or self.reviews_blocked
             or self._max_reviews_per_listing() <= 0
         ):
             return None
@@ -341,9 +405,44 @@ class DarazSpider(scrapy.Spider):
                 'external_listing_id': external_id,
                 'dont_merge_cookies': True,
             },
-            headers={'Accept': 'application/json'},
+            headers={
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                # The product page is what loads this endpoint; sending the
+                # same referer keeps the request recognisable as the page's
+                # own call rather than a bare fetch.
+                'Referer': (
+                    'https://www.daraz.pk/products/'
+                    f'i{external_id}.html'
+                ),
+            },
             dont_filter=True,
         )
+
+    # Daraz serves its challenge with HTTP 200, so the body is what tells
+    # the crawl it was blocked.
+    BLOCKED_RESPONSE_MARKERS = (
+        'waf_block',
+        'punish',
+        '_tb_token_',
+        'captcha',
+    )
+
+    @classmethod
+    def _is_blocked_response(cls, response):
+        """Report whether Daraz answered with its anti-bot page."""
+
+        body = response.text[:2000].lower()
+
+        if not body.strip():
+            return False
+
+        if body.lstrip().startswith(('{', '[')):
+            return False
+
+        return any(
+            marker in body for marker in cls.BLOCKED_RESPONSE_MARKERS
+        ) or '<html' in body
 
     @staticmethod
     def _parse_review_date(value):
@@ -375,6 +474,31 @@ class DarazSpider(scrapy.Spider):
 
     def parse_reviews(self, response, external_listing_id, page_number=1):
         """Convert one page of the Daraz review API into a review batch."""
+
+        if self._is_blocked_response(response):
+            self.blocked_review_responses += 1
+
+            if (
+                not self.reviews_blocked
+                and self.blocked_review_responses
+                >= self.MAX_BLOCKED_REVIEW_RESPONSES
+            ):
+                self.reviews_blocked = True
+                self.logger.warning(
+                    'Daraz is serving its anti-bot page for review '
+                    'requests; review collection is paused for the rest '
+                    'of this run after %s blocked responses.',
+                    self.blocked_review_responses,
+                )
+
+            error = DarazReviewBlockedError(
+                'Daraz served an anti-bot page instead of reviews.'
+            )
+            error.metadata = {
+                'external_listing_id': external_listing_id,
+                'blocked_responses': self.blocked_review_responses,
+            }
+            raise error
 
         try:
             payload = json.loads(response.text)
@@ -488,13 +612,52 @@ class DarazSpider(scrapy.Spider):
             if request is not None
             else None
         )
+        cause = getattr(failure, 'value', None)
+
+        if self._is_disallowed(cause):
+            already_reported = self.reviews_blocked
+            self.reviews_blocked = True
+
+            if already_reported:
+                # The marketplace's answer will not change inside one run,
+                # so it is recorded once rather than per listing.
+                return
+
+            self.logger.warning(
+                "Daraz does not allow crawling its review API "
+                "(robots.txt); review collection is off for this run."
+            )
+            error = DarazReviewDisallowedError(
+                'Daraz robots.txt disallows the review API.'
+            )
+            error.metadata = {
+                'external_listing_id': external_listing_id,
+            }
+            raise error from cause
+
+        self.blocked_review_responses += 1
+
+        if (
+            self.blocked_review_responses
+            >= self.MAX_BLOCKED_REVIEW_RESPONSES
+        ):
+            self.reviews_blocked = True
+
         error = DarazReviewFetchError(
             'Daraz review API request failed.'
         )
         error.metadata = {
             'external_listing_id': external_listing_id,
+            'failed_responses': self.blocked_review_responses,
         }
-        cause = getattr(failure, 'value', None)
         if cause is None:
             raise error
         raise error from cause
+
+    @staticmethod
+    def _is_disallowed(cause):
+        """Report whether a request was refused by the robots policy."""
+
+        return isinstance(cause, IgnoreRequest) and 'robots' in str(
+            cause
+        ).lower()

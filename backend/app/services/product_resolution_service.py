@@ -43,7 +43,9 @@ from app.services.product_matching_service import (
     ProductMatchingService,
 )
 from app.services.smartphone_normalization import (
+    clean_marketplace_title,
     extract_memory_capacities,
+    is_accessory_title,
     infer_brand_name,
     infer_title_specifications,
     merge_specifications,
@@ -166,10 +168,24 @@ class ProductResolutionService:
     ) -> ProductResolveResponse | None:
         """Create the missing canonical product and/or variant."""
 
-        brand_name = infer_brand_name(payload.title, payload.brand)
+        # A canonical product created from a raw marketplace title keeps the
+        # seller's store name forever ("Carrefour Samsung Galaxy A07"), and
+        # the same phone from another marketplace can then never find it.
+        title = clean_marketplace_title(payload.title, payload.seller_name)
+
+        if is_accessory_title(title):
+            logger.warning(
+                "Declined to create a canonical product for an accessory: "
+                "platform=%s external_id=%s",
+                payload.platform_code,
+                payload.external_id,
+            )
+            return None
+
+        brand_name = infer_brand_name(title, payload.brand)
         display_name = (
-            clean_product_display_name(payload.model or payload.title)
-            or clean_product_display_name(payload.title)
+            clean_product_display_name(payload.model or title)
+            or clean_product_display_name(title)
         )
 
         if (
@@ -199,13 +215,13 @@ class ProductResolutionService:
         brand = self._resolve_brand(database_session, brand_name)
 
         specifications = merge_specifications(
-            infer_title_specifications(payload.title),
+            infer_title_specifications(title),
             payload.specifications,
         )
 
         ram_gb, storage_gb = extract_memory_capacities(
             specifications=payload.specifications,
-            title=payload.title,
+            title=title,
         )
         if ram_gb is None:
             ram_gb = payload.ram_gb
@@ -217,7 +233,7 @@ class ProductResolutionService:
         product, product_created = self._resolve_canonical_product(
             database_session,
             platform_code=payload.platform_code,
-            title=payload.title,
+            title=title,
             display_name=display_name,
             brand=brand,
             category_id=category.id,

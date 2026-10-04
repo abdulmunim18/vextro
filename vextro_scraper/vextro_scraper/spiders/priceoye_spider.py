@@ -1,6 +1,7 @@
 import scrapy
 import re
 from datetime import datetime, timezone
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from vextro_scraper.items import ReviewBatchItem, SmartphoneItem
 from vextro_scraper.normalizers import (
     extract_json_ld_products,
@@ -156,33 +157,107 @@ class PriceoyeSpider(scrapy.Spider):
         )
         return bool(purchase_control) and not explicitly_unavailable
 
-    def parse(self, response):
+    def parse(self, response, page_number=1):
         phones = response.css('div.productBox')
-        
+
         for phone in phones:
             item = SmartphoneItem()
             item['platform'] = 'PriceOye'
             item['product_url'] = phone.css('a::attr(href)').get()
-            
-            details = [t.strip() for t in phone.css('div.detail-box ::text').getall() if t.strip()]
+
+            details = [
+                text.strip()
+                for text in phone.css('div.detail-box ::text').getall()
+                if text.strip()
+            ]
             if details:
                 item['model'] = details[0]
                 item['price'] = next(
-                    (t for t in details if 'Rs' in t),
+                    (text for text in details if 'Rs' in text),
                     None,
                 )
-            
-            item['scrape_timestamp'] = datetime.now(timezone.utc).isoformat()
-            
-            # DEEP SCRAPING: Instead of saving the item immediately, 
-            # we tell Scrapy to visit the product URL and pass the item to a new function!
-            if item['product_url']:
-                yield response.follow(item['product_url'], callback=self.parse_product, meta={'item': item})
 
-        # PAGINATION: Find the "Next" page button and loop the spider
-        next_page = response.css('a[rel="next"]::attr(href)').get()
-        if next_page:
-            yield response.follow(next_page, callback=self.parse)
+            item['scrape_timestamp'] = datetime.now(timezone.utc).isoformat()
+
+            # DEEP SCRAPING: visit the product page so the offer, gallery and
+            # specification sheet come from the marketplace's own record.
+            if item['product_url']:
+                yield response.follow(
+                    item['product_url'],
+                    callback=self.parse_product,
+                    meta={'item': item},
+                )
+
+        next_page_request = self.next_page_request(
+            response,
+            page_number=page_number,
+            page_item_count=len(phones),
+        )
+        if next_page_request is not None:
+            yield next_page_request
+
+    def next_page_request(self, response, *, page_number, page_item_count):
+        """Return the request for the next catalog page, if there is one.
+
+        PriceOye renders its "next" control as ``<a rel="next">`` with no
+        href, so following that link silently ended every crawl after the
+        first 36 phones - the catalog holds several hundred. The listing
+        does answer ``?page=N``, so pages are walked explicitly until one
+        comes back empty.
+        """
+
+        if not page_item_count:
+            return None
+
+        if page_number >= self.max_catalog_pages():
+            self.logger.info(
+                'Stopping PriceOye pagination at the configured page '
+                'limit (%s).',
+                self.max_catalog_pages(),
+            )
+            return None
+
+        marked_next = response.css('a[rel="next"]::attr(href)').get()
+
+        if marked_next:
+            return response.follow(
+                marked_next,
+                callback=self.parse,
+                cb_kwargs={'page_number': page_number + 1},
+            )
+
+        return response.follow(
+            self.catalog_page_url(response.url, page_number + 1),
+            callback=self.parse,
+            cb_kwargs={'page_number': page_number + 1},
+        )
+
+    @staticmethod
+    def catalog_page_url(current_url, page_number):
+        """Return one catalog URL with its ``page`` query parameter set."""
+
+        parsed = urlparse(current_url)
+        query = [
+            (key, value)
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if key != 'page'
+        ]
+        query.append(('page', str(page_number)))
+
+        return urlunparse(parsed._replace(query=urlencode(query)))
+
+    def max_catalog_pages(self):
+        """Return how many catalog pages one run may walk."""
+
+        crawler = getattr(self, 'crawler', None)
+
+        if crawler is None:
+            return 40
+
+        return max(
+            1,
+            crawler.settings.getint('PRICEOYE_MAX_CATALOG_PAGES', 40),
+        )
 
 
     @staticmethod
@@ -246,6 +321,67 @@ class PriceoyeSpider(scrapy.Spider):
             parse_rating(aggregate.get('ratingValue')),
             parse_count(aggregate.get('ratingCount')) or 0,
         )
+
+    @staticmethod
+    def extract_image_urls(response, product=None):
+        """Return the product gallery, trying every published source.
+
+        A listing that reaches the catalog without an image shows as a blank
+        card, so the gallery markup, the lazy-loading attributes behind it,
+        the structured product block and OpenGraph are all consulted before
+        giving up.
+        """
+
+        image_urls = []
+
+        structured_images = (product or {}).get('image')
+        if isinstance(structured_images, (str, dict)):
+            structured_images = [structured_images]
+        elif not isinstance(structured_images, (list, tuple)):
+            structured_images = []
+
+        candidates = [
+            image.get('url') if isinstance(image, dict) else image
+            for image in structured_images
+        ]
+
+        candidates.extend(
+            response.css(
+                'img.main-product-img::attr(src), '
+                'img.main-product-img::attr(data-src), '
+                '.product-image img::attr(src), '
+                '.product-image img::attr(data-src), '
+                '.product-gallery img::attr(src), '
+                '.product-gallery img::attr(data-src), '
+                'img.product-img::attr(src)'
+            ).getall()
+        )
+
+        def collect(urls):
+            for candidate in urls:
+                image_url = optional_text(candidate, max_length=1000)
+
+                if image_url is None:
+                    continue
+
+                absolute_url = response.urljoin(image_url)
+
+                if absolute_url not in image_urls:
+                    image_urls.append(absolute_url)
+
+        collect(candidates)
+
+        # The social preview is a single low-resolution copy of the first
+        # gallery image, so it is only worth having when nothing else loaded.
+        if not image_urls:
+            collect(
+                response.css(
+                    'meta[property="og:image"]::attr(content), '
+                    'meta[name="twitter:image"]::attr(content)'
+                ).getall()
+            )
+
+        return image_urls
 
     def parse_product(self, response):
         item = response.meta['item']
@@ -322,18 +458,7 @@ class PriceoyeSpider(scrapy.Spider):
             max_length=255,
         )
 
-        # PriceOye's current product gallery uses full-size main-product-img
-        # elements. OpenGraph is retained as a fallback for markup changes.
-        image_urls = response.css('img.main-product-img::attr(src)').getall()
-        if not image_urls:
-            image_urls = response.css(
-                'meta[property="og:image"]::attr(content)'
-            ).getall()
-        item['image_urls'] = [
-            response.urljoin(image_url)
-            for image_url in image_urls
-            if image_url
-        ]
+        item['image_urls'] = self.extract_image_urls(response, product)
         item['specifications'] = self.extract_specifications(response)
         
         yield item

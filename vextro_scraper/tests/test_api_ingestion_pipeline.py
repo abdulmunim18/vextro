@@ -176,6 +176,7 @@ def test_pipeline_matches_then_uses_secure_listing_contract():
         'storage_gb': 256,
         'color': 'Black',
         'sku': None,
+        'seller_name': 'Daraz Seller',
         'specifications': {
             'ram': '8GB',
             'storage_capacity': '256GB',
@@ -192,6 +193,9 @@ def test_pipeline_matches_then_uses_secure_listing_contract():
     assert validated.seller is not None
     assert validated.seller.name == 'Daraz Seller'
     assert validated.scraped_at.tzinfo is not None
+    # The gallery travels as its own field so the backend can store it
+    # instead of leaving the catalog with a blank product card.
+    assert validated.image_urls == ['https://static.daraz.pk/a55.jpg']
 
 
 def test_valid_priceoye_price_uses_secure_listing_contract():

@@ -17,6 +17,7 @@ from app.services.cross_marketplace_matching import (
     normalized_product_identity,
 )
 from app.services.smartphone_normalization import (
+    clean_marketplace_title,
     extract_memory_capacities,
     normalize_color,
 )
@@ -696,6 +697,14 @@ class ProductMatchingService:
                 ),
             )
 
+        # Every signal below is read out of the title, so the seller's own
+        # store name comes off first. "Carrefour Samsung Galaxy A07" is the
+        # same phone as "Samsung Galaxy A07" and must score as such.
+        title = clean_marketplace_title(
+            payload.title,
+            payload.seller_name,
+        )
+
         requested_ram = payload.ram_gb
         requested_storage = payload.storage_gb
 
@@ -707,13 +716,13 @@ class ProductMatchingService:
         specification_ram, specification_storage = (
             extract_memory_capacities(
                 specifications=payload.specifications,
-                title=payload.title,
+                title=title,
             )
         )
 
         extracted_ram, extracted_storage = (
             _extract_memory_values(
-                payload.title,
+                title,
             )
         )
 
@@ -728,7 +737,7 @@ class ProductMatchingService:
         requested_brand = (
             payload.brand
             or _detect_unique_text_value(
-                payload.title,
+                title,
                 [
                     candidate.brand_name
                     for candidate in candidates
@@ -739,7 +748,7 @@ class ProductMatchingService:
         requested_model = (
             payload.model
             or _detect_unique_text_value(
-                payload.title,
+                title,
                 [
                     candidate.model
                     for candidate in candidates
@@ -750,7 +759,7 @@ class ProductMatchingService:
         requested_color = (
             normalize_color(payload.color)
             or _detect_unique_text_value(
-                payload.title,
+                title,
                 [
                     candidate.color
                     for candidate in candidates
@@ -761,7 +770,7 @@ class ProductMatchingService:
         scored_candidates: list[_ScoredCandidate] = [
             _score_candidate(
                 candidate,
-                title=payload.title,
+                title=title,
                 requested_brand=requested_brand,
                 requested_model=requested_model,
                 requested_ram=requested_ram,

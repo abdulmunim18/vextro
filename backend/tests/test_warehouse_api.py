@@ -57,4 +57,18 @@ def test_warehouse_data_audit():
     report = audit_res.json()
     assert "health_score_percentage" in report
     assert "total_canonical_products" in report
-    assert report["status"] in ["HEALTHY", "DEGRADED"]
+    # The audit and the metrics card grade the same score with the same
+    # words; they used to disagree ("DEGRADED" against "NEEDS_ATTENTION").
+    assert report["status"] in [
+        "EXCELLENT",
+        "GOOD",
+        "NEEDS_ATTENTION",
+    ]
+
+    metrics_res = client.get("/api/v1/warehouse/metrics")
+    assert metrics_res.status_code == 200
+    metrics = metrics_res.json()
+
+    assert set(metrics["data_health"]).issuperset(
+        {"health_score_percentage", "status"}
+    )

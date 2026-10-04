@@ -232,9 +232,10 @@ const canUseSmeWorkspace = hasRole(
             </span>
 
             <h1 className="mt-4 text-4xl font-black leading-[1.02] tracking-[-0.05em] text-vextro-ink sm:text-5xl lg:text-6xl">
+              {/* The whole name, not its first word: "VEXTRO Demo
+                  Consumer" greeted the brand instead of the person. */}
               Welcome back,{" "}
-              {user?.full_name?.split(" ")[0] ||
-                "User"}
+              {user?.full_name?.trim() || "User"}
             </h1>
 
             <p className="mt-5 max-w-2xl text-sm leading-7 text-vextro-muted sm:text-base">

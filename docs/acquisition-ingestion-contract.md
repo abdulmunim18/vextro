@@ -76,6 +76,10 @@ range of `1` through `100`.
     "review_count": 1250,
     "is_verified": true
   },
+  "image_urls": [
+    "https://img.drz.lazcdn.com/galaxy-a55-1.jpg",
+    "https://img.drz.lazcdn.com/galaxy-a55-2.jpg"
+  ],
   "raw_payload": {
     "source": "daraz",
     "collection_mode": "fixture"
@@ -102,6 +106,7 @@ range of `1` through `100`.
 - `review_count`
 - `warranty`
 - `seller`
+- `image_urls`
 - `raw_payload`
 
 ## Validation Rules
@@ -115,6 +120,7 @@ range of `1` through `100`.
 - Review counts must be zero or greater
 - URLs must use HTTP or HTTPS
 - `scraped_at` must be an ISO 8601 timestamp
+- `image_urls` holds at most 12 absolute HTTP(S) URLs, in gallery order
 
 ## Seller Upsert
 
@@ -139,6 +145,23 @@ platform_id + external_id
 ```
 
 Existing listings must refresh seller, title, URL, prices, rating, reviews, warranty, availability, raw payload, and last-seen time.
+
+## Title Rule
+
+A marketplace title is stored as the phone it describes. The seller's own
+store name and the stock code the marketplace appends are removed first, so
+`Carrefour Samsung Galaxy A07 4+128GB Green-303662` is stored, matched and
+displayed as `Samsung Galaxy A07 4+128GB Green`. The matching endpoints
+accept the store in `seller_name` so the backend can apply the same rule to
+a title the scraper did not clean.
+
+## Image Rule
+
+`image_urls` is the marketplace gallery in display order. The first image
+becomes the listing's primary image, and the gallery also seeds the
+canonical product's images, which is what the catalog renders. A capture
+that carries no images leaves the stored gallery untouched: a scrape that
+failed to read a picture must never blank a product card that works.
 
 ## Price History Rule
 

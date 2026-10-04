@@ -113,7 +113,11 @@ def merge_product(database_session, target, source) -> None:
     database_session.delete(source)
 
 
-def run(*, apply_changes: bool) -> tuple[int, int, list[str]]:
+def run(
+    *,
+    apply_changes: bool,
+    require_two_platforms: bool = True,
+) -> tuple[int, int, list[str]]:
     database_session = SessionLocal()
     merged = 0
     blocked: list[str] = []
@@ -142,7 +146,13 @@ def run(*, apply_changes: bool) -> tuple[int, int, list[str]]:
                 for product in candidates
             }
             all_platforms = set().union(*product_platforms.values())
-            if len(all_platforms) < 2:
+
+            # Products that share an exact brand and model key are the same
+            # phone however many marketplaces sell it. The two-platform rule
+            # exists to keep cross-marketplace matching conservative; it also
+            # left one marketplace's own duplicates standing, which is what
+            # put "Samsung Galaxy A07" in the catalog twice.
+            if require_two_platforms and len(all_platforms) < 2:
                 continue
 
             target = min(
@@ -182,8 +192,18 @@ def main() -> None:
         description="Merge unambiguous Daraz/PriceOye product duplicates.",
     )
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument(
+        "--same-platform",
+        action="store_true",
+        help=(
+            "Also merge duplicates that are sold on one marketplace only."
+        ),
+    )
     args = parser.parse_args()
-    total, merged, blocked = run(apply_changes=args.apply)
+    total, merged, blocked = run(
+        apply_changes=args.apply,
+        require_two_platforms=not args.same_platform,
+    )
     mode = "APPLIED" if args.apply else "DRY RUN"
     print(f"[{mode}] products={total} merges={merged} blocked={len(blocked)}")
     for item in blocked:

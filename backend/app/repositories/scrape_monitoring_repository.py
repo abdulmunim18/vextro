@@ -47,6 +47,34 @@ class ScrapeMonitoringRepository:
         return database_session.scalar(statement)
 
     @staticmethod
+    def list_stale_running_runs(
+        database_session: Session,
+        *,
+        started_before: datetime,
+        platform: str | None = None,
+    ) -> list[ScrapeRun]:
+        """Return runs still marked running long after they started.
+
+        A crawl that is killed, crashes or loses the backend never reports
+        completion, so its row stays "running" forever and the operations
+        dashboard keeps showing a crawl that stopped weeks ago.
+        """
+
+        statement = select(ScrapeRun).where(
+            ScrapeRun.status == "running",
+            ScrapeRun.started_at < started_before,
+        )
+
+        if platform is not None:
+            statement = statement.where(ScrapeRun.platform == platform)
+
+        return list(
+            database_session.scalars(
+                statement.order_by(ScrapeRun.id)
+            )
+        )
+
+    @staticmethod
     def record_ingested_item(run: ScrapeRun) -> None:
         run.items_discovered += 1
         run.items_ingested += 1

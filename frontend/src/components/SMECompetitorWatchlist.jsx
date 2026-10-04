@@ -250,6 +250,7 @@ function CompetitorCard({
 function SMECompetitorWatchlist({
   organizationId,
   organizationName,
+  productsRevision = 0,
 }) {
   const [businessProducts, setBusinessProducts] =
     useState([]);
@@ -450,7 +451,9 @@ function SMECompetitorWatchlist({
     }, 0);
 
     return () => window.clearTimeout(timeoutId);
-  }, [loadWatchlistWorkspace]);
+    // A product created in the section above has to appear here without
+    // the page being reloaded.
+  }, [loadWatchlistWorkspace, productsRevision]);
 
   const businessProductMap = useMemo(
     () =>

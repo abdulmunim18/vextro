@@ -176,6 +176,69 @@ are variant attributes. Before creating anything, the brand-scoped
 cross-marketplace identity key is consulted so a Daraz "8GB/256GB" listing
 and a PriceOye "8/256" listing land on one product.
 
+### Every catalog page is crawled
+
+PriceOye renders its "next page" control as `<a rel="next">` with no href,
+so following that link ended each crawl after the first 36 phones while the
+catalog holds several hundred. The crawl now walks `?page=N` until a page
+comes back empty, bounded by `PRICEOYE_MAX_CATALOG_PAGES` (default 40). A
+run that discovers nothing is recorded as failed rather than completed: an
+empty marketplace crawl means the page stopped parsing, which a green
+status used to hide.
+
+### The brand is the manufacturer, not the seller
+
+Daraz publishes the selling store in its `brandName` field, so the catalog
+collected brands such as "Carrefour", "OPPO Pakistan Official" and "FAYWA
+TRADING (PVT) LTD". Each became its own brand row, which split one phone
+into several canonical products and filled the public brand filter with
+shops.
+
+A marketplace brand value is trusted only once it is recognised as a
+manufacturer; otherwise the title decides, and a value that merely names a
+shop is dropped rather than registered. Brand aliases canonicalise the
+spellings ("Redmi" is Xiaomi, "vivo ." is Vivo), while a small brand VEXTRO
+has no alias for is kept as published. Existing rows are repaired by
+`backend/scripts/repair_product_brands.py`, which also merges the duplicate
+products the store brands created.
+
+### Accessories are not phones
+
+The marketplace smartphones category also serves cables, chargers, covers
+and screen protectors. They were registered as canonical products and
+filled the pending-match queue. The crawl now drops them, and the resolver
+refuses to create a product for one.
+
+Some words only ever name an accessory; others also appear in a phone's own
+copy, where they describe what is in the box ("FREE Charger Included", "No
+Charger"). Those are matched only when no inclusion wording sits in front of
+them, so a phone that advertises its bundled charger stays a phone.
+`backend/scripts/retire_accessory_products.py` deactivates the ones already
+stored.
+
+### The title is the phone, not the shop
+
+Daraz sellers publish under their own store name and append a stock code:
+`Carrefour Samsung Galaxy A07 4+128GB Green-303662`. Taken literally, that
+registers a canonical product called "Carrefour Samsung Galaxy A07" which
+the same phone on PriceOye can never match, and the catalog then reports
+the phone as unavailable on the other marketplace while it is on sale
+there.
+
+Both the scraper and the backend therefore reduce a title to the product it
+describes before anything is derived from it, matching included. The store
+name is removed when it is the listing's own seller (sent to the matching
+endpoints as `seller_name`) or when the title opens with shop words and a
+known brand follows; a brand token is never removed, so "Samsung Official
+Store" cannot eat the "Samsung" in the phone's name. A trailing stock code
+goes with it, while a model year such as "Nokia 130 (2023)" stays.
+
+Existing rows are repaired by `backend/scripts/clean_canonical_product_titles.py`
+(it reads each product's sellers from its listings), and duplicates the old
+behaviour already created are consolidated by
+`backend/scripts/merge_cross_marketplace_products.py`. Both are dry runs
+until `--apply` is passed.
+
 ---
 
 ## 6. Update safety
@@ -195,6 +258,20 @@ aggregate to empty on every refresh.
 
 Rejected outright and logged, never stored: a price of zero or less, a
 non-numeric price, an empty title, an invalid URL, a rating outside 0-5.
+
+Reviews follow it too. Daraz answers review requests with an anti-bot page
+carrying HTTP 200 rather than an error status, which produced one parse
+failure per listing - 149 in a single crawl. The crawl recognises that page,
+records it once, and stops asking for reviews for the rest of the run
+instead of repeating a request that cannot succeed.
+
+Images follow the same rule. A capture carries its marketplace gallery in
+`image_urls`; those become the listing's images and seed the canonical
+product's images, which is what the catalog renders. A capture without
+images leaves the stored gallery alone and logs the gap, because a scrape
+that failed to read a picture must not blank a working product card.
+Galleries captured before images were persisted are restored from the
+stored scrape payloads by `backend/scripts/backfill_listing_images.py`.
 
 ---
 
@@ -267,6 +344,12 @@ ingested / rejected / failed plus `products_created`, `listings_created`,
 `listings_updated`, `price_changes`, `reviews_added` and an `error_summary`
 ranking the failure reasons. Individual rejections are kept as `scrape_errors`
 rows. Inspect them at `GET /api/v1/internal/acquisition/runs`.
+
+A crawl that is killed or crashes never reports completion, so its row used
+to stay `running` forever and the operations dashboard kept showing a crawl
+that had stopped weeks earlier. Starting a crawl now closes any older
+`running` row for that platform as failed, and
+`ScrapeMonitoringService.reconcile_stale_runs` does the same on demand.
 
 ---
 

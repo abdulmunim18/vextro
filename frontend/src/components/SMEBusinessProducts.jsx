@@ -512,6 +512,7 @@ function ProductCard({
 function SMEBusinessProducts({
   organizationId,
   organizationName,
+  onProductsChanged,
 }) {
   const [products, setProducts] = useState([]);
   const [productForm, setProductForm] = useState(
@@ -626,6 +627,7 @@ function SMEBusinessProducts({
       ]);
 
       setProductForm(initialProductForm);
+      onProductsChanged?.();
     } catch (error) {
       setFormError(
         getApiErrorMessage(
@@ -673,6 +675,7 @@ function SMEBusinessProducts({
       );
 
       setEditingProductId(null);
+      onProductsChanged?.();
     } catch (error) {
       setActionError(
         getApiErrorMessage(
@@ -706,6 +709,7 @@ function SMEBusinessProducts({
             : currentProduct,
         ),
       );
+      onProductsChanged?.();
     } catch (error) {
       setActionError(
         getApiErrorMessage(

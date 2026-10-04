@@ -57,6 +57,11 @@ function BellIcon() {
 }
 
 
+// Price alerts are not a live feed; a minute is soon enough, and the
+// badge refreshes immediately on focus and on alert events.
+const UNREAD_POLL_INTERVAL_MS = 60000;
+
+
 function NotificationBell() {
   const navigate = useNavigate();
   const containerRef = useRef(null);
@@ -114,13 +119,25 @@ function NotificationBell() {
       0,
     );
 
-    const intervalId = window.setInterval(
-      refreshUnreadCount,
-      20000,
-    );
+    // A background tab has nobody looking at the badge, so it polls only
+    // while the page is actually visible and catches up the moment it
+    // comes back.
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+
+      refreshUnreadCount();
+    }, UNREAD_POLL_INTERVAL_MS);
 
     function handleFocus() {
       refreshUnreadCount();
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        refreshUnreadCount();
+      }
     }
 
     function handleNotificationsUpdated() {
@@ -136,6 +153,11 @@ function NotificationBell() {
       handleFocus,
     );
 
+    document.addEventListener(
+      "visibilitychange",
+      handleVisibilityChange,
+    );
+
     window.addEventListener(
       "vextro:notifications-updated",
       handleNotificationsUpdated,
@@ -148,6 +170,11 @@ function NotificationBell() {
       window.removeEventListener(
         "focus",
         handleFocus,
+      );
+
+      document.removeEventListener(
+        "visibilitychange",
+        handleVisibilityChange,
       );
 
       window.removeEventListener(
