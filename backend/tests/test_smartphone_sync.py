@@ -29,7 +29,11 @@ from app.models.raw_review import RawReview
 from app.repositories.product_matching_repository import (
     ProductMatchCandidate,
 )
-from app.services.product_matching_service import _model_numbers_conflict
+from app.services.product_matching_service import (
+    _color_similarity,
+    _model_identity_conflict,
+    _model_numbers_conflict,
+)
 
 
 LISTINGS_ENDPOINT = "/api/v1/internal/acquisition/listings"
@@ -1379,3 +1383,142 @@ def test_a_crawl_that_lost_most_of_the_catalogue_retires_nothing(
         "missing-b": True,
         "kept": True,
     }
+
+
+# --------------------------------------------------------------------------
+# Look-alike models and look-alike colours
+# --------------------------------------------------------------------------
+
+
+def _candidate(product_name: str, brand_name: str) -> ProductMatchCandidate:
+    return ProductMatchCandidate(
+        canonical_product_id=1,
+        product_variant_id=1,
+        product_name=product_name,
+        brand_name=brand_name,
+        model=product_name,
+        sku=None,
+        ram_gb=None,
+        storage_gb=None,
+        color=None,
+        condition="new",
+    )
+
+
+@pytest.mark.parametrize(
+    ("scraped_title", "product_name", "brand", "conflicts"),
+    [
+        # Pairs a full PriceOye crawl merged into one product.
+        ("Apple iPhone 17 Pro", "Apple iPhone 17 Pro Max", "Apple", True),
+        ("Apple iPhone 17 Pro Max", "Apple iPhone 17 Pro", "Apple", True),
+        ("Apple iPhone 17e", "Apple iPhone 17", "Apple", True),
+        ("Samsung Galaxy Z Fold 4", "Samsung Galaxy Z Fold 5", "Samsung", True),
+        ("Samsung Galaxy S25 FE", "Samsung Galaxy Z Flip 4", "Samsung", True),
+        ("Samsung Galaxy S26", "Samsung Galaxy S26 Ultra", "Samsung", True),
+        ("Xiaomi 17T", "Xiaomi 17T Pro", "Xiaomi", True),
+        ("Tecno Spark Go 3", "Tecno Spark Go 2", "Tecno", True),
+        ("Tecno Spark 40 Pro", "Tecno Spark 40 Pro Plus", "Tecno", True),
+        ("Nokia 105 Power", "Nokia 105 Classic", "Nokia", True),
+        ("Nokia 108 (2024)", "Nokia 125 (2024)", "Nokia", True),
+        ("Sego EpicX", "Sego Epic", "Sego", True),
+        ("Qmobile Q150", "Qmobile Q150s", "Qmobile", True),
+        ("itel it2165", "itel it2165 eco", "itel", True),
+        # The same phone, written differently.
+        ("Apple iPhone 17 Pro Max", "Apple Iphone 17 Pro Max", "Apple", False),
+        ("Samsung Galaxy A55", "Samsung Galaxy A556E", "Samsung", False),
+        ("Galaxy S24 Ultra 12GB 512GB", "Samsung Galaxy S24 Ultra", "Samsung", False),
+        (
+            "Samsung Galaxy A07 4GB RAM 128GB 5000mAh Battery PTA Approved",
+            "Samsung Galaxy A07",
+            "Samsung",
+            False,
+        ),
+    ],
+)
+def test_look_alike_models_are_told_apart(
+    scraped_title: str,
+    product_name: str,
+    brand: str,
+    conflicts: bool,
+) -> None:
+    """One word or digit of difference is a different, separately priced phone."""
+
+    assert _model_identity_conflict(
+        scraped_title,
+        _candidate(product_name, brand),
+    ) is conflicts
+
+
+@pytest.mark.parametrize(
+    ("requested", "stored", "same"),
+    [
+        ("Titanium Blue", "Titanium Black", False),
+        ("Blue Black", "Blue", False),
+        ("Dark Blue", "Blue", False),
+        ("Sage", "Lavender", False),
+        ("Natural Titanium", "Titanium", False),
+        ("Awesome Black", "Black", True),
+        ("Titanium Gray", "Titanium Grey", True),
+        ("Mist Blue", "mist blue", True),
+        ("Sage", "Sage", True),
+    ],
+)
+def test_colours_are_compared_by_hue_not_by_spelling(
+    requested: str,
+    stored: str,
+    same: bool,
+) -> None:
+    """Colours sharing a word are still different colours."""
+
+    assert (_color_similarity(requested, stored) >= 0.6) is same
+
+
+def test_every_colour_of_a_phone_gets_its_own_variant(
+    client: TestClient,
+    database_session: Session,
+    discovered_products: list[int],
+) -> None:
+    """Titanium Black, Blue and Grey are three variants, not one."""
+
+    token = uuid4().hex[:8]
+    variant_ids = {
+        colour: discover(
+            client,
+            discovered_products,
+            platform_code="priceoye",
+            external_id=f"HUE-{token}-{colour.replace(' ', '-')}",
+            title=f"Samsung Galaxy Hue{token}",
+            brand="Samsung",
+            color=colour,
+            specifications={"ram": "12GB", "storage_capacity": "512GB"},
+        )["product_variant_id"]
+        for colour in ("Titanium Black", "Titanium Blue", "Titanium Grey")
+    }
+
+    assert len(set(variant_ids.values())) == 3
+
+
+def test_a_pro_and_a_pro_max_become_separate_products(
+    client: TestClient,
+    discovered_products: list[int],
+) -> None:
+    token = uuid4().hex[:8]
+    products = [
+        discover(
+            client,
+            discovered_products,
+            platform_code="priceoye",
+            external_id=f"LOOK-{token}-{index}",
+            title=title,
+            brand="Apple",
+            color="Black",
+            specifications={"storage_capacity": "256GB"},
+        )["canonical_product_id"]
+        for index, title in enumerate((
+            f"Apple iPhone Look{token} Pro Max",
+            f"Apple iPhone Look{token} Pro",
+            f"Apple iPhone Look{token}",
+        ))
+    ]
+
+    assert len(set(products)) == 3

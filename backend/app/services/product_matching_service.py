@@ -14,6 +14,7 @@ from app.schemas.product_matching import (
     ProductMatchResponse,
 )
 from app.services.cross_marketplace_matching import (
+    cross_marketplace_product_key,
     normalized_product_identity,
 )
 from app.services.smartphone_normalization import (
@@ -76,20 +77,44 @@ def _color_similarity(
     if requested_normalised == candidate_normalised:
         return 1.0
 
-    requested_tokens = set(requested_normalised.split())
-    candidate_tokens = set(candidate_normalised.split())
+    # A colour name is a hue plus marketing: "Awesome Black" is "Black",
+    # but "Titanium Blue" is not "Titanium Black" and "Blue Black" is not
+    # "Blue". Comparing characters rated those pairs ~0.8 alike and filed
+    # every Titanium colour of a phone under one variant, so the words
+    # that actually name the hue and its shade must agree exactly.
+    requested_hues = _hue_tokens(requested_normalised)
+    candidate_hues = _hue_tokens(candidate_normalised)
 
-    if requested_tokens and candidate_tokens and (
-        requested_tokens.issubset(candidate_tokens)
-        or candidate_tokens.issubset(requested_tokens)
-    ):
-        return 1.0
+    if requested_hues and candidate_hues:
+        return 1.0 if requested_hues == candidate_hues else 0.0
 
-    return SequenceMatcher(
-        None,
-        requested_normalised,
-        candidate_normalised,
-    ).ratio()
+    # Names with no recognisable hue ("Sage", "Natural Titanium") are
+    # only the same colour when they are the same name.
+    return 0.0
+
+
+_HUE_ALIASES = {"gray": "grey", "golden": "gold", "silvery": "silver"}
+
+_HUE_WORDS = frozenset({
+    # hues
+    "black", "white", "blue", "red", "green", "gold", "silver", "grey",
+    "pink", "purple", "yellow", "orange", "brown", "violet", "cyan",
+    "beige", "cream", "bronze", "copper", "maroon", "teal", "turquoise",
+    "navy", "indigo", "magenta", "olive", "lime", "mint", "peach",
+    "coral", "rose", "lavender", "lilac", "graphite", "champagne",
+    # shades that tell two offers of one phone apart
+    "dark", "light", "deep", "sky", "midnight",
+})
+
+
+def _hue_tokens(normalised_colour: str) -> frozenset[str]:
+    """Return the words of a colour name that state its hue and shade."""
+
+    return frozenset(
+        _HUE_ALIASES.get(token, token)
+        for token in normalised_colour.split()
+        if _HUE_ALIASES.get(token, token) in _HUE_WORDS
+    )
 
 def _normalize_text(value: str | None) -> str:
     """Normalize text for case-insensitive product matching."""
@@ -371,6 +396,90 @@ def _model_numbers_conflict(
     )
 
 
+# Words that turn one phone into a different, separately priced phone.
+_MODEL_QUALIFIERS = frozenset({
+    "pro", "max", "plus", "ultra", "air", "mini", "lite", "neo", "fe",
+    "se", "xl", "edge", "prime", "turbo", "play", "zoom", "classic",
+    "power", "music", "eco", "fold", "flip", "note", "go",
+})
+
+
+def _same_model_code(first: str, second: str) -> bool:
+    """Report whether two model codes name the same phone.
+
+    "A55" and the catalog's "A556E" are one phone written at different
+    precision. A single trailing character is a different model, though:
+    "17e" is not "17" and "Q150s" is not "Q150".
+    """
+
+    if first == second:
+        return True
+
+    shorter, longer = sorted((first, second), key=len)
+
+    return longer.startswith(shorter) and len(longer) - len(shorter) >= 2
+
+
+def _model_identity_conflict(
+    title: str | None,
+    candidate: ProductMatchCandidate,
+) -> bool:
+    """Report whether a title names a look-alike rather than this phone.
+
+    Character similarity rates "iPhone 17 Pro" and "iPhone 17 Pro Max",
+    "Z Fold 4" and "Z Fold 5" or "Epic" and "EpicX" as the same product,
+    because a word or a digit in twenty differs. Those are different
+    phones with different prices, so the words that tell models apart are
+    compared as words.
+    """
+
+    title_tokens = set(
+        cross_marketplace_product_key(title, candidate.brand_name).split()
+    )
+    name_tokens = set(
+        cross_marketplace_product_key(
+            candidate.product_name,
+            candidate.brand_name,
+        ).split()
+    )
+
+    if not title_tokens or not name_tokens:
+        return False
+
+    # 1. A qualifier present on one side only: "Pro" against "Pro Max".
+    if (title_tokens ^ name_tokens) & _MODEL_QUALIFIERS:
+        return True
+
+    # 2. Numbers that disagree: "Fold 4" against "Fold 5". A number only
+    # one side states (a battery size in a seller's title) decides nothing.
+    title_numbers = {token for token in title_tokens if any(
+        character.isdigit() for character in token
+    )}
+    name_numbers = {token for token in name_tokens if any(
+        character.isdigit() for character in token
+    )}
+    unmatched_title = {
+        token for token in title_numbers
+        if not any(_same_model_code(token, other) for other in name_numbers)
+    }
+    unmatched_name = {
+        token for token in name_numbers
+        if not any(_same_model_code(token, other) for other in title_numbers)
+    }
+
+    if unmatched_title and unmatched_name:
+        return True
+
+    # 3. Two bare model names of the same length must be the same words:
+    # "Epic" against "EpicX". A longer seller title is left to scoring.
+    if len(title_tokens) == len(name_tokens):
+        return bool(
+            (title_tokens - title_numbers) ^ (name_tokens - name_numbers)
+        )
+
+    return False
+
+
 @dataclass(frozen=True)
 class _ScoredCandidate:
     """One catalog variant weighed against the scraped listing."""
@@ -546,6 +655,12 @@ def _score_candidate(
         rejection_reason = (
             "The requested model code does not "
             "match this catalog product."
+        )
+
+    if _model_identity_conflict(title, candidate):
+        rejection_reason = (
+            "The marketplace title names a different "
+            "model of this product line."
         )
 
     strong_product_identity = (
