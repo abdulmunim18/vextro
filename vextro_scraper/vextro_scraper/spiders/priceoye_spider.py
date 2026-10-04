@@ -1,3 +1,4 @@
+import json
 import scrapy
 import re
 from datetime import datetime, timezone
@@ -12,6 +13,19 @@ from vextro_scraper.normalizers import (
     parse_price,
     parse_rating,
 )
+
+
+# Specification labels that state RAM or storage, in the backend's spelling.
+RAM_SPEC_KEYS = frozenset({'ram', 'ram_capacity', 'memory_ram', 'memory'})
+STORAGE_SPEC_KEYS = frozenset({
+    'storage_capacity',
+    'storage',
+    'rom',
+    'internal_memory',
+    'internal_storage',
+    'built_in_storage',
+    'built_in_memory',
+})
 
 
 class PriceOyeReviewParserError(ValueError):
@@ -30,7 +44,7 @@ class PriceOyeReviewFetchError(RuntimeError):
 class PriceoyeSpider(scrapy.Spider):
     name = "priceoye_smartphones"
     platform_code = "priceoye"
-    parser_version = "priceoye-v3-structured-offers"
+    parser_version = "priceoye-v4-variant-offers"
     allowed_domains = ["priceoye.pk"]
     start_urls = ["https://priceoye.pk/mobiles"]
 
@@ -460,10 +474,25 @@ class PriceoyeSpider(scrapy.Spider):
 
         item['image_urls'] = self.extract_image_urls(response, product)
         item['specifications'] = self.extract_specifications(response)
-        
-        yield item
 
-        external_listing_id = item.get('external_id')
+        # 7. One listing per colour and storage option. The fields above
+        # describe only the option PriceOye pre-selects; the page's own
+        # offer matrix states the price and stock of every other one.
+        product_data = self.extract_product_data(response)
+        variant_items = self.variant_offer_items(item, product_data)
+
+        if variant_items:
+            yield from variant_items
+            external_listing_id = variant_items[0].get('external_id')
+        else:
+            if self.is_reference_only(product_data):
+                # PriceOye keeps a page and a "last updated price" for
+                # phones it no longer sells; nothing there can be bought.
+                item['availability'] = 'Out of Stock'
+
+            yield item
+            external_listing_id = item.get('external_id')
+
         if external_listing_id and self._max_reviews_per_listing() > 0:
             yield scrapy.Request(
                 url=f"{response.url.rstrip('/')}/reviews",
@@ -476,6 +505,187 @@ class PriceoyeSpider(scrapy.Spider):
                     'external_listing_id': external_listing_id,
                 },
             )
+
+    @staticmethod
+    def extract_product_data(response):
+        """Return the ``window.product_data`` object embedded in the page."""
+
+        source = response.text
+        marker = source.find('window.product_data')
+        start = source.find('{', marker) if marker != -1 else -1
+
+        if start == -1:
+            return None
+
+        try:
+            data, _ = json.JSONDecoder().raw_decode(source[start:])
+        except ValueError:
+            return None
+
+        return data if isinstance(data, dict) else None
+
+    @staticmethod
+    def offer_matrix(product_data):
+        """Return ``[(colour_slug, size_label, offer), ...]`` for a page.
+
+        PriceOye publishes ``dataPrices[colour][size] = [offer]``. Phones
+        sold in a single configuration use a list per colour instead of a
+        size-keyed map, with the labels held separately in ``aColorSize``.
+        """
+
+        config = (product_data or {}).get('product_config')
+        if not isinstance(config, dict):
+            return []
+
+        prices = config.get('dataPrices')
+        if not isinstance(prices, dict):
+            return []
+
+        size_labels = config.get('aColorSize')
+        if not isinstance(size_labels, dict):
+            size_labels = {}
+
+        matrix = []
+        for color_slug, sizes in prices.items():
+            if isinstance(sizes, list):
+                labels = size_labels.get(color_slug)
+                if not isinstance(labels, list):
+                    labels = []
+                sizes = {
+                    str(labels[index] if index < len(labels) else '').strip()
+                    or (str(index) if len(sizes) > 1 else ''): offers
+                    for index, offers in enumerate(sizes)
+                }
+
+            if not isinstance(sizes, dict):
+                continue
+
+            for size_label, offers in sizes.items():
+                if isinstance(offers, dict):
+                    offers = [offers]
+                if not isinstance(offers, list):
+                    continue
+                offer = next(
+                    (entry for entry in offers if isinstance(entry, dict)),
+                    None,
+                )
+                if offer is not None:
+                    matrix.append((str(color_slug), str(size_label), offer))
+
+        return matrix
+
+    @classmethod
+    def is_reference_only(cls, product_data):
+        """True when the page carries product data but no offer at all."""
+
+        return product_data is not None and not cls.offer_matrix(product_data)
+
+    @staticmethod
+    def parse_size_label(size_label):
+        """Return ``(ram_gb, storage_gb)`` from '256gb - 12gb ram'."""
+
+        label = str(size_label or '').lower()
+        ram_match = re.search(r'(\d{1,3})\s*gb\s*ram', label)
+        ram_gb = int(ram_match.group(1)) if ram_match else None
+
+        storage_gb = None
+        for value, unit, trailer in re.findall(
+            r'(\d{1,4})\s*(gb|tb)(\s*ram)?', label,
+        ):
+            if trailer.strip():
+                continue
+            storage_gb = int(value) * (1024 if unit == 'tb' else 1)
+            break
+
+        return ram_gb, storage_gb
+
+    def variant_offer_items(self, base_item, product_data):
+        """Return one item per colour and storage option on the page."""
+
+        matrix = self.offer_matrix(product_data)
+        if not matrix:
+            return []
+
+        color_images = product_data.get('product_color_images')
+        if not isinstance(color_images, dict):
+            color_images = {}
+
+        base_id = base_item.get('external_id')
+        base_images = list(base_item.get('image_urls') or [])
+        base_specifications = dict(base_item.get('specifications') or {})
+        items = []
+
+        for color_slug, size_label, offer in sorted(
+            matrix,
+            key=lambda entry: (entry[0], entry[1]),
+        ):
+            price = parse_price(offer.get('product_price'))
+            if price is None:
+                continue
+
+            item = base_item.deepcopy()
+            size_slug = re.sub(r'[^a-z0-9]+', '-', size_label.lower())
+            item['external_id'] = '--'.join(
+                part
+                for part in (base_id, color_slug, size_slug.strip('-'))
+                if part
+            )
+            # The marketplace SKU names the phone, not one configuration;
+            # sending it would file every option under the first variant.
+            item['sku'] = None
+            item['color'] = optional_text(
+                color_slug.replace('_', ' ').replace('-', ' ').title(),
+                max_length=80,
+            )
+            item['variant'] = optional_text(size_label, max_length=120)
+            item['price'] = price
+
+            retail_price = parse_price(offer.get('retail_price'))
+            item['original_price'] = (
+                retail_price
+                if retail_price is not None and retail_price > price
+                else None
+            )
+
+            availability = str(
+                offer.get('product_availability') or ''
+            ).strip().lower()
+            item['availability'] = (
+                'In Stock' if availability == 'in stock' else 'Out of Stock'
+            )
+
+            images = color_images.get(color_slug)
+            if isinstance(images, dict):
+                images = images.get('large') or images.get('medium')
+            if isinstance(images, str):
+                images = [images]
+            if not isinstance(images, list):
+                images = []
+            item['image_urls'] = list(dict.fromkeys(
+                [image for image in images if isinstance(image, str)]
+                + base_images
+            ))
+
+            # The option's own RAM and storage must win over the page's
+            # specification sheet, which lists every size at once.
+            ram_gb, storage_gb = self.parse_size_label(size_label)
+            specifications = {}
+            if ram_gb is not None:
+                specifications['ram'] = f'{ram_gb}GB'
+            if storage_gb is not None:
+                specifications['storage_capacity'] = f'{storage_gb}GB'
+            for label, value in base_specifications.items():
+                key = re.sub(r'[^a-z0-9]+', '_', str(label).lower()).strip('_')
+                if ram_gb is not None and key in RAM_SPEC_KEYS:
+                    continue
+                if storage_gb is not None and key in STORAGE_SPEC_KEYS:
+                    continue
+                specifications[label] = value
+            item['specifications'] = specifications
+
+            items.append(item)
+
+        return items
 
     def _max_reviews_per_listing(self):
         crawler = getattr(self, 'crawler', None)

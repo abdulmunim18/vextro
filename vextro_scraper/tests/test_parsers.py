@@ -6,6 +6,7 @@ from scrapy.exceptions import IgnoreRequest
 from scrapy.http import HtmlResponse, Request, TextResponse
 from twisted.python.failure import Failure
 
+from vextro_scraper.items import SmartphoneItem
 from vextro_scraper.normalizers import clean_listing_title
 from vextro_scraper.pipelines import (
     NonSmartphoneItemError,
@@ -801,3 +802,177 @@ def test_phones_that_list_bundled_accessories_are_not_dropped():
         )
 
         assert cleaned['brand'] in {'Infinix', 'Vivo'}
+
+
+def _priceoye_product_response(product_data, *, slug='test-phone'):
+    """Build a PriceOye product page carrying an embedded offer matrix."""
+
+    url = f'https://priceoye.pk/mobiles/test/{slug}'
+    body = (
+        '<html><body><script>window.product_data = '
+        f'{json.dumps(product_data)};</script></body></html>'
+    )
+    item = SmartphoneItem(platform='PriceOye', model='Test Phone')
+    return HtmlResponse(
+        url=url,
+        body=body,
+        encoding='utf-8',
+        request=Request(url, meta={'item': item}),
+    )
+
+
+def _priceoye_listings(response):
+    return [
+        item
+        for item in PriceoyeSpider().parse_product(response)
+        if isinstance(item, SmartphoneItem)
+    ]
+
+
+def test_priceoye_yields_one_listing_per_colour_and_storage():
+    """Every colour and storage option carries its own price and stock."""
+
+    response = _priceoye_product_response({
+        'product_config': {
+            'dataPrices': {
+                'black': {
+                    '256gb': [{
+                        'product_price': '396,999',
+                        'retail_price': '399,000',
+                        'product_availability': 'Out Of Stock',
+                    }],
+                    '512gb': [{
+                        'product_price': '482,500',
+                        'product_availability': 'Out Of Stock',
+                    }],
+                },
+                'mist_blue': {
+                    '256gb': [{
+                        'product_price': '401,999',
+                        'product_availability': 'In Stock',
+                    }],
+                },
+            },
+        },
+        'product_color_images': {
+            'mist_blue': {'large': ['https://images.priceoye.pk/blue.jpg']},
+        },
+    })
+
+    listings = {item['external_id']: item for item in _priceoye_listings(response)}
+
+    assert sorted(listings) == [
+        'test-phone--black--256gb',
+        'test-phone--black--512gb',
+        'test-phone--mist_blue--256gb',
+    ]
+
+    black_256 = listings['test-phone--black--256gb']
+    assert black_256['color'] == 'Black'
+    assert black_256['price'] == 396999
+    assert black_256['original_price'] == 399000
+    assert black_256['availability'] == 'Out of Stock'
+    assert black_256['specifications']['storage_capacity'] == '256GB'
+    assert black_256['sku'] is None
+
+    assert listings['test-phone--black--512gb']['price'] == 482500
+    assert listings['test-phone--black--512gb']['original_price'] is None
+
+    blue = listings['test-phone--mist_blue--256gb']
+    assert blue['color'] == 'Mist Blue'
+    assert blue['availability'] == 'In Stock'
+    assert blue['image_urls'][0] == 'https://images.priceoye.pk/blue.jpg'
+
+
+def test_priceoye_option_memory_outranks_the_specification_sheet():
+    """The sheet lists every size; the option states the one being sold."""
+
+    spider = PriceoyeSpider()
+    base = SmartphoneItem(
+        platform='PriceOye',
+        external_id='test-phone',
+        specifications={
+            'RAM': '8GB, 12GB',
+            'Internal Memory': '256GB, 512GB',
+            'Battery': '5000 mAh',
+        },
+    )
+    items = spider.variant_offer_items(base, {
+        'product_config': {
+            'dataPrices': {
+                'red': {
+                    '512gb - 12gb ram': [{
+                        'product_price': '179,999',
+                        'product_availability': 'In Stock',
+                    }],
+                },
+            },
+        },
+    })
+
+    assert items[0]['specifications'] == {
+        'ram': '12GB',
+        'storage_capacity': '512GB',
+        'Battery': '5000 mAh',
+    }
+
+
+def test_priceoye_single_configuration_matrix_is_read():
+    """Phones without storage options publish a list per colour."""
+
+    response = _priceoye_product_response({
+        'product_config': {
+            'dataPrices': {
+                'dark_blue': [[{
+                    'product_price': '6,199',
+                    'product_availability': 'In Stock',
+                }]],
+            },
+            'aColorSize': {'dark_blue': ['Standard']},
+        },
+    }, slug='nokia-130')
+
+    listings = _priceoye_listings(response)
+
+    assert [item['external_id'] for item in listings] == [
+        'nokia-130--dark_blue--standard',
+    ]
+    assert listings[0]['price'] == 6199
+
+
+def test_priceoye_page_without_any_offer_is_not_buyable():
+    """A reference page states a past price but sells nothing."""
+
+    response = _priceoye_product_response({
+        'product_config': {'dataPrices': []},
+        'schema_status': 'InStock',
+    }, slug='old-phone')
+
+    listings = _priceoye_listings(response)
+
+    assert [item['external_id'] for item in listings] == ['old-phone']
+    assert listings[0]['availability'] == 'Out of Stock'
+
+
+def test_priceoye_reviews_are_requested_once_per_product():
+    """Reviews belong to the phone, so one listing collects them."""
+
+    response = _priceoye_product_response({
+        'product_config': {
+            'dataPrices': {
+                'black': {'128gb': [{'product_price': '50,000'}]},
+                'white': {'128gb': [{'product_price': '50,000'}]},
+            },
+        },
+    })
+
+    requests = [
+        output
+        for output in PriceoyeSpider().parse_product(response)
+        if isinstance(output, Request)
+    ]
+
+    assert len(requests) == 1
+    assert requests[0].meta['external_listing_id'] == (
+        'test-phone--black--128gb'
+    )
