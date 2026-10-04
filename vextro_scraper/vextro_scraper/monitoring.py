@@ -389,6 +389,13 @@ class ScrapeMonitoringExtension:
                     'finished',
                     'closespider_itemcount',
                 },
+                # Only a spider that finished by itself after reading the
+                # whole catalogue may vouch that unseen listings are gone.
+                'full_crawl': (
+                    reason == 'finished'
+                    and getattr(spider, 'full_crawl_completed', False) is True
+                    and self.counters['items_failed'] == 0
+                ),
                 'error_summary': self._error_summary(),
                 **self.counters,
             },

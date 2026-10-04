@@ -14,6 +14,7 @@ from vextro_scraper.pipelines import (
     infer_brand,
 )
 from vextro_scraper.spiders.priceoye_spider import (
+    PriceOyePageFetchError,
     PriceOyeReviewParserError,
     PriceoyeSpider,
 )
@@ -977,3 +978,38 @@ def test_priceoye_reviews_are_requested_once_per_product():
     assert requests[0].meta['external_listing_id'] == (
         'test-phone--black--128gb'
     )
+
+
+def test_priceoye_full_crawl_requires_the_catalogue_end_and_no_lost_page():
+    """Only a walk that reached the empty last page counts as complete."""
+
+    spider = PriceoyeSpider()
+    assert spider.full_crawl_completed is False
+
+    page = HtmlResponse(
+        url='https://priceoye.pk/mobiles?page=12',
+        body=b'<html><body></body></html>',
+        encoding='utf-8',
+    )
+    assert spider.next_page_request(
+        page, page_number=12, page_item_count=0,
+    ) is None
+    assert spider.full_crawl_completed is True
+
+    with pytest.raises(PriceOyePageFetchError):
+        spider.page_fetch_error(Failure(RuntimeError('timeout')))
+    assert spider.full_crawl_completed is False
+
+
+def test_priceoye_page_limit_is_not_a_complete_crawl():
+    spider = PriceoyeSpider()
+    page = HtmlResponse(
+        url='https://priceoye.pk/mobiles?page=40',
+        body=b'<html><body></body></html>',
+        encoding='utf-8',
+    )
+
+    assert spider.next_page_request(
+        page, page_number=40, page_item_count=36,
+    ) is None
+    assert spider.full_crawl_completed is False

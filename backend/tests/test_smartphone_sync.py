@@ -1217,3 +1217,165 @@ def test_model_codes_veto_only_genuine_conflicts(
     )
 
     assert _model_numbers_conflict(scraped_title, candidate) is conflicts
+
+
+# --------------------------------------------------------------------------
+# Listings a complete crawl no longer finds
+# --------------------------------------------------------------------------
+
+RUNS_ENDPOINT = "/api/v1/internal/acquisition/runs"
+
+
+def _crawl(
+    client: TestClient,
+    database_session: Session,
+    context: dict[str, object],
+    *,
+    stale: list[str],
+    seen: list[str],
+    full_crawl: bool,
+) -> dict[str, bool]:
+    """Run one PriceOye crawl and return each listing's availability."""
+
+    # Other tests leave PriceOye listings behind; park them so only this
+    # test's listings can count as unseen.
+    database_session.execute(
+        ProductListing.__table__.update()
+        .where(
+            ProductListing.platform_id
+            == select(Platform.id)
+            .where(Platform.code == "priceoye")
+            .scalar_subquery()
+        )
+        .values(is_available=False)
+    )
+    database_session.commit()
+
+    def capture(name: str, moment: datetime) -> None:
+        ingest(
+            client,
+            listing_payload(
+                context,
+                current_price=100000,
+                captured_at=moment,
+                platform_code="priceoye",
+                external_id=f"{context['external_id']}-{name}",
+            ),
+        )
+
+    for name in stale + seen:
+        capture(name, FIRST_CAPTURE)
+
+    started = client.post(
+        RUNS_ENDPOINT,
+        headers=headers(),
+        json={
+            "platform": "priceoye",
+            "spider_name": "priceoye_smartphones",
+            "trigger_type": "test",
+            "parser_version": "priceoye-test",
+        },
+    )
+    assert started.status_code == 201, started.text
+
+    for name in seen:
+        capture(name, datetime.now(timezone.utc) + timedelta(seconds=5))
+
+    finished = client.patch(
+        f"{RUNS_ENDPOINT}/{started.json()['id']}",
+        headers=headers(),
+        json={
+            "crawl_succeeded": True,
+            "full_crawl": full_crawl,
+            "items_discovered": len(seen),
+            "items_ingested": len(seen),
+            "items_rejected": 0,
+            "items_failed": 0,
+            "error_count": 0,
+        },
+    )
+    assert finished.status_code == 200, finished.text
+
+    database_session.expire_all()
+    prefix = f"{context['external_id']}-"
+
+    return {
+        external_id[len(prefix):]: is_available
+        for external_id, is_available in database_session.execute(
+            select(
+                ProductListing.external_id,
+                ProductListing.is_available,
+            ).where(ProductListing.external_id.like(f"{prefix}%"))
+        )
+    }
+
+
+def test_a_full_crawl_retires_listings_it_did_not_find(
+    client: TestClient,
+    database_session: Session,
+    sync_context: dict[str, object],
+) -> None:
+    """A colour PriceOye stopped listing must not stay "in stock"."""
+
+    availability = _crawl(
+        client,
+        database_session,
+        sync_context,
+        stale=["gone"],
+        seen=["kept-a", "kept-b"],
+        full_crawl=True,
+    )
+
+    assert availability == {"gone": False, "kept-a": True, "kept-b": True}
+
+    # The removed offer keeps its place in the catalogue and its history.
+    assert database_session.scalar(
+        select(func.count(PriceHistory.id))
+        .join(ProductListing, ProductListing.id == PriceHistory.listing_id)
+        .where(
+            ProductListing.external_id
+            == f"{sync_context['external_id']}-gone"
+        )
+    )
+
+
+def test_a_partial_crawl_retires_nothing(
+    client: TestClient,
+    database_session: Session,
+    sync_context: dict[str, object],
+) -> None:
+    """A capped or interrupted crawl says nothing about what it skipped."""
+
+    availability = _crawl(
+        client,
+        database_session,
+        sync_context,
+        stale=["unvisited"],
+        seen=["kept-a", "kept-b"],
+        full_crawl=False,
+    )
+
+    assert availability["unvisited"] is True
+
+
+def test_a_crawl_that_lost_most_of_the_catalogue_retires_nothing(
+    client: TestClient,
+    database_session: Session,
+    sync_context: dict[str, object],
+) -> None:
+    """Seeing fewer listings than would be retired is a broken crawl."""
+
+    availability = _crawl(
+        client,
+        database_session,
+        sync_context,
+        stale=["missing-a", "missing-b"],
+        seen=["kept"],
+        full_crawl=True,
+    )
+
+    assert availability == {
+        "missing-a": True,
+        "missing-b": True,
+        "kept": True,
+    }

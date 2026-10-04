@@ -3,9 +3,11 @@
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, selectinload
 
+from app.models.platform import Platform
+from app.models.product_listing import ProductListing
 from app.models.scrape_error import ScrapeError
 from app.models.scrape_run import ScrapeRun
 
@@ -73,6 +75,66 @@ class ScrapeMonitoringRepository:
                 statement.order_by(ScrapeRun.id)
             )
         )
+
+    @staticmethod
+    def count_platform_listings(
+        database_session: Session,
+        *,
+        platform_code: str,
+        seen_since: datetime,
+    ) -> tuple[int, int]:
+        """Return ``(seen, unseen_available)`` listings for one platform.
+
+        ``seen`` counts listings a crawl refreshed since ``seen_since``;
+        ``unseen_available`` counts listings still marked on sale that the
+        crawl did not come across.
+        """
+
+        platform_id = select(Platform.id).where(
+            Platform.code == platform_code
+        ).scalar_subquery()
+
+        seen = database_session.scalar(
+            select(func.count(ProductListing.id)).where(
+                ProductListing.platform_id == platform_id,
+                ProductListing.last_seen_at >= seen_since,
+            )
+        )
+        unseen_available = database_session.scalar(
+            select(func.count(ProductListing.id)).where(
+                ProductListing.platform_id == platform_id,
+                ProductListing.last_seen_at < seen_since,
+                ProductListing.is_available.is_(True),
+            )
+        )
+
+        return int(seen or 0), int(unseen_available or 0)
+
+    @staticmethod
+    def mark_unseen_listings_unavailable(
+        database_session: Session,
+        *,
+        platform_code: str,
+        seen_since: datetime,
+    ) -> int:
+        """Mark listings a complete crawl did not see as not on sale."""
+
+        platform_id = select(Platform.id).where(
+            Platform.code == platform_code
+        ).scalar_subquery()
+
+        result = database_session.execute(
+            update(ProductListing)
+            .where(
+                ProductListing.platform_id == platform_id,
+                ProductListing.last_seen_at < seen_since,
+                ProductListing.is_available.is_(True),
+            )
+            .values(is_available=False)
+            .execution_options(synchronize_session=False)
+        )
+
+        return int(result.rowcount or 0)
 
     @staticmethod
     def record_ingested_item(run: ScrapeRun) -> None:

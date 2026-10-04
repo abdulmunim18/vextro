@@ -43,6 +43,13 @@ class PriceOyeReviewFetchError(RuntimeError):
     error_type = "review_fetch_error"
     error_stage = "fetch"
 
+class PriceOyePageFetchError(RuntimeError):
+    """A PriceOye catalogue or product page could not be fetched."""
+
+    error_type = "page_fetch_error"
+    error_stage = "fetch"
+
+
 class PriceoyeSpider(scrapy.Spider):
     name = "priceoye_smartphones"
     platform_code = "priceoye"
@@ -53,6 +60,35 @@ class PriceoyeSpider(scrapy.Spider):
     custom_settings = {
         'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
+
+    # Whether this run walked the catalogue to its last page, and how many
+    # catalogue or product pages it lost on the way.
+    reached_catalog_end = False
+    failed_page_count = 0
+
+    @property
+    def full_crawl_completed(self):
+        """True when every catalogue page and product page was read.
+
+        Only then does a listing's absence from the run mean the
+        marketplace stopped selling it.
+        """
+
+        return self.reached_catalog_end and self.failed_page_count == 0
+
+    def page_fetch_error(self, failure):
+        """Record a lost page so the run is not mistaken for a full one."""
+
+        self.failed_page_count += 1
+        request = getattr(failure, 'request', None)
+        error = PriceOyePageFetchError(
+            'PriceOye page request failed: '
+            f'{getattr(request, "url", "unknown")[:300]}'
+        )
+        cause = getattr(failure, 'value', None)
+        if cause is None:
+            raise error
+        raise error from cause
 
     @staticmethod
     def extract_specifications(response):
@@ -201,6 +237,7 @@ class PriceoyeSpider(scrapy.Spider):
                 yield response.follow(
                     item['product_url'],
                     callback=self.parse_product,
+                    errback=self.page_fetch_error,
                     meta={'item': item},
                 )
 
@@ -223,6 +260,8 @@ class PriceoyeSpider(scrapy.Spider):
         """
 
         if not page_item_count:
+            # An empty page is how the catalogue says it has ended.
+            self.reached_catalog_end = True
             return None
 
         if page_number >= self.max_catalog_pages():
@@ -239,12 +278,14 @@ class PriceoyeSpider(scrapy.Spider):
             return response.follow(
                 marked_next,
                 callback=self.parse,
+                errback=self.page_fetch_error,
                 cb_kwargs={'page_number': page_number + 1},
             )
 
         return response.follow(
             self.catalog_page_url(response.url, page_number + 1),
             callback=self.parse,
+            errback=self.page_fetch_error,
             cb_kwargs={'page_number': page_number + 1},
         )
 

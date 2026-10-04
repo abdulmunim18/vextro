@@ -1,5 +1,6 @@
 """Transactional lifecycle operations for scraper monitoring."""
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException, status
@@ -18,6 +19,9 @@ from app.schemas.scrape_monitoring import (
     ScrapeRunResponse,
     ScrapeRunStartInput,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class ScrapeMonitoringService:
@@ -247,12 +251,62 @@ class ScrapeMonitoringService:
                 reviews_added=payload.reviews_added,
                 error_summary=self._sanitize_text(error_summary),
             )
+            if payload.full_crawl and run_status != "failed":
+                self._retire_unseen_listings(database_session, run)
             database_session.commit()
             database_session.refresh(run)
             return ScrapeRunResponse.model_validate(run)
         except Exception:
             database_session.rollback()
             raise
+
+    def _retire_unseen_listings(
+        self,
+        database_session: Session,
+        run: ScrapeRun,
+    ) -> int:
+        """Mark listings a complete crawl did not find as not on sale.
+
+        A marketplace removes an offer by no longer listing it, so the only
+        evidence is its absence from a crawl that covered the whole
+        catalogue. The crawl must also have refreshed at least as many
+        listings as it would retire; a run that saw less than that lost
+        part of the catalogue and proves nothing about what is missing.
+        """
+
+        seen, unseen_available = self.repository.count_platform_listings(
+            database_session,
+            platform_code=run.platform,
+            seen_since=run.started_at,
+        )
+
+        if not unseen_available:
+            return 0
+
+        if seen < unseen_available:
+            logger.warning(
+                "Unseen listings were not retired: run_id=%s platform=%s "
+                "saw %s listings but %s were unseen.",
+                run.id,
+                run.platform,
+                seen,
+                unseen_available,
+            )
+            return 0
+
+        retired = self.repository.mark_unseen_listings_unavailable(
+            database_session,
+            platform_code=run.platform,
+            seen_since=run.started_at,
+        )
+        logger.info(
+            "Retired %s unseen listings: run_id=%s platform=%s.",
+            retired,
+            run.id,
+            run.platform,
+        )
+
+        return retired
 
     def list_runs(
         self,

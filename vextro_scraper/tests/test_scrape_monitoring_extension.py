@@ -137,6 +137,8 @@ def test_extension_records_partial_run_lifecycle_and_counters():
     finish_payload = session.calls[4][2]['json']
     assert finish_payload == {
         'crawl_succeeded': True,
+        # This spider never signalled a complete catalogue walk.
+        'full_crawl': False,
         # The run explains itself: the dominant failure reasons, ranked.
         'error_summary': 'backend_timeout=1, invalid_price=1',
         **extension.counters,
@@ -325,3 +327,40 @@ def test_bulk_outcomes_count_items_not_http_requests():
     assert len(session.calls) == 4
     assert session.calls[2][2]['json']['metadata']['batch_index'] == 1
     assert session.calls[3][2]['json']['metadata']['batch_index'] == 2
+
+
+def _finish_payload(reason, *, completed, failed=0):
+    session = RecordingSession(
+        FakeResponse(201, {'id': 77, 'status': 'running'}),
+        FakeResponse(200, {'id': 77, 'status': 'completed'}),
+    )
+    extension = build_extension(session)
+    spider = SimpleNamespace(
+        name='priceoye_smartphones',
+        platform_code='priceoye',
+        parser_version='priceoye-v4-variant-offers',
+        full_crawl_completed=completed,
+    )
+    extension.spider_opened(spider)
+    extension.counters['items_discovered'] = 5
+    extension.counters['items_ingested'] = 5 - failed
+    extension.counters['items_failed'] = failed
+    extension.spider_closed(spider, reason)
+    return session.calls[-1][2]['json']
+
+
+def test_full_crawl_is_reported_only_for_a_complete_catalogue_walk():
+    """full_crawl lets the backend retire listings the run did not see."""
+
+    assert _finish_payload('finished', completed=True)['full_crawl'] is True
+    assert _finish_payload('finished', completed=False)['full_crawl'] is False
+
+    # A run capped by CLOSESPIDER_ITEMCOUNT succeeded but saw only a part.
+    capped = _finish_payload('closespider_itemcount', completed=True)
+    assert capped['crawl_succeeded'] is True
+    assert capped['full_crawl'] is False
+
+    # Items that failed to save may be exactly the ones that look missing.
+    assert _finish_payload(
+        'finished', completed=True, failed=1,
+    )['full_crawl'] is False
