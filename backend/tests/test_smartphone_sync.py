@@ -1455,6 +1455,8 @@ def test_look_alike_models_are_told_apart(
         ("Titanium Blue", "Titanium Black", False),
         ("Blue Black", "Blue", False),
         ("Dark Blue", "Blue", False),
+        ("Denim Blue", "Morning Blue", False),
+        ("Starlight Grey", "Titanium Grey", False),
         ("Sage", "Lavender", False),
         ("Natural Titanium", "Titanium", False),
         ("Awesome Black", "Black", True),

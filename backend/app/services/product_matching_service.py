@@ -82,11 +82,25 @@ def _color_similarity(
     # "Blue". Comparing characters rated those pairs ~0.8 alike and filed
     # every Titanium colour of a phone under one variant, so the words
     # that actually name the hue and its shade must agree exactly.
+    requested_tokens = set(requested_normalised.split())
+    candidate_tokens = set(candidate_normalised.split())
     requested_hues = _hue_tokens(requested_normalised)
     candidate_hues = _hue_tokens(candidate_normalised)
 
     if requested_hues and candidate_hues:
-        return 1.0 if requested_hues == candidate_hues else 0.0
+        if requested_hues != candidate_hues:
+            return 0.0
+
+        # The same hue under two different names ("Denim Blue" and
+        # "Morning Blue") is two offers; one name merely adding marketing
+        # to the other ("Awesome Black" and "Black") is one.
+        requested_rest = requested_tokens - _HUE_SOURCE_WORDS
+        candidate_rest = candidate_tokens - _HUE_SOURCE_WORDS
+
+        return 1.0 if (
+            requested_rest <= candidate_rest
+            or candidate_rest <= requested_rest
+        ) else 0.0
 
     # Names with no recognisable hue ("Sage", "Natural Titanium") are
     # only the same colour when they are the same name.
@@ -105,6 +119,10 @@ _HUE_WORDS = frozenset({
     # shades that tell two offers of one phone apart
     "dark", "light", "deep", "sky", "midnight",
 })
+
+
+# Every spelling that states a hue, aliases included.
+_HUE_SOURCE_WORDS = _HUE_WORDS | frozenset(_HUE_ALIASES)
 
 
 def _hue_tokens(normalised_colour: str) -> frozenset[str]:
