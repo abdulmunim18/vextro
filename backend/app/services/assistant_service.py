@@ -35,13 +35,20 @@ from app.services.product_catalog_service import (
 from app.services.product_comparison_service import (
     get_product_comparison_response,
 )
+from app.services.assistant_nlu_service import GeminiAssistantNLUService
 
 
 INTENT_PATTERNS = (
     ("set_price_alert", r"\b(alert|notify|notification|yaad dilana)\b|bata dena"),
     ("comparison", r"\b(compare|comparison|versus|vs|difference|better)\b|muqabla|farq"),
     ("price_history", r"\b(history|historical|trend|ever)\b|pehle ki (price|qeemat)|price record"),
-    ("buy_or_wait", r"buy now|should i buy|\bwait\b|best time|ab (loon|kharidon)|intezar"),
+    (
+        "buy_or_wait",
+        r"buy now|should i buy|\bwait\b|best time|"
+        r"ab(?:hi)?\s+(?:le|kharid|khareed)|"
+        r"\b(?:lena|loon|lu|kharidna|khareedna|kharidon)\s+chahiye\b|"
+        r"intezar",
+    ),
     (
         "recommendation",
         r"\b(recommend|suggest|similar|alternative|best(?:\s+option)?)\b|"
@@ -93,6 +100,15 @@ def detect_assistant_intent(message: str) -> str:
 
     normalized = message.strip().lower()
 
+    # A budget plus a product category is a recommendation request even when
+    # users say "dikhao" instead of the literal "recommend". This covers
+    # natural Roman-Urdu word order such as "60k ke andar mobile dikhao".
+    extracted = extract_assistant_entities(message)
+    if extracted.get("category") and (
+        extracted.get("budget_min") or extracted.get("budget_max")
+    ):
+        return "recommendation"
+
     # Treat use-case questions as recommendations, even when the user does not
     # use the literal word "recommend". This is especially important for
     # follow-ups such as "camera quality achi chahiye" after a budget request.
@@ -143,6 +159,23 @@ def extract_assistant_entities(message: str) -> dict[str, object]:
 
     if re.search(r"\b(camera|photography|photo|photos|selfie)\b", normalized):
         entities["preference"] = "camera"
+
+    requested_fields = []
+    requested_field_patterns = {
+        "ram": r"\bram\b",
+        "storage": r"\b(storage|rom|memory)\b",
+        "camera": r"\b(camera|photography|photo|selfie)\b",
+        "battery": r"\bbattery\b",
+        "processor": r"\b(processor|chipset|cpu)\b",
+        "display": r"\b(display|screen)\b",
+        "price": r"\b(price|cost|rate|qeemat)\b",
+        "rating": r"\b(rating|review score)\b",
+    }
+    for field, pattern in requested_field_patterns.items():
+        if re.search(pattern, normalized):
+            requested_fields.append(field)
+    if requested_fields:
+        entities["requested_fields"] = requested_fields
     amounts = [amount for amount in _money_candidates(normalized) if amount >= 1000]
     under_phrase = re.search(
         r"(under|below|within|up to|less than|se kam|"
@@ -194,6 +227,8 @@ def extract_assistant_entities(message: str) -> dict[str, object]:
     ram_match = re.search(r"\b(\d{1,2})\s*gb\s*ram\b|\bram\s*(\d{1,2})\s*gb", normalized)
     if ram_match:
         entities["ram_gb"] = int(next(value for value in ram_match.groups() if value))
+        if "ram" in entities.get("requested_fields", []):
+            entities["requested_fields"].remove("ram")
 
     storage_match = re.search(
         r"\b(\d{2,4})\s*gb\s*(?:storage|rom)\b|\b(?:storage|rom)\s*(\d{2,4})\s*gb",
@@ -203,8 +238,14 @@ def extract_assistant_entities(message: str) -> dict[str, object]:
         entities["storage_gb"] = int(
             next(value for value in storage_match.groups() if value)
         )
+        if "storage" in entities.get("requested_fields", []):
+            entities["requested_fields"].remove("storage")
+
+    if not entities.get("requested_fields"):
+        entities.pop("requested_fields", None)
 
     reference_patterns = (
+        ("all", r"\b(all|sab|saray|saare|tamam)\b"),
         ("second", r"\b(second|2nd|dusra|doosra|dusre)\b"),
         ("first", r"\b(first|1st|pehla|pehle)\b"),
         ("current", r"\b(this|it|its|that|is ka|iski|iska|iss|uska|yeh|ye)\b"),
@@ -260,8 +301,10 @@ class AssistantService:
     def __init__(
         self,
         repository: AssistantRepository | None = None,
+        nlu_service: GeminiAssistantNLUService | None = None,
     ) -> None:
         self.repository = repository or AssistantRepository()
+        self.nlu_service = nlu_service or GeminiAssistantNLUService()
 
     def create_conversation(
         self,
@@ -392,8 +435,25 @@ class AssistantService:
                 return [contextual_products[1]]
             if reference in {"first", "current"}:
                 return [contextual_products[0]]
+            selected_product_id = context.get("selected_product_id")
+            if selected_product_id is not None:
+                selected = next(
+                    (
+                        product for product in contextual_products
+                        if product.id == selected_product_id
+                    ),
+                    None,
+                )
+                if selected is not None:
+                    return [selected]
 
         if intent == "comparison" and explicit_products:
+            # When the user names two or more products, those names are the
+            # complete comparison target. Pulling an older recommendation from
+            # context produced surprising third rows in otherwise explicit
+            # two-product comparisons.
+            if len(explicit_products) >= 2:
+                return explicit_products[:3]
             combined = list(explicit_products)
             existing_ids = {product.id for product in combined}
             for product in contextual_products:
@@ -601,6 +661,21 @@ class AssistantService:
                     {"matched_products": matched},
                 )
 
+            if len(products) > 3 or (
+                len(products) > 2 and entities.get("reference") != "all"
+            ):
+                choices = ", ".join(
+                    f"{index + 1}) {product.name}"
+                    for index, product in enumerate(products[:4])
+                )
+                return (
+                    "Please choose two products to compare: " + choices + ".",
+                    {
+                        "matched_products": matched,
+                        "needs_clarification": True,
+                    },
+                )
+
             comparison = get_product_comparison_response(
                 database_session,
                 [product.id for product in products[:3]],
@@ -726,6 +801,19 @@ class AssistantService:
             )
 
         if intent == "product_details":
+            if len(products) > 1:
+                choices = ", ".join(
+                    f"{index + 1}) {item.name}"
+                    for index, item in enumerate(products[:4])
+                )
+                return (
+                    "Which product do you mean? " + choices + ".",
+                    {
+                        "matched_products": matched,
+                        "needs_clarification": True,
+                    },
+                )
+
             variants = []
             for variant in product.variants:
                 variants.append(
@@ -766,19 +854,31 @@ class AssistantService:
                     },
                 )
 
+            requested_fields = set(entities.get("requested_fields", []))
             specification_parts = [
                 f"{key}: {value}"
                 for key, value in (product.specifications or {}).items()
                 if value not in (None, "", [], {})
+                and (
+                    not requested_fields
+                    or any(
+                        field in str(key).lower()
+                        for field in requested_fields
+                    )
+                )
             ][:6]
             variant_parts = []
             for variant in variants[:4]:
                 values = []
-                if variant["ram_gb"]:
+                if variant["ram_gb"] and (
+                    not requested_fields or "ram" in requested_fields
+                ):
                     values.append(f"{variant['ram_gb']}GB RAM")
-                if variant["storage_gb"]:
+                if variant["storage_gb"] and (
+                    not requested_fields or "storage" in requested_fields
+                ):
                     values.append(f"{variant['storage_gb']}GB storage")
-                if variant["color"]:
+                if variant["color"] and not requested_fields:
                     values.append(str(variant["color"]))
                 if values:
                     variant_parts.append(" / ".join(values))
@@ -822,8 +922,55 @@ class AssistantService:
                 detail="The requested conversation was not found.",
             )
 
-        intent = detect_assistant_intent(payload.content)
+        local_intent = detect_assistant_intent(payload.content)
+        intent = local_intent
         entities = extract_assistant_entities(payload.content)
+
+        remembered_products = self.repository.get_products_by_ids(
+            database_session,
+            [
+                int(product_id)
+                for product_id in conversation.context.get("product_ids", [])
+                if str(product_id).isdigit()
+            ],
+        )
+        ai_context = {
+            **conversation.context,
+            "product_names": [product.name for product in remembered_products],
+        }
+        ai_analysis = self.nlu_service.analyze(
+            payload.content,
+            context=ai_context,
+        )
+        if ai_analysis is not None:
+            # Explicit local phrases are deterministic and should not be
+            # overridden by a model that inherited stale recommendation
+            # context. Gemini decides only when the local parser is ambiguous.
+            high_confidence_local_intents = {
+                "set_price_alert",
+                "comparison",
+                "price_history",
+                "buy_or_wait",
+                "product_details",
+                "lowest_price",
+                "greeting",
+                "acknowledgement",
+            }
+            intent = (
+                local_intent
+                if local_intent in high_confidence_local_intents
+                else ai_analysis.intent
+            )
+            ai_entities = ai_analysis.extracted_entities()
+            # Exact locally parsed values (especially numeric budgets) win;
+            # Gemini fills language/context gaps without becoming a fact source.
+            requested_fields = list(dict.fromkeys([
+                *ai_entities.pop("requested_fields", []),
+                *entities.pop("requested_fields", []),
+            ]))
+            entities = {**ai_entities, **entities}
+            if requested_fields:
+                entities["requested_fields"] = requested_fields
         if (
             intent == "product_search"
             and conversation.context.get("last_intent") == "recommendation"
@@ -899,12 +1046,31 @@ class AssistantService:
             context = {
                 **conversation.context,
                 "product_ids": remembered_ids[:4],
+                "product_names": [
+                    item.get("name")
+                    for item in grounded_data.get("recommendations", [])[:4]
+                    if isinstance(item, dict) and item.get("name")
+                ] or [product.name for product in products[:4]],
                 "last_intent": (
                     conversation.context.get("last_intent")
                     if intent == "acknowledgement"
                     else intent
                 ),
             }
+            if len(products) == 1 and intent in {
+                "product_details",
+                "lowest_price",
+                "price_history",
+                "buy_or_wait",
+                "set_price_alert",
+            }:
+                context["selected_product_id"] = products[0].id
+            elif intent == "recommendation":
+                context.pop("selected_product_id", None)
+            if intent == "comparison" and len(products) >= 2:
+                context["comparison_product_ids"] = [
+                    product.id for product in products[:3]
+                ]
             for key in (
                 "budget_min", "budget_max", "category", "brand",
                 "ram_gb", "storage_gb", "preference",

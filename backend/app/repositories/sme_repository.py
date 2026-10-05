@@ -18,6 +18,7 @@ from app.models.competitor_watchlist import (
 from app.models.organization import Organization
 from app.models.organization_user import OrganizationUser
 from app.models.product_listing import ProductListing
+from app.models.product_variant import ProductVariant
 from app.models.price_history import PriceHistory
 from app.models.platform import Platform
 from app.models.seller import Seller
@@ -204,6 +205,19 @@ class SMERepository:
         )
 
         return database_session.scalar(statement)
+
+    @staticmethod
+    def list_active_canonical_products(
+        database_session: Session,
+    ) -> list[CanonicalProduct]:
+        """Return active catalog products for deterministic SME matching."""
+
+        statement = (
+            select(CanonicalProduct)
+            .where(CanonicalProduct.is_active.is_(True))
+            .order_by(CanonicalProduct.name.asc())
+        )
+        return list(database_session.scalars(statement))
 
     @staticmethod
     def business_product_sku_exists(
@@ -403,6 +417,25 @@ class SMERepository:
         )
 
         return database_session.scalar(statement)
+
+    @staticmethod
+    def listing_belongs_to_canonical_product(
+        database_session: Session,
+        *,
+        listing_id: int,
+        canonical_product_id: int,
+    ) -> bool:
+        """Verify a listing belongs to the business product's catalog item."""
+
+        statement = select(
+            exists().where(
+                ProductListing.id == listing_id,
+                ProductListing.product_variant_id == ProductVariant.id,
+                ProductVariant.canonical_product_id
+                == canonical_product_id,
+            )
+        )
+        return bool(database_session.scalar(statement))
 
     @staticmethod
     def get_watchlist_entry(

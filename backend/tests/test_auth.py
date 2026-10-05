@@ -301,12 +301,12 @@ def test_admin_role_access(
     assert client.get(
         "/api/v1/access/consumer",
         headers=headers,
-    ).status_code == 200
+    ).status_code == 403
 
     assert client.get(
         "/api/v1/access/sme",
         headers=headers,
-    ).status_code == 200
+    ).status_code == 403
 
     assert client.get(
         "/api/v1/access/admin",

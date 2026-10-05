@@ -45,15 +45,19 @@ class RequireRoles:
         return current_user
 
 
-consumer_or_admin = RequireRoles(
+consumer_only = RequireRoles(
     "consumer",
-    "admin",
 )
 
-sme_or_admin = RequireRoles(
+sme_only = RequireRoles(
     "sme",
-    "admin",
 )
+
+# Backwards-compatible aliases for modules outside the role-specific product
+# areas. New consumer and SME endpoints should use the explicit dependencies
+# above so administrators do not silently inherit end-user functionality.
+consumer_or_admin = consumer_only
+sme_or_admin = sme_only
 
 admin_only = RequireRoles(
     "admin",
