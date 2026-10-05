@@ -55,6 +55,24 @@ def override_get_db() -> Generator[Session, None, None]:
 app.dependency_overrides[get_db] = override_get_db
 
 
+@pytest.fixture(autouse=True)
+def stub_auth_email_delivery(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep auth tests deterministic without contacting an SMTP server."""
+
+    monkeypatch.setattr(
+        "app.services.auth_service.generate_email_otp",
+        lambda: "123456",
+    )
+    monkeypatch.setattr(
+        "app.services.auth_service.send_verification_otp_email",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.auth_service.send_password_reset_email",
+        lambda **_kwargs: None,
+    )
+
+
 @pytest.fixture(scope="session", autouse=True)
 def prepare_test_database() -> Generator[None, None, None]:
     """Create, seed, and later remove the test database schema."""

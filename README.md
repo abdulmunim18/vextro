@@ -8,7 +8,7 @@ Working modules:
 
 - React frontend connected with FastAPI
 - PostgreSQL database with Alembic migrations
-- JWT authentication and role-based access
+- Verified email-OTP signup, password reset links, Google/Facebook OAuth, JWT sessions, and role-based access
 - Consumer, SME, and Admin roles
 - Product catalog, search, filters, and pagination
 - Product details and Daraz/PriceOye listing comparison
@@ -160,11 +160,43 @@ python -c "import secrets; print(secrets.token_urlsafe(64))"
 
 Never commit `.env`.
 
+### Authentication email and social login
+
+Signup verification and password recovery require working SMTP settings.
+Google and Facebook login also require OAuth applications. Add these values
+to `backend/.env`:
+
+```env
+FRONTEND_BASE_URL=http://localhost:5173
+API_PUBLIC_BASE_URL=http://localhost:8000
+
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=your_smtp_username
+SMTP_PASSWORD=your_smtp_password
+SMTP_FROM_EMAIL=no-reply@example.com
+SMTP_USE_TLS=true
+
+GOOGLE_OAUTH_CLIENT_ID=
+GOOGLE_OAUTH_CLIENT_SECRET=
+FACEBOOK_OAUTH_CLIENT_ID=
+FACEBOOK_OAUTH_CLIENT_SECRET=
+```
+
+Register these callback URLs in the corresponding provider dashboards:
+
+```text
+http://localhost:8000/api/v1/auth/oauth/google/callback
+http://localhost:8000/api/v1/auth/oauth/facebook/callback
+```
+
+Use the public HTTPS API origin instead of `localhost` in deployment.
+
 ### Notifications (optional, module 6.14)
 
-Email and browser-push notifications stay switched off until you configure
-them. Without configuration, in-app notifications keep working and the
-other channels are recorded as `skipped`.
+Notification delivery channels stay switched off until you configure them.
+Without VAPID, browser push is recorded as `skipped`; the SMTP settings above
+are still required for verified signup and password recovery.
 
 ```env
 FRONTEND_BASE_URL=http://localhost:5173

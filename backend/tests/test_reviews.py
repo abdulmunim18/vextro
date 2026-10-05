@@ -55,7 +55,12 @@ def authenticated_headers(client: TestClient) -> dict[str, str]:
             "account_type": "consumer",
         },
     )
-    assert register.status_code == 201
+    assert register.status_code == 202
+    verify = client.post(
+        "/api/v1/auth/verify-email",
+        json={"email": email, "otp": "123456"},
+    )
+    assert verify.status_code == 201
     login = client.post(
         "/api/v1/auth/login",
         json={"email": email, "password": TEST_PASSWORD},

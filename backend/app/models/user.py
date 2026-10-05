@@ -44,9 +44,9 @@ class User(Base):
         nullable=False,
     )
 
-    password_hash: Mapped[str] = mapped_column(
+    password_hash: Mapped[str | None] = mapped_column(
         String(255),
-        nullable=False,
+        nullable=True,
     )
 
     is_active: Mapped[bool] = mapped_column(

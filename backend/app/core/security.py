@@ -125,3 +125,23 @@ def hash_refresh_token(
     return hashlib.sha256(
         refresh_token.encode("utf-8")
     ).hexdigest()
+
+
+def generate_opaque_token() -> str:
+    """Generate a high-entropy token for short-lived auth actions."""
+
+    return secrets.token_urlsafe(48)
+
+
+def generate_email_otp() -> str:
+    """Generate a zero-padded six digit email verification code."""
+
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def hash_auth_token(token: str) -> str:
+    """Hash an OTP or opaque action token before persistence."""
+
+    return hashlib.sha256(
+        f"{settings.jwt_secret_key}:{token}".encode("utf-8")
+    ).hexdigest()
