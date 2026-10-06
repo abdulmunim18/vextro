@@ -100,7 +100,9 @@ VEXTRO_API_URL = os.getenv(
 )
 INGESTION_API_KEY = os.getenv("INGESTION_API_KEY")
 VEXTRO_API_TIMEOUT = float(
-    os.getenv("VEXTRO_API_TIMEOUT", "5"),
+    # A full crawl delivers thousands of items; a five-second limit dropped
+    # listings whenever the backend was briefly busy.
+    os.getenv("VEXTRO_API_TIMEOUT", "20"),
 )
 VEXTRO_INGESTION_BATCH_SIZE = int(
     os.getenv("VEXTRO_INGESTION_BATCH_SIZE", "25")

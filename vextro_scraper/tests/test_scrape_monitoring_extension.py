@@ -329,9 +329,12 @@ def test_bulk_outcomes_count_items_not_http_requests():
     assert session.calls[3][2]['json']['metadata']['batch_index'] == 2
 
 
-def _finish_payload(reason, *, completed, failed=0):
+def _finish_payload(
+    reason, *, completed, failed=0, failure_type='backend_timeout',
+):
     session = RecordingSession(
         FakeResponse(201, {'id': 77, 'status': 'running'}),
+        *[FakeResponse(201, {'id': 1}) for _ in range(failed)],
         FakeResponse(200, {'id': 77, 'status': 'completed'}),
     )
     extension = build_extension(session)
@@ -343,8 +346,18 @@ def _finish_payload(reason, *, completed, failed=0):
     )
     extension.spider_opened(spider)
     extension.counters['items_discovered'] = 5
-    extension.counters['items_ingested'] = 5 - failed
-    extension.counters['items_failed'] = failed
+    extension.counters['items_ingested'] = 5
+    for _ in range(failed):
+        extension.item_dropped(
+            {'external_id': 'lost-1'},
+            response=None,
+            exception=AcquisitionDeliveryError(
+                'Secure acquisition timed out.',
+                error_type=failure_type,
+                error_stage='delivery',
+            ),
+            spider=spider,
+        )
     extension.spider_closed(spider, reason)
     return session.calls[-1][2]['json']
 
@@ -364,3 +377,16 @@ def test_full_crawl_is_reported_only_for_a_complete_catalogue_walk():
     assert _finish_payload(
         'finished', completed=True, failed=1,
     )['full_crawl'] is False
+
+
+def test_a_failed_review_page_does_not_spoil_a_full_crawl():
+    """Reviews that would not load cost no listing."""
+
+    payload = _finish_payload(
+        'finished',
+        completed=True,
+        failed=1,
+        failure_type='review_listing_unresolved',
+    )
+
+    assert payload['full_crawl'] is True

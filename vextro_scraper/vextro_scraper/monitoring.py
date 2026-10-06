@@ -49,6 +49,10 @@ class ScrapeMonitoringExtension:
         }
         self.bulk_item_ids = set()
         self.error_types = {}
+        # Failures that may have cost the run a listing. A review page that
+        # would not load, or an item the catalog declined, does not make a
+        # listing look missing.
+        self.listing_failures = 0
 
     @classmethod
     def from_crawler(cls, crawler):
@@ -261,6 +265,8 @@ class ScrapeMonitoringExtension:
         self.error_types[error_type] = (
             self.error_types.get(error_type, 0) + 1
         )
+        if outcome != 'rejected' and not error_type.startswith('review'):
+            self.listing_failures += 1
 
         if self.run_id is None:
             return
@@ -394,7 +400,7 @@ class ScrapeMonitoringExtension:
                 'full_crawl': (
                     reason == 'finished'
                     and getattr(spider, 'full_crawl_completed', False) is True
-                    and self.counters['items_failed'] == 0
+                    and self.listing_failures == 0
                 ),
                 'error_summary': self._error_summary(),
                 **self.counters,
