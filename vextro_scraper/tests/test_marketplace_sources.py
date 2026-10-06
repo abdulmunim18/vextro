@@ -124,6 +124,7 @@ def test_daraz_reads_the_review_aggregate_and_seller():
     assert item["seller"] == {
         "name": "Realme Flagship Store",
         "external_seller_id": "6005214672679",
+        "is_verified": False,
     }
     assert item["sku"] == "1968128816_PK"
 
@@ -663,3 +664,15 @@ def test_review_delivery_flushes_pending_listings_first():
         "duplicate_count": 0,
         "spider": None,
     }]
+
+
+def test_daraz_marks_official_mall_stores_as_verified():
+    """Daraz's "Mall" badge identifies a vetted official store."""
+
+    seller = DarazSpider.extract_seller({
+        "sellerName": "Samsung Flagship Store",
+        "sellerId": "6005425472002",
+        "icons": [{"bizType": "coins"}, {"bizType": "lazMall"}],
+    })
+
+    assert seller["is_verified"] is True

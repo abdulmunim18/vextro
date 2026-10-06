@@ -252,12 +252,19 @@ class DarazSpider(scrapy.Spider):
         if name is None:
             return None
 
+        # Daraz marks its vetted official stores with the "Mall" badge.
+        is_official_store = any(
+            isinstance(icon, dict) and icon.get('bizType') == 'lazMall'
+            for icon in (item_data.get('icons') or [])
+        )
+
         return {
             'name': name,
             'external_seller_id': optional_text(
                 item_data.get('sellerId'),
                 max_length=150,
             ),
+            'is_verified': is_official_store,
         }
 
     @staticmethod
