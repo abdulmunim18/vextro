@@ -942,7 +942,7 @@ def test_priceoye_single_configuration_matrix_is_read():
     assert listings[0]['price'] == 6199
 
 
-def test_priceoye_page_without_any_offer_is_not_buyable():
+def test_priceoye_page_without_any_offer_is_not_a_listing():
     """A reference page states a past price but sells nothing."""
 
     response = _priceoye_product_response({
@@ -950,10 +950,7 @@ def test_priceoye_page_without_any_offer_is_not_buyable():
         'schema_status': 'InStock',
     }, slug='old-phone')
 
-    listings = _priceoye_listings(response)
-
-    assert [item['external_id'] for item in listings] == ['old-phone']
-    assert listings[0]['availability'] == 'Out of Stock'
+    assert list(PriceoyeSpider().parse_product(response)) == []
 
 
 def test_priceoye_reviews_are_requested_once_per_product():
@@ -1119,3 +1116,84 @@ def test_daraz_skips_repeated_items_and_stops_a_listing_that_only_repeats():
     # One repeated page may be a hiccup; two in a row ends the listing.
     assert [request.url for request in after_one] == [url.format(4)]
     assert after_two == []
+
+
+def _priceoye_listing_response(url, slugs, *, brands=()):
+    boxes = ''.join(
+        f'<div class="productBox"><a href="/mobiles/test/{slug}"></a>'
+        f'<div class="detail-box"><p>Test {slug}</p><p>Rs 50,000</p></div>'
+        '</div>'
+        for slug in slugs
+    )
+    filter_bar = json.dumps({
+        'filters': {'brands': {'options': {brand: {} for brand in brands}}},
+    })
+    return HtmlResponse(
+        url=url,
+        body=(
+            f'<html><body>{boxes}<script>var x = '
+            f'{{"brand_filter_bar":{filter_bar}}};</script></body></html>'
+        ),
+        encoding='utf-8',
+    )
+
+
+def test_priceoye_walks_every_brand_listing_from_the_first_page():
+    """The paged catalogue misses phones; brand listings reach them."""
+
+    spider = PriceoyeSpider()
+    requests = [
+        request.url
+        for request in spider.parse(_priceoye_listing_response(
+            'https://priceoye.pk/mobiles',
+            ['phone-a'],
+            brands=('samsung', 'infinix', 'Bad Slug!'),
+        ))
+    ]
+
+    assert 'https://priceoye.pk/mobiles/test/phone-a' in requests
+    assert 'https://priceoye.pk/mobiles/samsung' in requests
+    assert 'https://priceoye.pk/mobiles/infinix' in requests
+    assert not any('Bad' in url for url in requests)
+
+    # Only the first catalogue page starts the brand walk.
+    later = [
+        request.url
+        for request in spider.parse(
+            _priceoye_listing_response(
+                'https://priceoye.pk/mobiles?page=2',
+                ['phone-b'],
+                brands=('samsung',),
+            ),
+            page_number=2,
+        )
+    ]
+    assert 'https://priceoye.pk/mobiles/samsung' not in later
+
+
+def test_priceoye_brand_listing_continues_only_while_pages_are_full():
+    spider = PriceoyeSpider()
+
+    short = [
+        request.url
+        for request in spider.parse_brand(
+            _priceoye_listing_response(
+                'https://priceoye.pk/mobiles/samsung',
+                [f'phone-{index}' for index in range(26)],
+            ),
+            brand_slug='samsung',
+        )
+    ]
+    full = [
+        request.url
+        for request in spider.parse_brand(
+            _priceoye_listing_response(
+                'https://priceoye.pk/mobiles/sony',
+                [f'phone-{index}' for index in range(36)],
+            ),
+            brand_slug='sony',
+        )
+    ]
+
+    assert len(short) == 26
+    assert full[-1] == 'https://priceoye.pk/mobiles/sony?page=2'

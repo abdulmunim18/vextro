@@ -53,7 +53,7 @@ class PriceOyePageFetchError(RuntimeError):
 class PriceoyeSpider(scrapy.Spider):
     name = "priceoye_smartphones"
     platform_code = "priceoye"
-    parser_version = "priceoye-v4-variant-offers"
+    parser_version = "priceoye-v5-brand-catalogues"
     allowed_domains = ["priceoye.pk"]
     start_urls = ["https://priceoye.pk/mobiles"]
 
@@ -209,8 +209,101 @@ class PriceoyeSpider(scrapy.Spider):
         )
         return bool(purchase_control) and not explicitly_unavailable
 
+    CATALOG_PAGE_SIZE = 36
+
     def parse(self, response, page_number=1):
         phones = response.css('div.productBox')
+
+        yield from self.product_requests(response, phones)
+
+        if page_number == 1:
+            yield from self.brand_catalog_requests(response)
+
+        next_page_request = self.next_page_request(
+            response,
+            page_number=page_number,
+            page_item_count=len(phones),
+        )
+        if next_page_request is not None:
+            yield next_page_request
+
+    @staticmethod
+    def brand_slugs(response):
+        """Return the brands PriceOye offers as catalogue filters."""
+
+        source = response.text
+        marker = source.find('"brand_filter_bar"')
+        start = source.find('{', marker) if marker != -1 else -1
+
+        if start == -1:
+            return []
+
+        try:
+            filter_bar, _ = json.JSONDecoder().raw_decode(source[start:])
+        except ValueError:
+            return []
+
+        options = (
+            ((filter_bar.get('filters') or {}).get('brands') or {})
+            .get('options')
+        )
+
+        if not isinstance(options, dict):
+            return []
+
+        return [
+            slug
+            for slug in (str(key).strip().lower() for key in options)
+            if re.fullmatch(r'[a-z0-9][a-z0-9-]{0,60}', slug)
+        ]
+
+    def brand_catalog_requests(self, response):
+        """Return one listing request per brand.
+
+        The catalogue's default ranking reshuffles between requests, so
+        walking its pages reaches only about four phones in five; a phone
+        can sit on a page already read by the time the walk gets there.
+        Each brand's own listing is short and stable, so the brands
+        together reach every phone the catalogue holds.
+        """
+
+        crawler = getattr(self, 'crawler', None)
+        if crawler is not None and not crawler.settings.getbool(
+            'PRICEOYE_BRAND_CATALOGS_ENABLED', True,
+        ):
+            return
+
+        for slug in self.brand_slugs(response):
+            yield response.follow(
+                f'/mobiles/{slug}',
+                callback=self.parse_brand,
+                errback=self.page_fetch_error,
+                cb_kwargs={'brand_slug': slug},
+            )
+
+    def parse_brand(self, response, brand_slug, page_number=1):
+        """Read one brand listing, following it while its pages are full."""
+
+        phones = response.css('div.productBox')
+
+        yield from self.product_requests(response, phones)
+
+        if (
+            len(phones) >= self.CATALOG_PAGE_SIZE
+            and page_number < self.max_catalog_pages()
+        ):
+            yield response.follow(
+                f'/mobiles/{brand_slug}?page={page_number + 1}',
+                callback=self.parse_brand,
+                errback=self.page_fetch_error,
+                cb_kwargs={
+                    'brand_slug': brand_slug,
+                    'page_number': page_number + 1,
+                },
+            )
+
+    def product_requests(self, response, phones):
+        """Return a product-page request for every phone on a listing."""
 
         for phone in phones:
             item = SmartphoneItem()
@@ -242,14 +335,6 @@ class PriceoyeSpider(scrapy.Spider):
                     errback=self.page_fetch_error,
                     meta={'item': item},
                 )
-
-        next_page_request = self.next_page_request(
-            response,
-            page_number=page_number,
-            page_item_count=len(phones),
-        )
-        if next_page_request is not None:
-            yield next_page_request
 
     def next_page_request(self, response, *, page_number, page_item_count):
         """Return the request for the next catalog page, if there is one.
@@ -529,12 +614,17 @@ class PriceoyeSpider(scrapy.Spider):
         if variant_items:
             yield from variant_items
             external_listing_id = variant_items[0].get('external_id')
+        elif self.is_reference_only(product_data):
+            # PriceOye keeps a page and a "last updated price" for phones
+            # it no longer sells. Nothing there can be bought, so it is not
+            # an offer; a listing VEXTRO already holds for it is retired
+            # when the crawl ends without having seen it.
+            self.logger.debug(
+                'Skipped PriceOye page without any offer: %s',
+                response.url,
+            )
+            return
         else:
-            if self.is_reference_only(product_data):
-                # PriceOye keeps a page and a "last updated price" for
-                # phones it no longer sells; nothing there can be bought.
-                item['availability'] = 'Out of Stock'
-
             yield item
             external_listing_id = item.get('external_id')
 
