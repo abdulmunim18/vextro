@@ -31,8 +31,10 @@ function MarketplaceListingCard({
         )
       : null;
 
+  // A marketplace that sells the phone itself (PriceOye) names no separate
+  // seller; the marketplace is the seller.
   const sellerName =
-    listing.seller?.name || "Marketplace seller";
+    listing.seller?.name || platformName || "Marketplace seller";
 
   const imageUrl =
     listing.images?.find(
