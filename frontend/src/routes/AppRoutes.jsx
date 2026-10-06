@@ -97,14 +97,11 @@ function AppRoutes() {
           />
         </Route>
 
-        {/* Consumer and Admin routes */}
+        {/* Consumer-only routes */}
         <Route
           element={
             <ProtectedRoute
-              allowedRoles={[
-                "consumer",
-                "admin",
-              ]}
+              allowedRoles={["consumer"]}
             />
           }
         >
@@ -118,14 +115,11 @@ function AppRoutes() {
           />
         </Route>
 
-        {/* SME and Admin routes */}
+        {/* SME-only routes */}
         <Route
           element={
             <ProtectedRoute
-              allowedRoles={[
-                "sme",
-                "admin",
-              ]}
+              allowedRoles={["sme"]}
             />
           }
         >

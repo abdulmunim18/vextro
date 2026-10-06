@@ -14,12 +14,13 @@ from fastapi import (
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
-from app.api.dependencies.roles import sme_or_admin
+from app.api.dependencies.roles import sme_only as sme_or_admin
 from app.core.database import get_db
 from app.models.user import User
 from app.schemas.sme import (
     BusinessProductCreate,
     BusinessProductListResponse,
+    BusinessProductImportResponse,
     BusinessProductResponse,
     BusinessProductUpdate,
     CompetitorWatchlistCreate,
@@ -48,6 +49,9 @@ from app.services.pricing_advisor_service import (
 )
 from app.services.sales_service import SalesService
 from app.services.sme_service import SMEService
+from app.services.business_product_import_service import (
+    BusinessProductImportService,
+)
 from app.services.competitor_report_service import (
     build_competitor_pdf,
     build_competitor_xlsx,
@@ -63,6 +67,9 @@ router = APIRouter(
 sme_service = SMEService()
 sales_service = SalesService()
 pricing_advisor_service = PricingAdvisorService()
+business_product_import_service = BusinessProductImportService(
+    sme_service=sme_service,
+)
 
 
 @router.post(
@@ -185,6 +192,43 @@ def create_business_product_endpoint(
         organization_id=organization_id,
         user_id=current_user.id,
         payload=payload,
+    )
+
+
+@router.post(
+    "/organizations/{organization_id}/products/import",
+    response_model=BusinessProductImportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_business_products_endpoint(
+    organization_id: int = Path(
+        ge=1,
+        description="Organization ID.",
+    ),
+    file: UploadFile = File(
+        description="CSV or XLSX containing SME business products.",
+    ),
+    current_user: User = Depends(
+        sme_or_admin,
+    ),
+    database_session: Session = Depends(
+        get_db,
+    ),
+) -> BusinessProductImportResponse:
+    """Create SME business products from one CSV or Excel upload."""
+
+    try:
+        file_content = await file.read()
+        original_filename = file.filename
+    finally:
+        await file.close()
+
+    return business_product_import_service.import_products(
+        database_session,
+        organization_id=organization_id,
+        user_id=current_user.id,
+        filename=original_filename,
+        file_content=file_content,
     )
 
 

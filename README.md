@@ -192,6 +192,24 @@ http://localhost:8000/api/v1/auth/oauth/facebook/callback
 
 Use the public HTTPS API origin instead of `localhost` in deployment.
 
+### Optional Gemini understanding for the shopping assistant
+
+The assistant works without an external model. To improve informal English and
+Roman-Urdu intent recognition, create a Gemini API key in Google AI Studio and
+add the following to `backend/.env` (or the ignored `backend/gemini.env` local
+override):
+
+```env
+ASSISTANT_AI_ENABLED=true
+GEMINI_API_KEY=your_private_api_key
+GEMINI_MODEL=gemini-3.5-flash-lite
+```
+
+Gemini only extracts intent, filters and conversational references. Prices,
+availability and specifications remain grounded in the PostgreSQL catalog. If
+the provider is unavailable or rate-limited, the local deterministic parser is
+used automatically. Never commit or share `GEMINI_API_KEY`.
+
 ### Notifications (optional, module 6.14)
 
 Notification delivery channels stay switched off until you configure them.

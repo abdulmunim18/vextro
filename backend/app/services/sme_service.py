@@ -137,6 +137,95 @@ class SMEService:
         return normalized_sku or None
 
     @staticmethod
+    def _catalog_terms(value: str) -> set[str]:
+        """Return meaningful tokens used to match an SME item to catalog."""
+
+        ignored = {
+            "mobile",
+            "phone",
+            "smartphone",
+            "new",
+            "official",
+            "pta",
+            "approved",
+        }
+        return {
+            term
+            for term in re.findall(r"[a-z0-9]+", value.casefold())
+            if len(term) >= 2 and term not in ignored
+        }
+
+    def _resolve_catalog_product(
+        self,
+        database_session: Session,
+        product_name: str,
+    ):
+        """Resolve a clear catalog match, otherwise keep the item unlinked.
+
+        SME owners may stock products that do not exist on Daraz or PriceOye.
+        We therefore link only strong, unambiguous name/model matches and do
+        not manufacture a catalog relationship merely because some words
+        overlap.
+        """
+
+        query_terms = self._catalog_terms(product_name)
+        if not query_terms:
+            return None
+
+        normalized_query = " ".join(
+            re.findall(r"[a-z0-9]+", product_name.casefold())
+        )
+        ranked = []
+
+        for product in self.repository.list_active_canonical_products(
+            database_session,
+        ):
+            searchable = f"{product.name} {product.model or ''}"
+            candidate_terms = self._catalog_terms(searchable)
+            overlap = query_terms & candidate_terms
+            if not overlap:
+                continue
+
+            normalized_name = " ".join(
+                re.findall(r"[a-z0-9]+", product.name.casefold())
+            )
+            query_coverage = len(overlap) / len(query_terms)
+            candidate_coverage = len(overlap) / max(
+                len(candidate_terms),
+                1,
+            )
+            distinctive_query = {
+                term
+                for term in query_terms
+                if any(character.isdigit() for character in term)
+            }
+            distinctive_overlap = distinctive_query & overlap
+
+            score = (
+                query_coverage * 70
+                + candidate_coverage * 15
+                + len(distinctive_overlap) * 12
+            )
+            if normalized_query == normalized_name:
+                score += 100
+            elif normalized_query in normalized_name:
+                score += 25
+
+            ranked.append((score, product))
+
+        ranked.sort(key=lambda item: (-item[0], item[1].name))
+        if not ranked or ranked[0][0] < 70:
+            return None
+
+        if (
+            len(ranked) > 1
+            and ranked[0][0] - ranked[1][0] < 8
+        ):
+            return None
+
+        return ranked[0][1]
+
+    @staticmethod
     def _commit_and_refresh(
         database_session: Session,
         entity: Any,
@@ -348,11 +437,13 @@ class SMEService:
                 ),
             )
 
-        if payload.canonical_product_id is not None:
+        canonical_product_id = payload.canonical_product_id
+
+        if canonical_product_id is not None:
             canonical_product = (
                 self.repository.get_active_canonical_product(
                     database_session,
-                    payload.canonical_product_id,
+                    canonical_product_id,
                 )
             )
 
@@ -365,6 +456,16 @@ class SMEService:
                         "is inactive."
                     ),
                 )
+        else:
+            matched_product = self._resolve_catalog_product(
+                database_session,
+                payload.name,
+            )
+            canonical_product_id = (
+                matched_product.id
+                if matched_product is not None
+                else None
+            )
 
         normalized_sku = self._normalize_sku(
             payload.sku,
@@ -392,7 +493,7 @@ class SMEService:
                     database_session,
                     organization_id=organization_id,
                     canonical_product_id=(
-                        payload.canonical_product_id
+                        canonical_product_id
                     ),
                     name=payload.name,
                     sku=normalized_sku,
@@ -591,6 +692,21 @@ class SMEService:
                         ),
                     )
 
+        if (
+            update_data.get("canonical_product_id") is None
+            and "name" in update_data
+            and update_data.get("name")
+        ):
+            matched_product = self._resolve_catalog_product(
+                database_session,
+                str(update_data["name"]),
+            )
+            update_data["canonical_product_id"] = (
+                matched_product.id
+                if matched_product is not None
+                else None
+            )
+
         if "sku" in update_data:
             normalized_sku = self._normalize_sku(
                 update_data["sku"],
@@ -693,6 +809,24 @@ class SMEService:
                 detail=(
                     "The requested marketplace "
                     "listing was not found."
+                ),
+            )
+
+        if (
+            business_product.canonical_product_id is None
+            or not self.repository.listing_belongs_to_canonical_product(
+                database_session,
+                listing_id=marketplace_listing.id,
+                canonical_product_id=(
+                    business_product.canonical_product_id
+                ),
+            )
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "The selected marketplace listing does not belong to "
+                    "this business product."
                 ),
             )
 

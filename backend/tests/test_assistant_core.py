@@ -1,11 +1,16 @@
 """Unit tests for deterministic assistant intent handling."""
 
+from types import SimpleNamespace
+
 from app.services.assistant_service import (
+    AssistantService,
     detect_assistant_intent,
     extract_assistant_entities,
     inherit_recommendation_context,
 )
 from app.repositories.assistant_repository import extract_camera_evidence
+from app.repositories.assistant_repository import STOP_WORDS
+from app.services.assistant_nlu_service import AssistantNLUResult
 
 
 def test_assistant_detects_supported_intents() -> None:
@@ -45,6 +50,41 @@ def test_assistant_understands_contextual_product_questions() -> None:
     }
 
 
+def test_assistant_understands_roman_urdu_buy_or_wait_question() -> None:
+    assert detect_assistant_intent(
+        "kya mujhe ye phone abhi lena chahiye?"
+    ) == "buy_or_wait"
+
+
+def test_explicit_comparison_does_not_add_old_context_product() -> None:
+    oppo = SimpleNamespace(id=1, name="Oppo Mobile A6")
+    samsung = SimpleNamespace(id=2, name="Samsung Mobile A07")
+    old_context_product = SimpleNamespace(id=3, name="Club Mobile Grace")
+
+    class ComparisonRepository:
+        @staticmethod
+        def find_product_entities(_database_session, _message):
+            return [oppo, samsung]
+
+        @staticmethod
+        def get_products_by_ids(_database_session, _product_ids):
+            return [old_context_product]
+
+    service = AssistantService(repository=ComparisonRepository())
+    resolved = service._resolve_products(
+        None,
+        message=(
+            "Oppo Mobile A6, Samsung Mobile A07 in dono ka comparison "
+            "aur price batao"
+        ),
+        intent="comparison",
+        entities={},
+        context={"product_ids": [3]},
+    )
+
+    assert [product.id for product in resolved] == [1, 2]
+
+
 def test_assistant_parses_lakh_price_alert() -> None:
     entities = extract_assistant_entities(
         "1 lakh ke andar mobile recommend karo"
@@ -58,6 +98,42 @@ def test_assistant_parses_typo_tolerant_roman_urdu_budget() -> None:
 
     assert detect_assistant_intent(message) == "recommendation"
     assert extract_assistant_entities(message)["budget_max"] == "80000"
+
+
+def test_budget_before_category_is_still_a_recommendation() -> None:
+    message = "60k k andr mobile dikhao"
+
+    assert detect_assistant_intent(message) == "recommendation"
+    assert extract_assistant_entities(message) == {
+        "budget_max": "60000",
+        "category": "Mobile Phones",
+    }
+
+
+def test_short_specification_follow_ups_extract_requested_field() -> None:
+    assert detect_assistant_intent("ram") == "product_details"
+    assert extract_assistant_entities("ram") == {
+        "requested_fields": ["ram"],
+    }
+
+
+def test_generic_specification_words_are_not_product_name_terms() -> None:
+    assert {"ram", "storage", "specs", "mobile", "phone"} <= STOP_WORDS
+
+
+def test_gemini_result_maps_only_validated_catalog_entities() -> None:
+    result = AssistantNLUResult(
+        intent="recommendation",
+        budget_max=60000,
+        category="Mobile Phones",
+        requested_fields=["ram"],
+    )
+
+    assert result.extracted_entities() == {
+        "budget_max": "60000",
+        "category": "Mobile Phones",
+        "requested_fields": ["ram"],
+    }
 
 
 def test_assistant_uses_the_budget_next_to_under_phrase() -> None:

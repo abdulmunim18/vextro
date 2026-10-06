@@ -257,7 +257,7 @@ function ProductDetailPage() {
   } = useAuth();
 
   const canPersonalizeGuidance =
-    isAuthenticated && hasRole("consumer", "admin");
+    isAuthenticated && hasRole("consumer");
 
   const [product, setProduct] = useState(null);
   const [listingResponse, setListingResponse] =

@@ -3,10 +3,12 @@
 from collections.abc import Generator
 from datetime import datetime, timezone
 from decimal import Decimal
+from io import BytesIO
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -291,6 +293,7 @@ def marketplace_context(
         "canonical_product_id": (
             canonical_product.id
         ),
+        "canonical_product_name": canonical_product.name,
         "variant_id": variant.id,
         "seller_id": seller.id,
         "listing_id": listing.id,
@@ -593,6 +596,139 @@ def test_sme_can_manage_business_products(
     assert updated_product["reorder_level"] == 6
 
 
+def test_sme_can_import_business_products_from_csv_and_excel(
+    client: TestClient,
+    sme_context: dict[str, object],
+    marketplace_context: dict[str, object],
+) -> None:
+    """Bulk import matched and marketplace-unavailable products."""
+
+    headers = sme_context["headers"]
+    assert isinstance(headers, dict)
+    organization_id = int(sme_context["organization_id"])
+    endpoint = f"{ORGANIZATIONS_ENDPOINT}/{organization_id}/products/import"
+    catalog_name = str(marketplace_context["canonical_product_name"])
+    manual_response = client.post(
+        f"{ORGANIZATIONS_ENDPOINT}/{organization_id}/products",
+        headers=headers,
+        json={
+            "name": catalog_name,
+            "sku": "AUTO-MATCH-001",
+            "currency": "PKR",
+            "stock_level": 2,
+            "reorder_level": 1,
+        },
+    )
+    assert manual_response.status_code == 201
+    assert manual_response.json()["canonical_product_id"] == int(
+        marketplace_context["canonical_product_id"]
+    )
+
+    csv_content = "\n".join(
+        [
+            (
+                "name,sku,catalog_product_name,cost_price,"
+                "selling_price,currency,stock_level,reorder_level"
+            ),
+            f"Imported Catalog Phone,CSV-001,{catalog_name},100,125,PKR,5,1",
+        ]
+    )
+    csv_response = client.post(
+        endpoint,
+        headers=headers,
+        files={"file": ("products.csv", csv_content, "text/csv")},
+    )
+    assert csv_response.status_code == 201
+    csv_result = csv_response.json()
+    assert csv_result["created_rows"] == 1
+    assert csv_result["catalog_matched_rows"] == 1
+    assert csv_result["rejected_rows"] == 0
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(
+        [
+            "name",
+            "sku",
+            "catalog_product_name",
+            "cost_price",
+            "selling_price",
+            "currency",
+            "stock_level",
+            "reorder_level",
+        ]
+    )
+    sheet.append(
+        [
+            "Shop Exclusive Product",
+            "XLSX-001",
+            "Not Sold On Any Marketplace 9999",
+            50,
+            75,
+            "PKR",
+            8,
+            2,
+        ]
+    )
+    output = BytesIO()
+    workbook.save(output)
+    workbook.close()
+    excel_response = client.post(
+        endpoint,
+        headers=headers,
+        files={
+            "file": (
+                "products.xlsx",
+                output.getvalue(),
+                (
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+            )
+        },
+    )
+    assert excel_response.status_code == 201
+    excel_result = excel_response.json()
+    assert excel_result["created_rows"] == 1
+    assert excel_result["catalog_matched_rows"] == 0
+    assert excel_result["unmatched_rows"] == 1
+
+
+def test_watchlist_rejects_listing_for_an_unlinked_product(
+    client: TestClient,
+    sme_context: dict[str, object],
+    marketplace_context: dict[str, object],
+) -> None:
+    """Never compare an SME item with an unrelated marketplace listing."""
+
+    headers = sme_context["headers"]
+    assert isinstance(headers, dict)
+    organization_id = int(sme_context["organization_id"])
+    product_response = client.post(
+        f"{ORGANIZATIONS_ENDPOINT}/{organization_id}/products",
+        headers=headers,
+        json={
+            "name": "Private Label Item Without Marketplace Match 9999",
+            "sku": "PRIVATE-9999",
+            "currency": "PKR",
+            "stock_level": 1,
+            "reorder_level": 0,
+        },
+    )
+    assert product_response.status_code == 201
+    assert product_response.json()["canonical_product_id"] is None
+    response = client.post(
+        f"{ORGANIZATIONS_ENDPOINT}/{organization_id}/competitors",
+        headers=headers,
+        json={
+            "business_product_id": product_response.json()["id"],
+            "listing_id": marketplace_context["listing_id"],
+        },
+    )
+    assert response.status_code == 422
+    assert "does not belong" in response.json()["detail"]
+
+
 def test_sme_can_manage_competitor_watchlist(
     client: TestClient,
     sme_context: dict[str, object],
@@ -617,6 +753,11 @@ def test_sme_can_manage_competitor_watchlist(
         products_endpoint,
         headers=headers,
         json={
+            "canonical_product_id": int(
+                marketplace_context[
+                    "canonical_product_id"
+                ],
+            ),
             "name": "Watchlist Test Product",
             "sku": "WATCH-001",
             "cost_price": 100000,

@@ -164,6 +164,43 @@ function AssistantPage() {
                           ))}
                         </div>
                       ) : null}
+                      {message.role === "assistant" && Array.isArray(message.grounded_data?.items) && message.grounded_data.items.length >= 2 ? (
+                        <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                          <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
+                            <thead className="bg-slate-100 text-slate-600">
+                              <tr>
+                                <th className="px-3 py-2 font-black">Product</th>
+                                <th className="px-3 py-2 font-black">Lowest price</th>
+                                <th className="px-3 py-2 font-black">RAM</th>
+                                <th className="px-3 py-2 font-black">Storage</th>
+                                <th className="px-3 py-2 font-black">Rating</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {message.grounded_data.items.map((item) => {
+                                const listings = Array.isArray(item.listings?.items) ? item.listings.items : [];
+                                const variants = Array.isArray(item.product?.variants) ? item.product.variants : [];
+                                const prices = listings.map((listing) => Number(listing.current_price)).filter(Number.isFinite);
+                                const ratings = listings
+                                  .filter((listing) => listing.rating !== null && listing.rating !== undefined)
+                                  .map((listing) => Number(listing.rating))
+                                  .filter(Number.isFinite);
+                                const ram = [...new Set(variants.map((variant) => variant.ram_gb).filter(Boolean))];
+                                const storage = [...new Set(variants.map((variant) => variant.storage_gb).filter(Boolean))];
+                                return (
+                                  <tr key={item.product.id}>
+                                    <td className="px-3 py-3 font-black text-slate-950"><Link className="hover:text-blue-700" to={`/products/${item.product.id}`}>{item.product.name}</Link></td>
+                                    <td className="px-3 py-3">{prices.length ? `PKR ${Math.min(...prices).toLocaleString("en-PK")}` : "Not available"}</td>
+                                    <td className="px-3 py-3">{ram.length ? ram.map((value) => `${value}GB`).join(", ") : "—"}</td>
+                                    <td className="px-3 py-3">{storage.length ? storage.map((value) => `${value}GB`).join(", ") : "—"}</td>
+                                    <td className="px-3 py-3">{ratings.length ? Math.max(...ratings).toFixed(1) : "—"}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : null}
                       {message.role === "assistant" && message.data_timestamp ? <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Data checked {new Date(message.data_timestamp).toLocaleString("en-PK")}</p> : null}
                     </div>
                   </article>

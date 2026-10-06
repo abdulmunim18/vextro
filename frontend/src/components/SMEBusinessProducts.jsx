@@ -8,6 +8,7 @@ import {
 import {
   createBusinessProduct,
   getBusinessProducts,
+  uploadBusinessProducts,
   updateBusinessProduct,
 } from "../services/smeService";
 import { getApiErrorMessage } from "../utils/apiError";
@@ -171,7 +172,7 @@ function ProductFields({
         >
           Catalog product ID
           <span className="ml-1 font-medium text-slate-400">
-            optional
+            optional — name se auto-match hota hai
           </span>
         </label>
 
@@ -186,6 +187,11 @@ function ProductFields({
           onChange={handleChange}
           placeholder="Example: 12"
         />
+        <p className="mt-2 text-xs leading-5 text-slate-500">
+          ID na dein to VEXTRO product name ko catalog se match karega.
+          Match na mile to product phir bhi save hoga, magar marketplace
+          listings unavailable show hongi.
+        </p>
       </div>
 
       <div>
@@ -536,6 +542,10 @@ function SMEBusinessProducts({
   const [formError, setFormError] = useState("");
   const [actionError, setActionError] =
     useState("");
+  const [importFile, setImportFile] = useState(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+  const [importError, setImportError] = useState("");
 
   const loadProducts = useCallback(async () => {
     if (!organizationId) {
@@ -637,6 +647,38 @@ function SMEBusinessProducts({
       );
     } finally {
       setIsCreating(false);
+    }
+  }
+
+  async function handleProductImport(event) {
+    event.preventDefault();
+    if (!importFile) {
+      setImportError("Select a CSV or Excel product file.");
+      return;
+    }
+
+    setIsImporting(true);
+    setImportError("");
+    setImportResult(null);
+
+    try {
+      const result = await uploadBusinessProducts(
+        organizationId,
+        importFile,
+      );
+      setImportResult(result);
+      setImportFile(null);
+      await loadProducts();
+      onProductsChanged?.();
+    } catch (error) {
+      setImportError(
+        getApiErrorMessage(
+          error,
+          "Products could not be imported.",
+        ),
+      );
+    } finally {
+      setIsImporting(false);
     }
   }
 
@@ -835,6 +877,99 @@ function SMEBusinessProducts({
             {isCreating
               ? "Creating product..."
               : "Add business product"}
+          </button>
+        </form>
+      </section>
+
+      <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-7 shadow-sm sm:p-9">
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-600">
+          Bulk product import
+        </p>
+        <h3 className="mt-3 text-2xl font-black text-slate-950">
+          Import products from CSV or Excel
+        </h3>
+        <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
+          Multiple shop products ek saath add karein. VEXTRO
+          <strong className="text-slate-900"> catalog_product_name </strong>
+          ya product name ko catalog se match karke relevant Daraz aur
+          PriceOye listings connect karega.
+        </p>
+
+        <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50 p-5">
+          <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+            Required header
+          </p>
+          <code className="mt-3 block min-w-max text-xs font-bold text-slate-800">
+            name,sku,catalog_product_name,cost_price,selling_price,currency,stock_level,reorder_level
+          </code>
+          <p className="mt-3 text-xs leading-6 text-slate-500">
+            Required columns sirf name aur sku hain. File .csv ya .xlsx,
+            maximum 2 MB aur 5,000 rows ho sakti hai.
+          </p>
+          <a
+            href="/templates/sme-products-template.csv"
+            download
+            className="mt-4 inline-flex rounded-lg bg-slate-900 px-4 py-2 text-xs font-black text-white"
+          >
+            Download CSV template
+          </a>
+        </div>
+
+        <form
+          className="mt-6 rounded-2xl border border-dashed border-emerald-300 bg-emerald-50/50 p-5"
+          onSubmit={handleProductImport}
+        >
+          <label
+            className="block text-sm font-black text-slate-900"
+            htmlFor={`business-product-import-${organizationId}`}
+          >
+            Select product CSV or Excel file
+          </label>
+          <input
+            key={importFile?.name || "empty-product-import"}
+            id={`business-product-import-${organizationId}`}
+            type="file"
+            accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            onChange={(event) => {
+              setImportFile(event.target.files?.[0] || null);
+              setImportError("");
+              setImportResult(null);
+            }}
+            className="mt-3 block w-full rounded-xl border border-slate-300 bg-white p-3 text-sm font-semibold text-slate-700 file:mr-4 file:rounded-lg file:border-0 file:bg-emerald-600 file:px-4 file:py-2 file:text-xs file:font-black file:text-white"
+          />
+
+          {importError ? (
+            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700" role="alert">
+              {importError}
+            </div>
+          ) : null}
+
+          {importResult ? (
+            <div className="mt-4 rounded-xl border border-emerald-200 bg-white px-4 py-4 text-sm font-semibold text-slate-700" role="status">
+              <p className="font-black text-emerald-700">
+                {importResult.created_rows} products created; {importResult.rejected_rows} rejected.
+              </p>
+              <p className="mt-2">
+                {importResult.catalog_matched_rows} catalog matched; {importResult.unmatched_rows} marketplace par unavailable.
+              </p>
+              {importResult.errors?.length ? (
+                <ul className="mt-3 list-disc space-y-1 pl-5 text-red-700">
+                  {importResult.errors.slice(0, 10).map((item) => (
+                    <li key={`${item.row_number}-${item.sku || "row"}`}>
+                      Row {item.row_number}: {item.message}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+
+          <button
+            type="submit"
+            disabled={!importFile || isImporting}
+            className="mt-5 inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-black text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isImporting ? "Importing products..." : "Import business products"}
           </button>
         </form>
       </section>

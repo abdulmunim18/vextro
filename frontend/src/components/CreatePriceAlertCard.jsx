@@ -219,7 +219,7 @@ function CreatePriceAlertCard({
     );
   }
 
-  if (!hasRole("consumer", "admin")) {
+  if (!hasRole("consumer")) {
     return (
       <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-5">
         <span className="text-[10px] font-black uppercase tracking-[0.14em] text-amber-700">

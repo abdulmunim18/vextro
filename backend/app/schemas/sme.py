@@ -323,6 +323,31 @@ class BusinessProductListResponse(BaseModel):
     )
 
 
+class BusinessProductImportError(BaseModel):
+    """One rejected CSV or Excel product row."""
+
+    row_number: int = Field(ge=2)
+    sku: str | None = None
+    message: str
+
+
+class BusinessProductImportResponse(BaseModel):
+    """Result of an SME bulk product import."""
+
+    filename: str
+    total_rows: int = Field(ge=0)
+    created_rows: int = Field(ge=0)
+    rejected_rows: int = Field(ge=0)
+    catalog_matched_rows: int = Field(ge=0)
+    unmatched_rows: int = Field(ge=0)
+    products: list[BusinessProductResponse] = Field(
+        default_factory=list,
+    )
+    errors: list[BusinessProductImportError] = Field(
+        default_factory=list,
+    )
+
+
 class CompetitorWatchlistCreate(SMEInputModel):
     """Request for monitoring a marketplace competitor listing."""
 

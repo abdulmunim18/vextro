@@ -50,16 +50,10 @@ function DashboardPage() {
     hasRole,
   } = useAuth();
 
-  const canUsePriceAlerts = hasRole(
-    "consumer",
-    "admin",
-  );
+  const canUsePriceAlerts = hasRole("consumer");
 const isAdmin = hasRole("admin");
 
-const canUseSmeWorkspace = hasRole(
-  "sme",
-  "admin",
-);
+const canUseSmeWorkspace = hasRole("sme");
 
   const [alerts, setAlerts] = useState([]);
   const [productNames, setProductNames] = useState(
@@ -443,7 +437,9 @@ const canUseSmeWorkspace = hasRole(
                 <h2 className="mt-2 text-2xl font-black tracking-tight text-vextro-ink">
                   {canUsePriceAlerts
                     ? "Recent price alerts"
-                    : "SME workspace status"}
+                    : isAdmin
+                      ? "Administrator workspace status"
+                      : "SME workspace status"}
                 </h2>
               </div>
 
@@ -558,7 +554,25 @@ const canUseSmeWorkspace = hasRole(
               )
             ) : (
               <div className="mt-6 grid gap-4">
-                {[
+                {(isAdmin
+                  ? [
+                      {
+                        title: "User and role management",
+                        description: "Manage accounts and operational access from the Admin panel.",
+                        status: "Available",
+                      },
+                      {
+                        title: "Catalog operations",
+                        description: "Review products, listings and pending marketplace matches.",
+                        status: "Available",
+                      },
+                      {
+                        title: "Scraper monitoring",
+                        description: "Review marketplace ingestion and system health.",
+                        status: "Available",
+                      },
+                    ]
+                  : [
                   {
                     title:
                       "Marketplace Product Discovery",
@@ -580,7 +594,7 @@ const canUseSmeWorkspace = hasRole(
                       "Forecasting will become available after sales-import integration.",
                     status: "Planned",
                   },
-                ].map((item) => (
+                ]).map((item) => (
                   <article
                     className="flex flex-col justify-between gap-4 rounded-2xl border border-vextro-border bg-vextro-canvas p-5 sm:flex-row sm:items-center"
                     key={item.title}
