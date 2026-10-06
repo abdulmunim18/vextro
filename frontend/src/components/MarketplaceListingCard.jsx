@@ -7,6 +7,7 @@ import { getMarketplaceDestination } from "../utils/marketplaceDestination";
 
 function MarketplaceListingCard({
   listing,
+  productName,
   platformName,
   isLowest,
 }) {
@@ -137,8 +138,14 @@ function MarketplaceListingCard({
             ) : null}
           </div>
 
-          <h3 className="mt-4 line-clamp-2 text-lg font-black leading-6 text-vextro-ink">
-            {listing.title}
+          {/* The phone's own name. A seller's title repeats the memory and
+              selling points that are shown as separate details below; it
+              stays available on hover for anyone who wants the original. */}
+          <h3
+            className="mt-4 line-clamp-2 text-lg font-black leading-6 text-vextro-ink"
+            title={listing.title}
+          >
+            {productName || listing.title}
           </h3>
 
           {/* Which option this price is for. Two offers of one phone differ

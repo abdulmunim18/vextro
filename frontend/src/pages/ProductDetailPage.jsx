@@ -1005,6 +1005,7 @@ function ProductDetailPage() {
                   <MarketplaceListingCard
                     key={listing.id}
                     listing={listing}
+                    productName={product.name}
                     platformName={
                       platformNames.get(
                         listing.platform_id,
