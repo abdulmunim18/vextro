@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import re
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.canonical_product import CanonicalProduct
@@ -45,6 +46,8 @@ from app.services.product_matching_service import (
 )
 from app.services.smartphone_normalization import (
     clean_marketplace_title,
+    clean_model_name,
+    detect_title_color,
     extract_memory_capacities,
     is_accessory_title,
     infer_brand_name,
@@ -99,7 +102,19 @@ class ProductResolutionService:
         """Return a usable variant for one scraped marketplace product."""
 
         try:
+            if payload.color is None:
+                # A seller's colour lives in the title or nowhere.
+                stated = detect_title_color(
+                    clean_marketplace_title(
+                        payload.title,
+                        payload.seller_name,
+                    )
+                )
+                if stated is not None:
+                    payload = payload.model_copy(update={"color": stated})
+
             response = self._resolve(database_session, payload)
+            self._adopt_marketplace_name(database_session, payload, response)
             database_session.commit()
         except Exception:
             database_session.rollback()
@@ -163,6 +178,52 @@ class ProductResolutionService:
 
         return created
 
+    def _adopt_marketplace_name(
+        self,
+        database_session: Session,
+        payload: ProductResolveRequest,
+        response: ProductResolveResponse,
+    ) -> None:
+        """Name a phone the way the marketplace that catalogues it does.
+
+        A product first seen through a seller's listing carries whatever
+        could be salvaged from that seller's title. When a source that
+        publishes exact model names resolves to the same phone, its name
+        is the better one.
+        """
+
+        if not (
+            payload.exact_model_title
+            and response.matched
+            and response.canonical_product_id
+        ):
+            return
+
+        product = database_session.get(
+            CanonicalProduct,
+            response.canonical_product_id,
+        )
+
+        if product is None:
+            return
+
+        brand_name = response.brand_name
+        name = clean_model_name(payload.title, brand_name)
+
+        if (
+            not name
+            or name == product.name
+            or cross_marketplace_product_key(name, brand_name)
+            != cross_marketplace_product_key(product.name, brand_name)
+        ):
+            return
+
+        product.name = name[:255]
+        product.model = name[:120]
+        database_session.flush()
+        response.product_name = product.name
+        response.model = product.model
+
     def _place_on_stated_colour(
         self,
         database_session: Session,
@@ -186,9 +247,14 @@ class ProductResolutionService:
         color = normalize_color(payload.color)
 
         if color is not None:
-            if match.color:
-                # Both state a colour; the matcher already compared them.
+            if _compact(match.color) == _compact(color) or (
+                match.color
+                and _compact(match.color) in _compact(payload.title)
+            ):
+                # The same colour, or one the title spells out in full.
                 return None
+            # "Blue" is close enough to "Ocean Blue" for the matcher to
+            # recognise the phone, but it is not that variant's name.
         else:
             if not match.color:
                 return None
@@ -305,9 +371,10 @@ class ProductResolutionService:
             return None
 
         brand_name = infer_brand_name(title, payload.brand)
-        display_name = (
+        display_name = clean_model_name(
             clean_product_display_name(payload.model or title)
-            or clean_product_display_name(title)
+            or clean_product_display_name(title),
+            brand_name,
         )
 
         if (
@@ -540,12 +607,31 @@ class ProductResolutionService:
         brand_id: int,
         brand_name: str | None,
     ) -> CanonicalProduct | None:
-        """Return the same phone already registered from another marketplace."""
+        """Return the same phone already registered under another title."""
 
         identity = cross_marketplace_product_key(title, brand_name)
 
         if not identity:
             return None
+
+        # Every product of the brand is compared, with or without a listing:
+        # a crawl registers a phone before its listing is delivered, and a
+        # second title for it arriving in between used to register it twice.
+        same_brand = database_session.scalars(
+            select(CanonicalProduct)
+            .where(
+                CanonicalProduct.is_active.is_(True),
+                CanonicalProduct.brand_id == brand_id,
+            )
+            .order_by(CanonicalProduct.id.asc())
+        )
+
+        for candidate in same_brand:
+            if identity in {
+                cross_marketplace_product_key(candidate.name, brand_name),
+                cross_marketplace_product_key(candidate.model, brand_name),
+            }:
+                return candidate
 
         # ``find_cross_platform_canonical`` only inspects products that
         # already carry a listing from a different platform, which is exactly

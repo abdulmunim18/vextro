@@ -29,6 +29,10 @@ from app.models.raw_review import RawReview
 from app.repositories.product_matching_repository import (
     ProductMatchCandidate,
 )
+from app.services.smartphone_normalization import (
+    clean_model_name,
+    detect_title_color,
+)
 from app.services.product_matching_service import (
     _color_similarity,
     _model_identity_conflict,
@@ -1720,3 +1724,131 @@ def test_a_5g_phone_and_its_4g_namesake_stay_separate(
         plain["canonical_product_id"],
         fifth["canonical_product_id"],
     }
+
+
+# --------------------------------------------------------------------------
+# Clean catalog names
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("title", "brand", "expected"),
+    [
+        ("NOTE X 6+128 BLACK SPARX", "Sparx", "Sparx Note X"),
+        ("Samsung Galaxy A17 6+128 Blue", "Samsung", "Samsung Galaxy A17"),
+        ("Realme Note 60 4/128, 32MP camera, 90Hz", "Realme", "Realme Note 60"),
+        ("SEGO iPro Smartphone", "Sego", "Sego iPro"),
+        ("Tecno Mobile Spark 40", "Tecno", "Tecno Spark 40"),
+        (
+            "Infinix Hot 60 Pro || 8GB+8GB Ram 128GB Rom || 5160mAh Battery",
+            "Infinix",
+            "Infinix Hot 60 Pro",
+        ),
+        (
+            "Samsung Galaxy S25 Ultra (12GB-256GB)",
+            "Samsung",
+            "Samsung Galaxy S25 Ultra",
+        ),
+        ("Nothing Phone Nothing 4a Pro 12+256", "Nothing", "Nothing Phone 4a Pro"),
+        ("iPhone 15 Pro", "Apple", "Apple iPhone 15 Pro"),
+        ("Apple iPhone 17 Pro Max", "Apple", "Apple iPhone 17 Pro Max"),
+    ],
+)
+def test_catalog_names_carry_the_phone_and_nothing_else(
+    title: str,
+    brand: str,
+    expected: str,
+) -> None:
+    """Memory, colour and selling points belong to a variant, not the name."""
+
+    assert clean_model_name(title, brand) == expected
+
+
+@pytest.mark.parametrize(
+    ("title", "colour"),
+    [
+        ("Samsung Galaxy A17 6+128 Blue", "Blue"),
+        ("Vivo Y05 Midnight Black 4/64", "Midnight Black"),
+        ("Infinix Hot 60 Pro 8GB RAM 128GB ROM", None),
+        ("iPhone 16 Black/Blue 128GB", None),
+    ],
+)
+def test_a_colour_is_read_from_a_seller_title_only_when_it_names_one(
+    title: str,
+    colour: str | None,
+) -> None:
+    assert detect_title_color(title) == colour
+
+
+def test_one_phone_under_two_seller_titles_is_one_product(
+    client: TestClient,
+    discovered_products: list[int],
+) -> None:
+    """Registered before any listing is stored, as within one crawl batch."""
+
+    token = uuid4().hex[:6]
+
+    first = discover(
+        client,
+        discovered_products,
+        platform_code="daraz",
+        external_id=f"TWIN-{token}-A",
+        title=f"Samsung Galaxy Tw{token} 5G 8GB 256GB",
+        brand="Samsung",
+        specifications={"ram": "8GB", "storage_capacity": "256GB"},
+    )
+    second = discover(
+        client,
+        discovered_products,
+        platform_code="daraz",
+        external_id=f"TWIN-{token}-B",
+        title=f"Samsung Mobile Tw{token} 12GB 512GB Smartphone",
+        brand="Samsung",
+        specifications={"ram": "12GB", "storage_capacity": "512GB"},
+    )
+
+    assert first["canonical_product_id"] == second["canonical_product_id"]
+    assert first["product_variant_id"] != second["product_variant_id"]
+
+
+def test_the_marketplace_model_name_replaces_a_seller_derived_one(
+    client: TestClient,
+    database_session: Session,
+    discovered_products: list[int],
+) -> None:
+    """PriceOye's name for a phone outranks what a seller title left."""
+
+    token = uuid4().hex[:6]
+
+    seller = discover(
+        client,
+        discovered_products,
+        platform_code="daraz",
+        external_id=f"NAME-{token}-SELLER",
+        title=f"Samsung Mobile Nm{token} 8GB 256GB",
+        brand="Samsung",
+        specifications={"ram": "8GB", "storage_capacity": "256GB"},
+    )
+    assert seller["product_name"] == f"Samsung Nm{token}"
+
+    priceoye = discover(
+        client,
+        discovered_products,
+        platform_code="priceoye",
+        external_id=f"NAME-{token}-PO",
+        title=f"Samsung Galaxy Nm{token}",
+        brand="Samsung",
+        color="Black",
+        specifications={"ram": "8GB", "storage_capacity": "256GB"},
+        exact_model_title=True,
+    )
+
+    assert priceoye["canonical_product_id"] == seller["canonical_product_id"]
+
+    product = database_session.get(
+        CanonicalProduct,
+        int(seller["canonical_product_id"]),
+    )
+    database_session.refresh(product)
+
+    assert product.name == f"Samsung Galaxy Nm{token}"

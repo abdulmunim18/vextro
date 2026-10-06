@@ -114,6 +114,14 @@ def normalized_product_identity(title: str | None) -> str:
     )
     normalized = re.sub(r"\b\d{1,4}\s*(?:gb|tb)\b", " ", normalized)
     normalized = re.sub(r"\b(?:4g|5g)\b", " ", normalized)
+    # "Tecno Mobile Spark 40", "SEGO Note 80 Smartphone" and "Nothing Phone
+    # 4a" name the same phones as "Tecno Spark 40", "Sego Note 80" and
+    # "Nothing 4a"; the noun is not part of the model.
+    normalized = re.sub(
+        r"\b(?:mobiles?|smart\s*phones?|cell\s*phones?|phones?|handsets?)\b",
+        " ",
+        normalized,
+    )
     normalized = re.sub(
         r"\b(?:official|approved|new|sealed|box packed)\b",
         " ",

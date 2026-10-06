@@ -898,3 +898,136 @@ def is_accessory_product_name(name: str | None) -> bool:
         return False
 
     return bool(ACCESSORY_NAME_PATTERN.search(text))
+
+
+# --------------------------------------------------------------------------
+# Catalog display names and colours read out of seller titles
+# --------------------------------------------------------------------------
+
+# Where a seller title stops naming the phone and starts describing it.
+_NAME_BOUNDARY = re.compile(
+    r"(?:\b\d{1,4}\s*(?:gb|tb|mah|mp|hz|w)\b"
+    r"|\b\d{1,2}\s*[+/]\s*\d{1,4}\b"
+    r"|[,|(\[*\u2013\u2014]"
+    r"|\s-\s"
+    r"|\b(?:and get|with free|free gift|pta approved|official warranty)\b)",
+    re.I,
+)
+
+_GENERIC_PRODUCT_NOUNS = re.compile(
+    r"\b(?:mobiles?|smart\s*phones?|cell\s*phones?|handsets?)\b",
+    re.I,
+)
+
+_LEADING_PROMOTION = re.compile(
+    r"^\s*(?:buy now|new arrival|hot sale|flash sale|special offer)\b[\s:!-]*",
+    re.I,
+)
+
+BASE_HUES = frozenset({
+    "black", "white", "blue", "red", "green", "gold", "silver", "grey",
+    "gray", "pink", "purple", "yellow", "orange", "brown", "violet", "cyan",
+    "beige", "bronze", "copper", "maroon", "teal", "turquoise", "indigo",
+    "magenta", "lavender", "lilac", "golden",
+})
+
+HUE_MODIFIERS = frozenset({
+    "dark", "light", "deep", "sky", "midnight", "navy", "lime", "mint",
+    "rose", "olive", "ocean", "aqua", "space", "jet", "matte", "pearl",
+    "royal", "ice", "forest", "sunset", "starry", "titanium", "awesome",
+    "phantom", "mystic", "cosmic", "glacier", "aurora", "racing",
+})
+
+_TITLE_COLOUR = re.compile(
+    r"\b(?:(" + "|".join(sorted(HUE_MODIFIERS)) + r")\s+)?("
+    + "|".join(sorted(BASE_HUES)) + r")\b",
+    re.I,
+)
+
+
+def detect_title_color(title: str | None) -> str | None:
+    """Return the colour a seller wrote into a title, if exactly one.
+
+    A Daraz listing has no colour field, but sellers often end the title
+    with it ("Samsung Galaxy A17 6+128 Blue"). A title naming two hues is a
+    multi-colour listing and names none of them.
+    """
+
+    found = {
+        " ".join(part for part in match.groups() if part).title()
+        for match in _TITLE_COLOUR.finditer(str(title or ""))
+    }
+    hues = {name.split()[-1].lower() for name in found}
+
+    if len(hues) != 1:
+        return None
+
+    # "Midnight Black" over plain "Black" when a title states both forms.
+    return max(found, key=len)
+
+
+def clean_model_name(title: str | None, brand_name: str | None = None) -> str:
+    """Return the name a phone should carry in the catalog.
+
+    The catalog names the phone; memory, colour, the seller's selling
+    points and filler nouns belong to a variant or to nobody. "NOTE X 6+128
+    BLACK SPARX" is the "Sparx Note X", and "Tecno Mobile Spark 40" is the
+    "Tecno Spark 40". Returns the input, tidied, when nothing safer can be
+    derived from it.
+    """
+
+    original = " ".join(str(title or "").split())
+
+    if not original:
+        return original
+
+    name = _LEADING_PROMOTION.sub("", original)
+    boundary = _NAME_BOUNDARY.search(name)
+
+    if boundary is not None and boundary.start() >= 3:
+        name = name[:boundary.start()]
+
+    name = _GENERIC_PRODUCT_NOUNS.sub(" ", name)
+    tokens = [token.strip(" -|=,;:.") for token in name.split()]
+    tokens = [token for token in tokens if token]
+
+    # A trailing colour describes one variant, not the phone.
+    while len(tokens) > 2 and tokens[-1].lower() in (
+        BASE_HUES | HUE_MODIFIERS
+    ):
+        tokens.pop()
+
+    brand = " ".join(str(brand_name or "").split())
+    brand_tokens = [part.lower() for part in brand.split()]
+
+    if brand_tokens:
+        lowered = [token.lower() for token in tokens]
+        width = len(brand_tokens)
+        # Keep the brand once, at the front, in the catalog's spelling.
+        kept: list[str] = []
+        index = 0
+        while index < len(tokens):
+            if lowered[index:index + width] == brand_tokens:
+                index += width
+                continue
+            kept.append(tokens[index])
+            index += 1
+        tokens = brand.split() + kept
+
+    def tidy(token: str) -> str:
+        if not token.isalpha() or len(token) < 2:
+            return token
+        if token.isupper() and len(token) > 3:
+            return token.capitalize()
+        if token.islower():
+            return token.capitalize()
+        return token
+
+    protected = len(brand_tokens)
+    tokens = tokens[:protected] + [tidy(token) for token in tokens[protected:]]
+    cleaned = " ".join(tokens)
+
+    if len(tokens) < 2 or not re.search(r"[a-z]", cleaned, re.I):
+        return original
+
+    return cleaned
