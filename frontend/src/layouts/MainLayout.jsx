@@ -100,7 +100,7 @@ function MainLayout() {
 
   if (
     isAuthenticated &&
-    hasRole("consumer", "admin")
+    hasRole("consumer")
   ) {
     navigationItems.push({
       label: "Price Alerts",
@@ -113,7 +113,7 @@ function MainLayout() {
   }
 if (
   isAuthenticated &&
-  hasRole("sme", "admin")
+  hasRole("sme")
 ) {
   navigationItems.push({
     label: "SME Workspace",
@@ -129,6 +129,21 @@ if (
       path: "/admin",
     });
   }
+
+  const adminHiddenFooterPaths = new Set([
+    "/alerts",
+    "/assistant",
+    "/price-alerts",
+    "/for-businesses",
+  ]);
+  const visibleFooterGroups = footerGroups.map((group) => ({
+    ...group,
+    links: hasRole("admin")
+      ? group.links.filter(
+          (link) => !adminHiddenFooterPaths.has(link.to),
+        )
+      : group.links,
+  }));
 
   const userInitial =
     user?.full_name?.trim().charAt(0).toUpperCase() || "U";
@@ -458,7 +473,7 @@ if (
               </p>
             </div>
 
-            {footerGroups.map((group) => (
+            {visibleFooterGroups.map((group) => (
               <nav
                 key={group.title}
                 aria-label={`${group.title.toLowerCase()} footer links`}

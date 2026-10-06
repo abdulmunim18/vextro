@@ -64,6 +64,27 @@ export async function createBusinessProduct(
   return response.data;
 }
 
+export async function uploadBusinessProducts(
+  organizationId,
+  file,
+) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await apiClient.post(
+    `/sme/organizations/${organizationId}/products/import`,
+    formData,
+    {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+      timeout: 30000,
+    },
+  );
+
+  return response.data;
+}
+
 export async function getBusinessProduct(
   organizationId,
   productId,

@@ -78,15 +78,9 @@ function ToggleRow({
 function NotificationSettings() {
   const { hasRole } = useAuth();
 
-  const showCompetitorSettings = hasRole(
-    "sme",
-    "admin",
-  );
+  const showCompetitorSettings = hasRole("sme");
 
-  const showPriceAlertSettings = hasRole(
-    "consumer",
-    "admin",
-  );
+  const showPriceAlertSettings = hasRole("consumer");
 
   const [preferences, setPreferences] = useState(null);
   const [isLoading, setIsLoading] = useState(true);

@@ -1,0 +1,3 @@
+name,sku,catalog_product_name,cost_price,selling_price,currency,stock_level,reorder_level
+Samsung Galaxy A55 5G,SAM-A55-001,Samsung Galaxy A55 5G,105000,115000,PKR,10,3
+Shop Exclusive Accessory,ACC-001,,1500,2200,PKR,25,5

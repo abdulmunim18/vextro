@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     oauth_login_code_expire_minutes: int = 2
     ingestion_api_key: str | None = None
 
+    # Optional Gemini-powered natural-language understanding for the shopping
+    # assistant. Catalog facts and prices always continue to come from VEXTRO's
+    # database; the model only classifies the request and extracts filters.
+    assistant_ai_enabled: bool = False
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-3.5-flash-lite"
+
     # Scraper scheduler. The scheduler is a dedicated process so a crawl can
     # never block request handling; set ``scraper_autostart_with_api`` to
     # have the API launch it on startup during local development.
@@ -128,7 +135,7 @@ class Settings(BaseSettings):
             return ZoneInfo("UTC")
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "gemini.env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

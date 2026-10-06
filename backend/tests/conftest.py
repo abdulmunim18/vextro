@@ -57,7 +57,9 @@ app.dependency_overrides[get_db] = override_get_db
 
 @pytest.fixture(autouse=True)
 def stub_auth_email_delivery(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep auth tests deterministic without contacting an SMTP server."""
+    """Keep tests deterministic without contacting external services."""
+
+    monkeypatch.setattr(settings, "assistant_ai_enabled", False)
 
     monkeypatch.setattr(
         "app.services.auth_service.generate_email_otp",
