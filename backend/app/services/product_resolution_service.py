@@ -63,6 +63,12 @@ AUTO_ATTACH_TIERS = frozenset({TIER_EXACT, TIER_HIGH})
 MIN_MODEL_NAME_LENGTH = 3
 
 
+def _compact(value: str | None) -> str:
+    """Lower-case a value and drop everything but letters and digits."""
+
+    return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
+
+
 def _slugify(value: str, *, fallback: str) -> str:
     """Return a compact URL-safe slug."""
 
@@ -162,25 +168,38 @@ class ProductResolutionService:
         payload: ProductResolveRequest,
         match,
     ) -> ProductResolveResponse | None:
-        """Give a listing that states its colour a variant of that colour.
+        """File a listing under the colour it states, or under none.
 
-        The matcher lets a variant with no colour stand in for any colour,
-        which is right for a seller title that never mentions one. A
-        marketplace that states the colour is different: every colour of a
-        phone landed on the one colourless variant an earlier listing had
-        created. The phone is the one the matcher chose; only the variant
-        is made exact. Returns ``None`` when there is nothing to refine.
+        The matcher treats a missing colour as agreeing with anything. That
+        filed every colour PriceOye states under the one colourless variant
+        a seller listing had created, and filed seller listings that name
+        no colour under whichever colour happened to rank first, so the
+        product page showed them as that colour. The phone is the one the
+        matcher chose; only the variant is made exact. Returns ``None``
+        when the matched variant already agrees with the listing.
         """
+
+        if match.canonical_product_id is None or not payload.allow_create:
+            return None
 
         color = normalize_color(payload.color)
 
-        if (
-            color is None
-            or match.color
-            or match.canonical_product_id is None
-            or not payload.allow_create
-        ):
-            return None
+        if color is not None:
+            if match.color:
+                # Both state a colour; the matcher already compared them.
+                return None
+        else:
+            if not match.color:
+                return None
+
+            title = clean_marketplace_title(
+                payload.title,
+                payload.seller_name,
+            )
+
+            if _compact(match.color) in _compact(title):
+                # The seller wrote the colour into the title.
+                return None
 
         variant = self.repository.get_variant(
             database_session,
@@ -210,7 +229,7 @@ class ProductResolutionService:
             )
 
         logger.info(
-            "Listing placed on its stated colour: platform=%s "
+            "Listing placed on its own colour: platform=%s "
             "external_id=%s product_id=%s variant_id=%s "
             "variant_created=%s color=%s",
             payload.platform_code,
@@ -228,6 +247,9 @@ class ProductResolutionService:
             reason=(
                 "Matched the catalog product and placed the listing on "
                 "the colour the marketplace states."
+                if color is not None
+                else "Matched the catalog product; the listing names no "
+                "colour, so it was not filed under one."
             ),
         )
 

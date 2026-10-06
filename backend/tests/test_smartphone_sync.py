@@ -1602,3 +1602,72 @@ def test_a_stated_colour_is_not_filed_under_a_colourless_variant(
         "Midnight Black": (8, 256),
         "Ocean Blue": (8, 256),
     }
+
+
+def test_a_listing_naming_no_colour_is_not_filed_under_one(
+    client: TestClient,
+    database_session: Session,
+    discovered_products: list[int],
+) -> None:
+    """A seller title without a colour must not be shown as Fizz Blue."""
+
+    token = uuid4().hex[:8]
+    base = dict(
+        brand="Infinix",
+        specifications={"ram": "8GB", "storage_capacity": "256GB"},
+    )
+
+    blue = discover(
+        client,
+        discovered_products,
+        platform_code="priceoye",
+        external_id=f"NOHUE-{token}-BLUE",
+        title=f"Infinix Plain{token}",
+        color="Fizz Blue",
+        **base,
+    )
+    seller = discover(
+        client,
+        discovered_products,
+        platform_code="daraz",
+        external_id=f"NOHUE-{token}-SELLER",
+        title=f"Infinix Plain{token} 8GB 256GB PTA Approved",
+        **base,
+    )
+    named = discover(
+        client,
+        discovered_products,
+        platform_code="daraz",
+        external_id=f"NOHUE-{token}-NAMED",
+        title=f"Infinix Plain{token} 8GB 256GB Fizz Blue",
+        **base,
+    )
+
+    assert seller["canonical_product_id"] == blue["canonical_product_id"]
+    assert seller["product_variant_id"] != blue["product_variant_id"]
+    assert seller["color"] is None
+
+    # A title that does name the colour joins that colour's variant.
+    assert named["product_variant_id"] == blue["product_variant_id"]
+
+
+def test_listings_report_the_configuration_they_are_for(
+    client: TestClient,
+    sync_context: dict[str, object],
+) -> None:
+    """The product page needs each offer's colour, RAM and storage."""
+
+    ingest(
+        client,
+        listing_payload(
+            sync_context,
+            current_price=150000,
+            captured_at=FIRST_CAPTURE,
+        ),
+    )
+
+    listing = read_listings(client, int(sync_context["product_id"]))[0]
+
+    assert listing["product_variant"]["color"] == "Black"
+    assert listing["product_variant"]["ram_gb"] == 8
+    assert listing["product_variant"]["storage_gb"] == 256
