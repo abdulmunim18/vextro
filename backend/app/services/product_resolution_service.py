@@ -105,6 +105,16 @@ class ProductResolutionService:
         database_session: Session,
         payload: ProductResolveRequest,
     ) -> ProductResolveResponse:
+        # A listing VEXTRO already stores keeps its place: its mapping is
+        # settled, and moving it would break its price history.
+        settled = self.matching_service.resolve_exact_identity(
+            database_session,
+            payload,
+        )
+
+        if settled is not None:
+            return ProductResolveResponse(**settled.model_dump())
+
         match = self.matching_service.match_product(
             database_session,
             payload,
@@ -114,6 +124,15 @@ class ProductResolutionService:
             match.match_tier in AUTO_ATTACH_TIERS
             or match.confidence >= 100
         ):
+            coloured = self._place_on_stated_colour(
+                database_session,
+                payload,
+                match,
+            )
+
+            if coloured is not None:
+                return coloured
+
             logger.info(
                 "Canonical product matched: platform=%s external_id=%s "
                 "variant_id=%s tier=%s confidence=%s",
@@ -136,6 +155,86 @@ class ProductResolutionService:
             return self._as_resolve_response(match)
 
         return created
+
+    def _place_on_stated_colour(
+        self,
+        database_session: Session,
+        payload: ProductResolveRequest,
+        match,
+    ) -> ProductResolveResponse | None:
+        """Give a listing that states its colour a variant of that colour.
+
+        The matcher lets a variant with no colour stand in for any colour,
+        which is right for a seller title that never mentions one. A
+        marketplace that states the colour is different: every colour of a
+        phone landed on the one colourless variant an earlier listing had
+        created. The phone is the one the matcher chose; only the variant
+        is made exact. Returns ``None`` when there is nothing to refine.
+        """
+
+        color = normalize_color(payload.color)
+
+        if (
+            color is None
+            or match.color
+            or match.canonical_product_id is None
+            or not payload.allow_create
+        ):
+            return None
+
+        variant = self.repository.get_variant(
+            database_session,
+            canonical_product_id=match.canonical_product_id,
+            ram_gb=match.ram_gb,
+            storage_gb=match.storage_gb,
+            color=color,
+        )
+        variant_created = variant is None
+
+        if variant is None:
+            variant = self.repository.create_variant(
+                database_session,
+                canonical_product_id=match.canonical_product_id,
+                ram_gb=match.ram_gb,
+                storage_gb=match.storage_gb,
+                color=color,
+                sku=None,
+                variant_attributes={
+                    key: value
+                    for key, value in (
+                        ("source_platform", payload.platform_code),
+                        ("source_external_id", payload.external_id),
+                    )
+                    if value
+                },
+            )
+
+        logger.info(
+            "Listing placed on its stated colour: platform=%s "
+            "external_id=%s product_id=%s variant_id=%s "
+            "variant_created=%s color=%s",
+            payload.platform_code,
+            payload.external_id,
+            match.canonical_product_id,
+            variant.id,
+            variant_created,
+            color,
+        )
+
+        response = match.model_dump()
+        response.update(
+            product_variant_id=variant.id,
+            color=color,
+            reason=(
+                "Matched the catalog product and placed the listing on "
+                "the colour the marketplace states."
+            ),
+        )
+
+        return ProductResolveResponse(
+            **response,
+            variant_created=variant_created,
+        )
 
     @staticmethod
     def _as_resolve_response(

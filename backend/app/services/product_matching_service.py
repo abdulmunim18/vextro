@@ -418,7 +418,7 @@ def _model_numbers_conflict(
 _MODEL_QUALIFIERS = frozenset({
     "pro", "max", "plus", "ultra", "air", "mini", "lite", "neo", "fe",
     "se", "xl", "edge", "prime", "turbo", "play", "zoom", "classic",
-    "power", "music", "eco", "fold", "flip", "note", "go",
+    "power", "music", "eco", "fold", "flip", "note", "go", "hd",
 })
 
 

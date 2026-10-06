@@ -1423,6 +1423,7 @@ def _candidate(product_name: str, brand_name: str) -> ProductMatchCandidate:
         ("Sego EpicX", "Sego Epic", "Sego", True),
         ("Qmobile Q150", "Qmobile Q150s", "Qmobile", True),
         ("itel it2165", "itel it2165 eco", "itel", True),
+        ("Sego Smart 20", "Sego Smart 20 HD", "Sego", True),
         # The same phone, written differently.
         ("Apple iPhone 17 Pro Max", "Apple Iphone 17 Pro Max", "Apple", False),
         ("Samsung Galaxy A55", "Samsung Galaxy A556E", "Samsung", False),
@@ -1524,3 +1525,80 @@ def test_a_pro_and_a_pro_max_become_separate_products(
     ]
 
     assert len(set(products)) == 3
+
+
+def test_a_stated_colour_is_not_filed_under_a_colourless_variant(
+    client: TestClient,
+    database_session: Session,
+    discovered_products: list[int],
+) -> None:
+    """A seller's colourless variant must not swallow every colour."""
+
+    token = uuid4().hex[:8]
+    base = dict(
+        title=f"Infinix Shade{token}",
+        brand="Infinix",
+        specifications={"ram": "8GB", "storage_capacity": "256GB"},
+    )
+
+    seller = discover(
+        client,
+        discovered_products,
+        platform_code="daraz",
+        external_id=f"SHADE-{token}-SELLER",
+        **base,
+    )
+    black = discover(
+        client,
+        discovered_products,
+        platform_code="priceoye",
+        external_id=f"SHADE-{token}-BLACK",
+        color="Midnight Black",
+        **base,
+    )
+    blue = discover(
+        client,
+        discovered_products,
+        platform_code="priceoye",
+        external_id=f"SHADE-{token}-BLUE",
+        color="Ocean Blue",
+        **base,
+    )
+    black_again = discover(
+        client,
+        discovered_products,
+        platform_code="priceoye",
+        external_id=f"SHADE-{token}-BLACK-2",
+        color="Midnight Black",
+        **base,
+    )
+
+    # One phone, compared across both marketplaces...
+    assert {
+        black["canonical_product_id"],
+        blue["canonical_product_id"],
+    } == {seller["canonical_product_id"]}
+
+    # ...with a variant for each colour beside the colourless one.
+    assert len({
+        seller["product_variant_id"],
+        black["product_variant_id"],
+        blue["product_variant_id"],
+    }) == 3
+    assert black_again["product_variant_id"] == black["product_variant_id"]
+
+    variants = {
+        variant.color: (variant.ram_gb, variant.storage_gb)
+        for variant in database_session.scalars(
+            select(ProductVariant).where(
+                ProductVariant.canonical_product_id
+                == int(seller["canonical_product_id"])
+            )
+        )
+    }
+
+    assert variants == {
+        None: (8, 256),
+        "Midnight Black": (8, 256),
+        "Ocean Blue": (8, 256),
+    }
