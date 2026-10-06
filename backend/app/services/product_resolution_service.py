@@ -41,6 +41,7 @@ from app.services.product_matching_service import (
     TIER_EXACT,
     TIER_HIGH,
     ProductMatchingService,
+    names_differ_on_5g,
 )
 from app.services.smartphone_normalization import (
     clean_marketplace_title,
@@ -359,6 +360,7 @@ class ProductResolutionService:
             brand=brand,
             category_id=category.id,
             specifications=specifications,
+            exact_model_title=payload.exact_model_title,
         )
 
         variant = self.repository.get_variant(
@@ -463,6 +465,7 @@ class ProductResolutionService:
         brand,
         category_id: int,
         specifications: dict[str, str],
+        exact_model_title: bool = False,
     ) -> tuple[CanonicalProduct, bool]:
         """Find the canonical phone for a title, or create it.
 
@@ -488,6 +491,15 @@ class ProductResolutionService:
                 brand_id=brand_id,
                 brand_name=brand_name,
             )
+
+        if (
+            existing is not None
+            and exact_model_title
+            and names_differ_on_5g(display_name, existing.name)
+        ):
+            # The shared identity key ignores "5G"; the marketplace's own
+            # model name does not.
+            existing = None
 
         if existing is not None:
             self.repository.merge_product_specifications(

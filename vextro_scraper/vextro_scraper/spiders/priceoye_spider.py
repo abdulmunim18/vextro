@@ -215,6 +215,8 @@ class PriceoyeSpider(scrapy.Spider):
         for phone in phones:
             item = SmartphoneItem()
             item['platform'] = 'PriceOye'
+            # PriceOye names each phone itself; sellers do not write titles.
+            item['exact_model_title'] = True
             item['product_url'] = phone.css('a::attr(href)').get()
 
             details = [

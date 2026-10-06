@@ -870,6 +870,9 @@ class VextroApiIngestionPipeline:
             },
         }
 
+        if payload.get('exact_model_title'):
+            match_payload['exact_model_title'] = True
+
         return match_payload
 
     @staticmethod

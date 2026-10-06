@@ -1671,3 +1671,52 @@ def test_listings_report_the_configuration_they_are_for(
     assert listing["product_variant"]["color"] == "Black"
     assert listing["product_variant"]["ram_gb"] == 8
     assert listing["product_variant"]["storage_gb"] == 256
+
+
+def test_a_5g_phone_and_its_4g_namesake_stay_separate(
+    client: TestClient,
+    discovered_products: list[int],
+) -> None:
+    """PriceOye sells the A17 and the A17 5G as two phones."""
+
+    token = uuid4().hex[:8]
+    base = dict(
+        platform_code="priceoye",
+        brand="Samsung",
+        color="Black",
+        specifications={"ram": "8GB", "storage_capacity": "256GB"},
+        exact_model_title=True,
+    )
+
+    plain = discover(
+        client,
+        discovered_products,
+        external_id=f"NET-{token}-4G",
+        title=f"Samsung Galaxy Net{token}",
+        **base,
+    )
+    fifth = discover(
+        client,
+        discovered_products,
+        external_id=f"NET-{token}-5G",
+        title=f"Samsung Galaxy Net{token} 5G",
+        **base,
+    )
+
+    assert plain["canonical_product_id"] != fifth["canonical_product_id"]
+
+    # A seller's title that drops "5G" still finds a phone.
+    seller = discover(
+        client,
+        discovered_products,
+        platform_code="daraz",
+        external_id=f"NET-{token}-SELLER",
+        title=f"Samsung Galaxy Net{token} 5G 8GB 256GB Official Warranty",
+        brand="Samsung",
+        specifications={"ram": "8GB", "storage_capacity": "256GB"},
+    )
+
+    assert seller["canonical_product_id"] in {
+        plain["canonical_product_id"],
+        fifth["canonical_product_id"],
+    }

@@ -438,9 +438,27 @@ def _same_model_code(first: str, second: str) -> bool:
     return longer.startswith(shorter) and len(longer) - len(shorter) >= 2
 
 
+_FIFTH_GENERATION = re.compile(r"(?<![a-z0-9])5g(?![a-z0-9])", re.I)
+
+
+def names_differ_on_5g(first: str | None, second: str | None) -> bool:
+    """Report whether exactly one of two model names says "5G".
+
+    A marketplace sells the "Galaxy A17" and the "Galaxy A17 5G" as two
+    phones at two prices. Sellers add and drop "5G" freely in their own
+    titles, so this only means something between two exact model names.
+    """
+
+    return bool(_FIFTH_GENERATION.search(first or "")) != bool(
+        _FIFTH_GENERATION.search(second or "")
+    )
+
+
 def _model_identity_conflict(
     title: str | None,
     candidate: ProductMatchCandidate,
+    *,
+    exact_model_title: bool = False,
 ) -> bool:
     """Report whether a title names a look-alike rather than this phone.
 
@@ -463,6 +481,12 @@ def _model_identity_conflict(
 
     if not title_tokens or not name_tokens:
         return False
+
+    if exact_model_title and names_differ_on_5g(
+        title,
+        candidate.product_name,
+    ):
+        return True
 
     # 1. A qualifier present on one side only: "Pro" against "Pro Max".
     if (title_tokens ^ name_tokens) & _MODEL_QUALIFIERS:
@@ -574,6 +598,7 @@ def _score_candidate(
     requested_ram: int | None,
     requested_storage: int | None,
     requested_color: str | None,
+    exact_model_title: bool = False,
 ) -> _ScoredCandidate:
     """Weigh every available identity signal for one catalog variant."""
 
@@ -675,7 +700,11 @@ def _score_candidate(
             "match this catalog product."
         )
 
-    if _model_identity_conflict(title, candidate):
+    if _model_identity_conflict(
+        title,
+        candidate,
+        exact_model_title=exact_model_title,
+    ):
         rejection_reason = (
             "The marketplace title names a different "
             "model of this product line."
@@ -909,6 +938,7 @@ class ProductMatchingService:
                 requested_ram=requested_ram,
                 requested_storage=requested_storage,
                 requested_color=requested_color,
+                exact_model_title=payload.exact_model_title,
             )
             for candidate in candidates
         ]
