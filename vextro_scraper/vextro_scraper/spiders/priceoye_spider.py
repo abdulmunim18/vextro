@@ -745,6 +745,13 @@ class PriceoyeSpider(scrapy.Spider):
         if not isinstance(color_images, dict):
             color_images = {}
 
+        page_warranty = optional_text(
+            (product_data.get('dataSet') or {}).get('warranty')
+            if isinstance(product_data.get('dataSet'), dict)
+            else None,
+            max_length=255,
+        )
+
         base_id = base_item.get('external_id')
         base_images = list(base_item.get('image_urls') or [])
         base_specifications = dict(base_item.get('specifications') or {})
@@ -780,6 +787,14 @@ class PriceoyeSpider(scrapy.Spider):
                 retail_price
                 if retail_price is not None and retail_price > price
                 else None
+            )
+
+            # PriceOye states the warranty with each offer; the product page
+            # no longer carries it in a specification table.
+            item['warranty'] = (
+                optional_text(offer.get('product_warranty'), max_length=255)
+                or page_warranty
+                or base_item.get('warranty')
             )
 
             availability = str(

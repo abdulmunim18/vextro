@@ -1197,3 +1197,26 @@ def test_priceoye_brand_listing_continues_only_while_pages_are_full():
 
     assert len(short) == 26
     assert full[-1] == 'https://priceoye.pk/mobiles/sony?page=2'
+
+
+def test_priceoye_listing_carries_the_warranty_its_offer_states():
+    response = _priceoye_product_response({
+        'dataSet': {'warranty': '1 Year'},
+        'product_config': {
+            'dataPrices': {
+                'black': {'128gb': [{
+                    'product_price': '50,000',
+                    'product_warranty': '2 Years',
+                }]},
+                'white': {'128gb': [{'product_price': '50,000'}]},
+            },
+        },
+    })
+
+    warranties = {
+        item['color']: item['warranty']
+        for item in _priceoye_listings(response)
+    }
+
+    # The offer's own statement first, the phone's general one otherwise.
+    assert warranties == {'Black': '2 Years', 'White': '1 Year'}

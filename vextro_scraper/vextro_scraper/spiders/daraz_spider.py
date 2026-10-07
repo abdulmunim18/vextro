@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from urllib.parse import urljoin
 from vextro_scraper.items import ReviewBatchItem, SmartphoneItem
 from vextro_scraper.normalizers import (
+    warranty_from_text,
     optional_text,
     parse_count,
     parse_daraz_specification_sheet,
@@ -425,7 +426,12 @@ class DarazSpider(scrapy.Spider):
             # here used to push "Standard"/"N/A" into the catalog.
             item['variant'] = None
             item['color'] = None
-            item['warranty'] = None
+            # Daraz publishes no warranty field in its listing; sellers
+            # write it into the title, and only that is recorded.
+            item['warranty'] = warranty_from_text(
+                item_data.get('name'),
+                *(item_data.get('description') or []),
+            )
 
             item['scrape_timestamp'] = datetime.now(timezone.utc).isoformat()
 
