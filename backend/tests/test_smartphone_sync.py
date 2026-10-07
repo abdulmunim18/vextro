@@ -26,6 +26,7 @@ from app.models.price_history import PriceHistory
 from app.models.product_listing import ProductListing
 from app.models.product_variant import ProductVariant
 from app.models.raw_review import RawReview
+from app.repositories.assistant_repository import AssistantRepository
 from app.repositories.product_matching_repository import (
     ProductMatchCandidate,
 )
@@ -1852,3 +1853,119 @@ def test_the_marketplace_model_name_replaces_a_seller_derived_one(
     database_session.refresh(product)
 
     assert product.name == f"Samsung Galaxy Nm{token}"
+
+
+# --------------------------------------------------------------------------
+# Phones nobody sells right now
+# --------------------------------------------------------------------------
+
+
+def _phone_with_one_listing(
+    client: TestClient,
+    discovered_products: list[int],
+    *,
+    name: str,
+    is_available: bool,
+) -> int:
+    """Register a phone with a single listing and return its product id."""
+
+    resolved = discover(
+        client,
+        discovered_products,
+        platform_code="priceoye",
+        external_id=f"{name}-LISTING".replace(" ", "-"),
+        title=name,
+        brand="Samsung",
+        color="Black",
+        specifications={"ram": "8GB", "storage_capacity": "256GB"},
+        exact_model_title=True,
+    )
+    ingest(
+        client,
+        {
+            "platform_code": "priceoye",
+            "product_variant_id": int(resolved["product_variant_id"]),
+            "external_id": f"{name}-LISTING".replace(" ", "-"),
+            "title": name,
+            "product_url": "https://priceoye.pk/mobiles/samsung/test",
+            "current_price": 100000,
+            "currency": "PKR",
+            "is_available": is_available,
+            "scraped_at": iso(FIRST_CAPTURE),
+            "raw_payload": {"source": "priceoye"},
+        },
+    )
+
+    return int(resolved["canonical_product_id"])
+
+
+def test_phones_that_can_be_bought_are_listed_before_those_that_cannot(
+    client: TestClient,
+    discovered_products: list[int],
+) -> None:
+    """Sold-out phones stay findable but never lead the catalogue."""
+
+    token = uuid4().hex[:6]
+    sold_out = _phone_with_one_listing(
+        client,
+        discovered_products,
+        name=f"Samsung Galaxy Aa{token}",
+        is_available=False,
+    )
+    on_sale = _phone_with_one_listing(
+        client,
+        discovered_products,
+        name=f"Samsung Galaxy Zz{token}",
+        is_available=True,
+    )
+
+    def listed(**params: object) -> list[int]:
+        response = client.get(
+            "/api/v1/products",
+            params={"search": token, "sort_by": "name_asc", **params},
+        )
+        assert response.status_code == 200, response.text
+        return [item["id"] for item in response.json()["items"]]
+
+    # By name alone the sold-out phone would come first.
+    assert listed() == [on_sale, sold_out]
+    assert listed(is_available=True) == [on_sale]
+    assert listed(is_available=False) == [sold_out]
+
+
+def test_the_assistant_only_offers_alternatives_that_can_be_bought(
+    client: TestClient,
+    database_session: Session,
+    discovered_products: list[int],
+) -> None:
+    token = uuid4().hex[:6]
+    sold_out = _phone_with_one_listing(
+        client,
+        discovered_products,
+        name=f"Samsung Galaxy Qa{token}",
+        is_available=False,
+    )
+    on_sale = _phone_with_one_listing(
+        client,
+        discovered_products,
+        name=f"Samsung Galaxy Qb{token}",
+        is_available=True,
+    )
+    reference = _phone_with_one_listing(
+        client,
+        discovered_products,
+        name=f"Samsung Galaxy Qc{token}",
+        is_available=True,
+    )
+
+    alternatives = {
+        product.id
+        for product in AssistantRepository.find_similar_products(
+            database_session,
+            database_session.get(CanonicalProduct, reference),
+            limit=5000,
+        )
+    }
+
+    assert on_sale in alternatives
+    assert sold_out not in alternatives

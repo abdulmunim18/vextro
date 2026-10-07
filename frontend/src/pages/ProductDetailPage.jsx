@@ -513,6 +513,8 @@ function ProductDetailPage() {
           page: 1,
           page_size: 9,
           sort_by: "price_asc",
+          // Suggest only phones that can be bought right now.
+          is_available: true,
         });
 
         if (!isMounted) {
