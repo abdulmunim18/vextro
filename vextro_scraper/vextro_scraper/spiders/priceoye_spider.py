@@ -734,6 +734,32 @@ class PriceoyeSpider(scrapy.Spider):
 
         return ram_gb, storage_gb
 
+    @staticmethod
+    def normalize_warranty(value):
+        """Spell one warranty one way: "1 Year", "1 year warranty"."""
+
+        text = ' '.join(str(value or '').split())
+
+        if not text:
+            return None
+
+        if re.fullmatch(r'no\s+warranty', text, re.I):
+            return 'No Warranty'
+
+        period = re.fullmatch(
+            r'(\d{1,2})\s*(year|yr|month)s?(?:\s+warranty)?',
+            text,
+            re.I,
+        )
+
+        if period is None:
+            return text
+
+        number = period.group(1)
+        unit = 'Month' if period.group(2).lower() == 'month' else 'Year'
+
+        return f"{number} {unit}{'' if number == '1' else 's'} Warranty"
+
     def variant_offer_items(self, base_item, product_data):
         """Return one item per colour and storage option on the page."""
 
@@ -791,7 +817,7 @@ class PriceoyeSpider(scrapy.Spider):
 
             # PriceOye states the warranty with each offer; the product page
             # no longer carries it in a specification table.
-            item['warranty'] = (
+            item['warranty'] = self.normalize_warranty(
                 optional_text(offer.get('product_warranty'), max_length=255)
                 or page_warranty
                 or base_item.get('warranty')

@@ -1219,4 +1219,11 @@ def test_priceoye_listing_carries_the_warranty_its_offer_states():
     }
 
     # The offer's own statement first, the phone's general one otherwise.
-    assert warranties == {'Black': '2 Years', 'White': '1 Year'}
+    assert warranties == {
+        'Black': '2 Years Warranty',
+        'White': '1 Year Warranty',
+    }
+    assert PriceoyeSpider.normalize_warranty('1 year warranty') == (
+        '1 Year Warranty'
+    )
+    assert PriceoyeSpider.normalize_warranty('No Warranty') == 'No Warranty'
