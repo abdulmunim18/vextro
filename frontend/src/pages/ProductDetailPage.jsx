@@ -1153,7 +1153,12 @@ function ProductDetailPage() {
 
         <BuyTimeGuidanceCard guidance={buyGuidance} />
 
-        <ReviewsPanel productId={product.id} />
+        <ReviewsPanel
+          key={product.id}
+          productId={product.id}
+          listings={listings}
+          platformNames={platformNames}
+        />
 
         {specifications.length > 0 ? (
           <section className="mt-10">
