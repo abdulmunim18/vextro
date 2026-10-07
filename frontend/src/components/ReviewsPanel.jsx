@@ -12,7 +12,11 @@ import { formatDate } from "../utils/productDisplay";
 // single product without a second request.
 const FETCH_PAGE_SIZE = 100;
 const REVIEWS_PER_PLATFORM_BOX = 6;
-const SUPPORTED_PLATFORM_CODES = ["daraz", "priceoye"];
+// Only marketplaces whose review text VEXTRO can actually read get a box.
+// Daraz closes its review pages to other sites, so it has none to show;
+// its star rating still appears on each Daraz offer card. Adding "daraz"
+// back here restores its box and the marketplace comparison.
+const SUPPORTED_PLATFORM_CODES = ["priceoye"];
 const MIN_REVIEWS_FOR_RECOMMENDATION = 3;
 
 const SUSPICION_STYLES = {
@@ -682,7 +686,13 @@ function ReviewsPanel({ productId, listings = [], platformNames }) {
     });
   }, [reviewsResponse, analysis, listings, platformNames]);
 
-  const overallTotal = reviewsResponse?.total ?? 0;
+  const comparesMarketplaces = platformGroups.length > 1;
+  // Counted from the boxes on screen, so a marketplace without a box
+  // does not inflate the figure.
+  const shownTotal = platformGroups.reduce(
+    (sum, group) => sum + group.total,
+    0,
+  );
   const marketplaceTotal = platformGroups.reduce(
     (sum, group) =>
       sum + Math.max(group.marketplace?.count ?? 0, group.total),
@@ -718,28 +728,37 @@ function ReviewsPanel({ productId, listings = [], platformNames }) {
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <span className="text-xs font-black uppercase tracking-[0.18em] text-vextro-primary">
-            Customer Reviews by Marketplace
+            {comparesMarketplaces
+              ? "Customer Reviews by Marketplace"
+              : "Customer Reviews"}
           </span>
           <h2 className="mt-3 text-3xl font-black tracking-tight text-vextro-ink sm:text-4xl">
-            Compare what buyers said
+            {comparesMarketplaces
+              ? "Compare what buyers said"
+              : `What ${platformGroups[0]?.label ?? "buyers"} buyers said`}
           </h2>
           <p className="mt-3 text-sm leading-7 text-vextro-muted">
-            Each marketplace's own rating and review count, with the
-            reviews VEXTRO could read and how its review-risk engine
-            scored them. Use this to decide which marketplace to buy
-            from — not just which one is cheaper.
+            {comparesMarketplaces
+              ? "Each marketplace's own rating and review count, with the reviews VEXTRO could read and how its review-risk engine scored them. Use this to decide which marketplace to buy from — not just which one is cheaper."
+              : "The marketplace's own rating and review count, with the reviews VEXTRO could read and how its review-risk engine scored each one."}
           </p>
         </div>
         <span className="rounded-full border border-vextro-border bg-white px-4 py-2 text-xs font-black text-vextro-muted">
           {marketplaceTotal.toLocaleString()}{" "}
           {marketplaceTotal === 1 ? "buyer rating" : "buyer ratings"} ·{" "}
-          {overallTotal} shown
+          {shownTotal} shown
         </span>
       </div>
 
-      <TrustRecommendation groups={platformGroups} />
+      {comparesMarketplaces ? (
+        <TrustRecommendation groups={platformGroups} />
+      ) : null}
 
-      <div className="mt-6 grid gap-5 md:grid-cols-2">
+      <div
+        className={`mt-6 grid gap-5 ${
+          comparesMarketplaces ? "md:grid-cols-2" : ""
+        }`}
+      >
         {platformGroups.map((group) =>
           group.total > 0 ? (
             <PlatformReviewBox
