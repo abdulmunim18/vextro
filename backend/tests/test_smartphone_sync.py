@@ -466,7 +466,8 @@ def test_repeating_the_same_price_does_not_duplicate_history(
     )
 
     assert len(points) == 1
-    assert points[0].captured_at == FIRST_CAPTURE + timedelta(hours=12)
+    # The point marks when this price began, not when it was last seen.
+    assert points[0].captured_at == FIRST_CAPTURE
 
 
 def test_price_progression_is_recorded_point_by_point(
