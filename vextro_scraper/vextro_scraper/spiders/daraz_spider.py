@@ -1,5 +1,6 @@
 import scrapy
 import json
+import re
 from scrapy.exceptions import IgnoreRequest
 from math import ceil
 from datetime import datetime, timezone
@@ -64,7 +65,7 @@ class DarazReviewFetchError(RuntimeError):
 class DarazSpider(scrapy.Spider):
     name = "daraz_smartphones"
     platform_code = "daraz"
-    parser_version = "daraz-v2-offers-reviews"
+    parser_version = "daraz-v3-brand-catalogues"
     allowed_domains = ["daraz.pk"]
 
     # We use the internal AJAX API for reliable scraping. It is the same
@@ -88,11 +89,68 @@ class DarazSpider(scrapy.Spider):
     # for reviews instead of repeating a request that cannot succeed.
     MAX_BLOCKED_REVIEW_RESPONSES = 3
 
+    CATALOG_PATH = "/smartphones/"
+
+    # Daraz's category listing reports ~2,000 phones but serves only its
+    # first few pages; every later page repeats items already returned.
+    # After this many pages in a row with nothing new, a listing is done.
+    MAX_STALE_CATALOG_PAGES = 2
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.review_listings_requested = 0
         self.blocked_review_responses = 0
         self.reviews_blocked = False
+        self.seen_item_ids = set()
+        self.requested_brand_paths = set()
+
+    @staticmethod
+    def catalog_url(path, page_number=1):
+        """Return the JSON listing URL for one catalogue path and page."""
+
+        url = f"https://www.daraz.pk{path}?ajax=true"
+
+        return url if page_number <= 1 else f"{url}&page={page_number}"
+
+    def brand_catalog_requests(self, mods):
+        """Return one listing request per brand the category offers.
+
+        The category listing alone exposes a few hundred of the phones it
+        counts. Each brand's own listing is short enough to be served in
+        full, so walking the brands reaches the sellers the category
+        listing never shows.
+        """
+
+        crawler = getattr(self, 'crawler', None)
+        if crawler is not None and not crawler.settings.getbool(
+            'DARAZ_BRAND_CATALOGS_ENABLED', True,
+        ):
+            return
+
+        filters = (mods.get('filter') or {}).get('filterItems') or []
+
+        for group in filters:
+            if not isinstance(group, dict) or group.get('name') != 'brand':
+                continue
+
+            for option in group.get('options') or []:
+                slug = str((option or {}).get('value') or '').strip().lower()
+
+                if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,60}', slug):
+                    continue
+
+                path = f"{self.CATALOG_PATH}{slug}/"
+
+                if path in self.requested_brand_paths:
+                    continue
+
+                self.requested_brand_paths.add(path)
+
+                yield scrapy.Request(
+                    url=self.catalog_url(path),
+                    callback=self.parse,
+                    cb_kwargs={'catalog_path': path},
+                )
 
     @staticmethod
     def extract_specifications(item_data):
@@ -194,12 +252,19 @@ class DarazSpider(scrapy.Spider):
         if name is None:
             return None
 
+        # Daraz marks its vetted official stores with the "Mall" badge.
+        is_official_store = any(
+            isinstance(icon, dict) and icon.get('bizType') == 'lazMall'
+            for icon in (item_data.get('icons') or [])
+        )
+
         return {
             'name': name,
             'external_seller_id': optional_text(
                 item_data.get('sellerId'),
                 max_length=150,
             ),
+            'is_verified': is_official_store,
         }
 
     @staticmethod
@@ -260,7 +325,9 @@ class DarazSpider(scrapy.Spider):
             ),
         )
 
-    def parse(self, response):
+    def parse(self, response, catalog_path=None, stale_pages=0):
+        catalog_path = catalog_path or self.CATALOG_PATH
+
         try:
             data = json.loads(response.text)
         except json.JSONDecodeError as exc:
@@ -273,12 +340,23 @@ class DarazSpider(scrapy.Spider):
         mods = data.get("mods", {})
         list_items = mods.get("listItems", [])
 
+        new_item_count = 0
+
         for item_data in list_items:
             item = SmartphoneItem()
             item['platform'] = 'Daraz'
 
             # Get the external ID (itemId)
             external_id = str(item_data.get('itemId') or '').strip()
+
+            # Daraz repeats items across pages and across brand listings;
+            # one capture per crawl is enough.
+            if external_id:
+                if external_id in self.seen_item_ids:
+                    continue
+                self.seen_item_ids.add(external_id)
+
+            new_item_count += 1
             item['external_id'] = external_id
 
             # Clean URL
@@ -369,9 +447,24 @@ class DarazSpider(scrapy.Spider):
             ceil(int(main_info.get('totalResults', 0)) / page_size),
         )
 
-        if page < total_pages:
-            next_page_url = f"https://www.daraz.pk/smartphones/?ajax=true&page={page + 1}"
-            yield scrapy.Request(url=next_page_url, callback=self.parse)
+        if catalog_path == self.CATALOG_PATH and page == 1:
+            yield from self.brand_catalog_requests(mods)
+
+        stale_pages = 0 if new_item_count else stale_pages + 1
+
+        if (
+            list_items
+            and page < total_pages
+            and stale_pages < self.MAX_STALE_CATALOG_PAGES
+        ):
+            yield scrapy.Request(
+                url=self.catalog_url(catalog_path, page + 1),
+                callback=self.parse,
+                cb_kwargs={
+                    'catalog_path': catalog_path,
+                    'stale_pages': stale_pages,
+                },
+            )
 
     def _build_review_request(self, external_id, review_count, page_number=1):
         """Return a bounded review request for one catalog item."""

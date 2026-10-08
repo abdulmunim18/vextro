@@ -456,3 +456,30 @@ def test_pipeline_marks_review_delivery_failures(status_code):
     )
     assert captured.value.error_type == expected
     assert captured.value.error_stage == 'ingestion'
+
+
+def test_a_capacity_too_large_for_ram_is_read_as_storage():
+    """Daraz's "RAM" field often holds the storage figure instead."""
+
+    payload = VextroApiIngestionPipeline._build_match_payload({
+        'platform': 'daraz',
+        'external_id': '1950696746',
+        'model': 'Oppo Reno 15 5G 256GB',
+        'specifications': {
+            'ram': '+ 256GB UFS 3.1 storage (non-expandable)',
+        },
+    })
+
+    assert payload['ram_gb'] is None
+    assert payload['storage_gb'] == 256
+
+
+def test_a_plausible_ram_capacity_is_kept():
+    payload = VextroApiIngestionPipeline._build_match_payload({
+        'platform': 'daraz',
+        'external_id': '1',
+        'model': 'Test Phone',
+        'specifications': {'ram': '12GB', 'storage_capacity': '512GB'},
+    })
+
+    assert (payload['ram_gb'], payload['storage_gb']) == (12, 512)

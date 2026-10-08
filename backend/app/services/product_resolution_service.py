@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import re
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.canonical_product import CanonicalProduct
@@ -41,9 +42,12 @@ from app.services.product_matching_service import (
     TIER_EXACT,
     TIER_HIGH,
     ProductMatchingService,
+    names_differ_on_5g,
 )
 from app.services.smartphone_normalization import (
     clean_marketplace_title,
+    clean_model_name,
+    detect_title_color,
     extract_memory_capacities,
     is_accessory_title,
     infer_brand_name,
@@ -61,6 +65,12 @@ logger = logging.getLogger(__name__)
 AUTO_ATTACH_TIERS = frozenset({TIER_EXACT, TIER_HIGH})
 
 MIN_MODEL_NAME_LENGTH = 3
+
+
+def _compact(value: str | None) -> str:
+    """Lower-case a value and drop everything but letters and digits."""
+
+    return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
 
 
 def _slugify(value: str, *, fallback: str) -> str:
@@ -92,7 +102,19 @@ class ProductResolutionService:
         """Return a usable variant for one scraped marketplace product."""
 
         try:
+            if payload.color is None:
+                # A seller's colour lives in the title or nowhere.
+                stated = detect_title_color(
+                    clean_marketplace_title(
+                        payload.title,
+                        payload.seller_name,
+                    )
+                )
+                if stated is not None:
+                    payload = payload.model_copy(update={"color": stated})
+
             response = self._resolve(database_session, payload)
+            self._adopt_marketplace_name(database_session, payload, response)
             database_session.commit()
         except Exception:
             database_session.rollback()
@@ -105,6 +127,16 @@ class ProductResolutionService:
         database_session: Session,
         payload: ProductResolveRequest,
     ) -> ProductResolveResponse:
+        # A listing VEXTRO already stores keeps its place: its mapping is
+        # settled, and moving it would break its price history.
+        settled = self.matching_service.resolve_exact_identity(
+            database_session,
+            payload,
+        )
+
+        if settled is not None:
+            return ProductResolveResponse(**settled.model_dump())
+
         match = self.matching_service.match_product(
             database_session,
             payload,
@@ -114,6 +146,15 @@ class ProductResolutionService:
             match.match_tier in AUTO_ATTACH_TIERS
             or match.confidence >= 100
         ):
+            coloured = self._place_on_stated_colour(
+                database_session,
+                payload,
+                match,
+            )
+
+            if coloured is not None:
+                return coloured
+
             logger.info(
                 "Canonical product matched: platform=%s external_id=%s "
                 "variant_id=%s tier=%s confidence=%s",
@@ -136,6 +177,153 @@ class ProductResolutionService:
             return self._as_resolve_response(match)
 
         return created
+
+    def _adopt_marketplace_name(
+        self,
+        database_session: Session,
+        payload: ProductResolveRequest,
+        response: ProductResolveResponse,
+    ) -> None:
+        """Name a phone the way the marketplace that catalogues it does.
+
+        A product first seen through a seller's listing carries whatever
+        could be salvaged from that seller's title. When a source that
+        publishes exact model names resolves to the same phone, its name
+        is the better one.
+        """
+
+        if not (
+            payload.exact_model_title
+            and response.matched
+            and response.canonical_product_id
+        ):
+            return
+
+        product = database_session.get(
+            CanonicalProduct,
+            response.canonical_product_id,
+        )
+
+        if product is None:
+            return
+
+        brand_name = response.brand_name
+        name = clean_model_name(payload.title, brand_name)
+
+        if (
+            not name
+            or name == product.name
+            or cross_marketplace_product_key(name, brand_name)
+            != cross_marketplace_product_key(product.name, brand_name)
+        ):
+            return
+
+        product.name = name[:255]
+        product.model = name[:120]
+        database_session.flush()
+        response.product_name = product.name
+        response.model = product.model
+
+    def _place_on_stated_colour(
+        self,
+        database_session: Session,
+        payload: ProductResolveRequest,
+        match,
+    ) -> ProductResolveResponse | None:
+        """File a listing under the colour it states, or under none.
+
+        The matcher treats a missing colour as agreeing with anything. That
+        filed every colour PriceOye states under the one colourless variant
+        a seller listing had created, and filed seller listings that name
+        no colour under whichever colour happened to rank first, so the
+        product page showed them as that colour. The phone is the one the
+        matcher chose; only the variant is made exact. Returns ``None``
+        when the matched variant already agrees with the listing.
+        """
+
+        if match.canonical_product_id is None or not payload.allow_create:
+            return None
+
+        color = normalize_color(payload.color)
+
+        if color is not None:
+            if _compact(match.color) == _compact(color) or (
+                match.color
+                and _compact(match.color) in _compact(payload.title)
+            ):
+                # The same colour, or one the title spells out in full.
+                return None
+            # "Blue" is close enough to "Ocean Blue" for the matcher to
+            # recognise the phone, but it is not that variant's name.
+        else:
+            if not match.color:
+                return None
+
+            title = clean_marketplace_title(
+                payload.title,
+                payload.seller_name,
+            )
+
+            if _compact(match.color) in _compact(title):
+                # The seller wrote the colour into the title.
+                return None
+
+        variant = self.repository.get_variant(
+            database_session,
+            canonical_product_id=match.canonical_product_id,
+            ram_gb=match.ram_gb,
+            storage_gb=match.storage_gb,
+            color=color,
+        )
+        variant_created = variant is None
+
+        if variant is None:
+            variant = self.repository.create_variant(
+                database_session,
+                canonical_product_id=match.canonical_product_id,
+                ram_gb=match.ram_gb,
+                storage_gb=match.storage_gb,
+                color=color,
+                sku=None,
+                variant_attributes={
+                    key: value
+                    for key, value in (
+                        ("source_platform", payload.platform_code),
+                        ("source_external_id", payload.external_id),
+                    )
+                    if value
+                },
+            )
+
+        logger.info(
+            "Listing placed on its own colour: platform=%s "
+            "external_id=%s product_id=%s variant_id=%s "
+            "variant_created=%s color=%s",
+            payload.platform_code,
+            payload.external_id,
+            match.canonical_product_id,
+            variant.id,
+            variant_created,
+            color,
+        )
+
+        response = match.model_dump()
+        response.update(
+            product_variant_id=variant.id,
+            color=color,
+            reason=(
+                "Matched the catalog product and placed the listing on "
+                "the colour the marketplace states."
+                if color is not None
+                else "Matched the catalog product; the listing names no "
+                "colour, so it was not filed under one."
+            ),
+        )
+
+        return ProductResolveResponse(
+            **response,
+            variant_created=variant_created,
+        )
 
     @staticmethod
     def _as_resolve_response(
@@ -183,9 +371,10 @@ class ProductResolutionService:
             return None
 
         brand_name = infer_brand_name(title, payload.brand)
-        display_name = (
+        display_name = clean_model_name(
             clean_product_display_name(payload.model or title)
-            or clean_product_display_name(title)
+            or clean_product_display_name(title),
+            brand_name,
         )
 
         if (
@@ -238,6 +427,7 @@ class ProductResolutionService:
             brand=brand,
             category_id=category.id,
             specifications=specifications,
+            exact_model_title=payload.exact_model_title,
         )
 
         variant = self.repository.get_variant(
@@ -342,6 +532,7 @@ class ProductResolutionService:
         brand,
         category_id: int,
         specifications: dict[str, str],
+        exact_model_title: bool = False,
     ) -> tuple[CanonicalProduct, bool]:
         """Find the canonical phone for a title, or create it.
 
@@ -367,6 +558,15 @@ class ProductResolutionService:
                 brand_id=brand_id,
                 brand_name=brand_name,
             )
+
+        if (
+            existing is not None
+            and exact_model_title
+            and names_differ_on_5g(display_name, existing.name)
+        ):
+            # The shared identity key ignores "5G"; the marketplace's own
+            # model name does not.
+            existing = None
 
         if existing is not None:
             self.repository.merge_product_specifications(
@@ -407,12 +607,31 @@ class ProductResolutionService:
         brand_id: int,
         brand_name: str | None,
     ) -> CanonicalProduct | None:
-        """Return the same phone already registered from another marketplace."""
+        """Return the same phone already registered under another title."""
 
         identity = cross_marketplace_product_key(title, brand_name)
 
         if not identity:
             return None
+
+        # Every product of the brand is compared, with or without a listing:
+        # a crawl registers a phone before its listing is delivered, and a
+        # second title for it arriving in between used to register it twice.
+        same_brand = database_session.scalars(
+            select(CanonicalProduct)
+            .where(
+                CanonicalProduct.is_active.is_(True),
+                CanonicalProduct.brand_id == brand_id,
+            )
+            .order_by(CanonicalProduct.id.asc())
+        )
+
+        for candidate in same_brand:
+            if identity in {
+                cross_marketplace_product_key(candidate.name, brand_name),
+                cross_marketplace_product_key(candidate.model, brand_name),
+            }:
+                return candidate
 
         # ``find_cross_platform_canonical`` only inspects products that
         # already carry a listing from a different platform, which is exactly

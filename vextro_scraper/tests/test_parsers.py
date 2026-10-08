@@ -6,6 +6,7 @@ from scrapy.exceptions import IgnoreRequest
 from scrapy.http import HtmlResponse, Request, TextResponse
 from twisted.python.failure import Failure
 
+from vextro_scraper.items import SmartphoneItem
 from vextro_scraper.normalizers import clean_listing_title
 from vextro_scraper.pipelines import (
     NonSmartphoneItemError,
@@ -13,6 +14,7 @@ from vextro_scraper.pipelines import (
     infer_brand,
 )
 from vextro_scraper.spiders.priceoye_spider import (
+    PriceOyePageFetchError,
     PriceOyeReviewParserError,
     PriceoyeSpider,
 )
@@ -801,3 +803,397 @@ def test_phones_that_list_bundled_accessories_are_not_dropped():
         )
 
         assert cleaned['brand'] in {'Infinix', 'Vivo'}
+
+
+def _priceoye_product_response(product_data, *, slug='test-phone'):
+    """Build a PriceOye product page carrying an embedded offer matrix."""
+
+    url = f'https://priceoye.pk/mobiles/test/{slug}'
+    body = (
+        '<html><body><script>window.product_data = '
+        f'{json.dumps(product_data)};</script></body></html>'
+    )
+    item = SmartphoneItem(platform='PriceOye', model='Test Phone')
+    return HtmlResponse(
+        url=url,
+        body=body,
+        encoding='utf-8',
+        request=Request(url, meta={'item': item}),
+    )
+
+
+def _priceoye_listings(response):
+    return [
+        item
+        for item in PriceoyeSpider().parse_product(response)
+        if isinstance(item, SmartphoneItem)
+    ]
+
+
+def test_priceoye_yields_one_listing_per_colour_and_storage():
+    """Every colour and storage option carries its own price and stock."""
+
+    response = _priceoye_product_response({
+        'product_config': {
+            'dataPrices': {
+                'black': {
+                    '256gb': [{
+                        'product_price': '396,999',
+                        'retail_price': '399,000',
+                        'product_availability': 'Out Of Stock',
+                    }],
+                    '512gb': [{
+                        'product_price': '482,500',
+                        'product_availability': 'Out Of Stock',
+                    }],
+                },
+                'mist_blue': {
+                    '256gb': [{
+                        'product_price': '401,999',
+                        'product_availability': 'In Stock',
+                    }],
+                },
+            },
+        },
+        'product_color_images': {
+            # Published as a bare file name on the image host.
+            'mist_blue': {'large': ['blue.jpg']},
+        },
+    })
+
+    listings = {item['external_id']: item for item in _priceoye_listings(response)}
+
+    assert sorted(listings) == [
+        'test-phone--black--256gb',
+        'test-phone--black--512gb',
+        'test-phone--mist_blue--256gb',
+    ]
+
+    black_256 = listings['test-phone--black--256gb']
+    assert black_256['color'] == 'Black'
+    assert black_256['price'] == 396999
+    assert black_256['original_price'] == 399000
+    assert black_256['availability'] == 'Out of Stock'
+    assert black_256['specifications']['storage_capacity'] == '256GB'
+    assert black_256['sku'] is None
+
+    assert listings['test-phone--black--512gb']['price'] == 482500
+    assert listings['test-phone--black--512gb']['original_price'] is None
+
+    blue = listings['test-phone--mist_blue--256gb']
+    assert blue['color'] == 'Mist Blue'
+    assert blue['availability'] == 'In Stock'
+    assert blue['image_urls'][0] == 'https://images.priceoye.pk/blue.jpg'
+
+
+def test_priceoye_option_memory_outranks_the_specification_sheet():
+    """The sheet lists every size; the option states the one being sold."""
+
+    spider = PriceoyeSpider()
+    base = SmartphoneItem(
+        platform='PriceOye',
+        external_id='test-phone',
+        specifications={
+            'RAM': '8GB, 12GB',
+            'Internal Memory': '256GB, 512GB',
+            'Battery': '5000 mAh',
+        },
+    )
+    items = spider.variant_offer_items(base, {
+        'product_config': {
+            'dataPrices': {
+                'red': {
+                    '512gb - 12gb ram': [{
+                        'product_price': '179,999',
+                        'product_availability': 'In Stock',
+                    }],
+                },
+            },
+        },
+    })
+
+    assert items[0]['specifications'] == {
+        'ram': '12GB',
+        'storage_capacity': '512GB',
+        'Battery': '5000 mAh',
+    }
+
+
+def test_priceoye_single_configuration_matrix_is_read():
+    """Phones without storage options publish a list per colour."""
+
+    response = _priceoye_product_response({
+        'product_config': {
+            'dataPrices': {
+                'dark_blue': [[{
+                    'product_price': '6,199',
+                    'product_availability': 'In Stock',
+                }]],
+            },
+            'aColorSize': {'dark_blue': ['Standard']},
+        },
+    }, slug='nokia-130')
+
+    listings = _priceoye_listings(response)
+
+    assert [item['external_id'] for item in listings] == [
+        'nokia-130--dark_blue--standard',
+    ]
+    assert listings[0]['price'] == 6199
+
+
+def test_priceoye_page_without_any_offer_is_not_a_listing():
+    """A reference page states a past price but sells nothing."""
+
+    response = _priceoye_product_response({
+        'product_config': {'dataPrices': []},
+        'schema_status': 'InStock',
+    }, slug='old-phone')
+
+    assert list(PriceoyeSpider().parse_product(response)) == []
+
+
+def test_priceoye_reviews_are_requested_once_per_product():
+    """Reviews belong to the phone, so one listing collects them."""
+
+    response = _priceoye_product_response({
+        'product_config': {
+            'dataPrices': {
+                'black': {'128gb': [{'product_price': '50,000'}]},
+                'white': {'128gb': [{'product_price': '50,000'}]},
+            },
+        },
+    })
+
+    requests = [
+        output
+        for output in PriceoyeSpider().parse_product(response)
+        if isinstance(output, Request)
+    ]
+
+    assert len(requests) == 1
+    assert requests[0].meta['external_listing_id'] == (
+        'test-phone--black--128gb'
+    )
+
+
+def test_priceoye_full_crawl_requires_the_catalogue_end_and_no_lost_page():
+    """Only a walk that reached the empty last page counts as complete."""
+
+    spider = PriceoyeSpider()
+    assert spider.full_crawl_completed is False
+
+    page = HtmlResponse(
+        url='https://priceoye.pk/mobiles?page=12',
+        body=b'<html><body></body></html>',
+        encoding='utf-8',
+    )
+    assert spider.next_page_request(
+        page, page_number=12, page_item_count=0,
+    ) is None
+    assert spider.full_crawl_completed is True
+
+    with pytest.raises(PriceOyePageFetchError):
+        spider.page_fetch_error(Failure(RuntimeError('timeout')))
+    assert spider.full_crawl_completed is False
+
+
+def test_priceoye_page_limit_is_not_a_complete_crawl():
+    spider = PriceoyeSpider()
+    page = HtmlResponse(
+        url='https://priceoye.pk/mobiles?page=40',
+        body=b'<html><body></body></html>',
+        encoding='utf-8',
+    )
+
+    assert spider.next_page_request(
+        page, page_number=40, page_item_count=36,
+    ) is None
+    assert spider.full_crawl_completed is False
+
+
+def _daraz_catalog_response(item_ids, *, url, page=1, total=2000, brands=()):
+    """Build one page of the Daraz catalogue listing API."""
+
+    return TextResponse(
+        url=url,
+        encoding='utf-8',
+        body=json.dumps({
+            'mods': {
+                'listItems': [
+                    {
+                        'itemId': item_id,
+                        'name': f'Test Phone {item_id}',
+                        'price': '50000',
+                        'inStock': True,
+                    }
+                    for item_id in item_ids
+                ],
+                'filter': {
+                    'filterItems': [
+                        {
+                            'name': 'brand',
+                            'options': [
+                                {'title': brand.title(), 'value': brand}
+                                for brand in brands
+                            ],
+                        },
+                    ],
+                },
+            },
+            'mainInfo': {'page': page, 'pageSize': 40, 'totalResults': total},
+        }).encode('utf-8'),
+    )
+
+
+def _daraz_outputs(spider, response, **kwargs):
+    outputs = list(spider.parse(response, **kwargs))
+    items = [o for o in outputs if isinstance(o, SmartphoneItem)]
+    requests = [o for o in outputs if isinstance(o, Request)]
+    return items, requests
+
+
+def test_daraz_walks_every_brand_listing_from_the_first_page():
+    """The category listing shows a fraction; brand listings show the rest."""
+
+    spider = DarazSpider()
+    items, requests = _daraz_outputs(
+        spider,
+        _daraz_catalog_response(
+            [1, 2],
+            url='https://www.daraz.pk/smartphones/?ajax=true',
+            brands=('samsung', 'infinix', 'Bad Slug!'),
+        ),
+    )
+
+    assert [item['external_id'] for item in items] == ['1', '2']
+    assert sorted(request.url for request in requests) == [
+        'https://www.daraz.pk/smartphones/?ajax=true&page=2',
+        'https://www.daraz.pk/smartphones/infinix/?ajax=true',
+        'https://www.daraz.pk/smartphones/samsung/?ajax=true',
+    ]
+
+
+def test_daraz_brand_listing_paginates_within_its_own_path():
+    spider = DarazSpider()
+    path = '/smartphones/samsung/'
+    _, requests = _daraz_outputs(
+        spider,
+        _daraz_catalog_response(
+            [10, 11],
+            url='https://www.daraz.pk/smartphones/samsung/?ajax=true',
+            total=89,
+        ),
+        catalog_path=path,
+    )
+
+    assert [request.url for request in requests] == [
+        'https://www.daraz.pk/smartphones/samsung/?ajax=true&page=2',
+    ]
+    assert requests[0].cb_kwargs['catalog_path'] == path
+
+
+def test_daraz_skips_repeated_items_and_stops_a_listing_that_only_repeats():
+    """Daraz serves the same items again once a listing runs dry."""
+
+    spider = DarazSpider()
+    url = 'https://www.daraz.pk/smartphones/?ajax=true&page={}'
+
+    first, _ = _daraz_outputs(
+        spider, _daraz_catalog_response([1, 2], url=url.format(2), page=2),
+    )
+    repeat, after_one = _daraz_outputs(
+        spider, _daraz_catalog_response([1, 2], url=url.format(3), page=3),
+    )
+    _, after_two = _daraz_outputs(
+        spider,
+        _daraz_catalog_response([2, 1], url=url.format(4), page=4),
+        stale_pages=after_one[0].cb_kwargs['stale_pages'],
+    )
+
+    assert len(first) == 2
+    assert repeat == []
+    # One repeated page may be a hiccup; two in a row ends the listing.
+    assert [request.url for request in after_one] == [url.format(4)]
+    assert after_two == []
+
+
+def _priceoye_listing_response(url, slugs, *, brands=()):
+    boxes = ''.join(
+        f'<div class="productBox"><a href="/mobiles/test/{slug}"></a>'
+        f'<div class="detail-box"><p>Test {slug}</p><p>Rs 50,000</p></div>'
+        '</div>'
+        for slug in slugs
+    )
+    filter_bar = json.dumps({
+        'filters': {'brands': {'options': {brand: {} for brand in brands}}},
+    })
+    return HtmlResponse(
+        url=url,
+        body=(
+            f'<html><body>{boxes}<script>var x = '
+            f'{{"brand_filter_bar":{filter_bar}}};</script></body></html>'
+        ),
+        encoding='utf-8',
+    )
+
+
+def test_priceoye_walks_every_brand_listing_from_the_first_page():
+    """The paged catalogue misses phones; brand listings reach them."""
+
+    spider = PriceoyeSpider()
+    requests = [
+        request.url
+        for request in spider.parse(_priceoye_listing_response(
+            'https://priceoye.pk/mobiles',
+            ['phone-a'],
+            brands=('samsung', 'infinix', 'Bad Slug!'),
+        ))
+    ]
+
+    assert 'https://priceoye.pk/mobiles/test/phone-a' in requests
+    assert 'https://priceoye.pk/mobiles/samsung' in requests
+    assert 'https://priceoye.pk/mobiles/infinix' in requests
+    assert not any('Bad' in url for url in requests)
+
+    # Only the first catalogue page starts the brand walk.
+    later = [
+        request.url
+        for request in spider.parse(
+            _priceoye_listing_response(
+                'https://priceoye.pk/mobiles?page=2',
+                ['phone-b'],
+                brands=('samsung',),
+            ),
+            page_number=2,
+        )
+    ]
+    assert 'https://priceoye.pk/mobiles/samsung' not in later
+
+
+def test_priceoye_brand_listing_continues_only_while_pages_are_full():
+    spider = PriceoyeSpider()
+
+    short = [
+        request.url
+        for request in spider.parse_brand(
+            _priceoye_listing_response(
+                'https://priceoye.pk/mobiles/samsung',
+                [f'phone-{index}' for index in range(26)],
+            ),
+            brand_slug='samsung',
+        )
+    ]
+    full = [
+        request.url
+        for request in spider.parse_brand(
+            _priceoye_listing_response(
+                'https://priceoye.pk/mobiles/sony',
+                [f'phone-{index}' for index in range(36)],
+            ),
+            brand_slug='sony',
+        )
+    ]
+
+    assert len(short) == 26
+    assert full[-1] == 'https://priceoye.pk/mobiles/sony?page=2'

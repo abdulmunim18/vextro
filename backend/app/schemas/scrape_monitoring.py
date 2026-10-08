@@ -34,6 +34,10 @@ class ScrapeRunFinishInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     crawl_succeeded: bool
+    # True only when the spider walked the marketplace catalogue to its
+    # end without losing a page, which is what entitles VEXTRO to treat a
+    # listing the crawl did not see as no longer on sale.
+    full_crawl: bool = False
     items_discovered: int = Field(ge=0)
     items_ingested: int = Field(ge=0)
     items_rejected: int = Field(ge=0)

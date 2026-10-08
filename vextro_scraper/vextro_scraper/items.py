@@ -11,6 +11,9 @@ class SmartphoneItem(scrapy.Item):
     is_available = scrapy.Field()
     external_id = scrapy.Field()
     sku = scrapy.Field()          # Stable marketplace SKU/model code
+    # True when ``model`` is the marketplace's own model name, not a
+    # seller's free-text title.
+    exact_model_title = scrapy.Field()
 
     # Time-Series Data (12-hour refresh cycle)
     price = scrapy.Field()

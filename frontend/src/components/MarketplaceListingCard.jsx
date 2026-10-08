@@ -7,6 +7,7 @@ import { getMarketplaceDestination } from "../utils/marketplaceDestination";
 
 function MarketplaceListingCard({
   listing,
+  productName,
   platformName,
   isLowest,
 }) {
@@ -31,8 +32,10 @@ function MarketplaceListingCard({
         )
       : null;
 
+  // A marketplace that sells the phone itself (PriceOye) names no separate
+  // seller; the marketplace is the seller.
   const sellerName =
-    listing.seller?.name || "Marketplace seller";
+    listing.seller?.name || platformName || "Marketplace seller";
 
   const imageUrl =
     listing.images?.find(
@@ -45,6 +48,33 @@ function MarketplaceListingCard({
     getMarketplaceDestination(listing, platformName);
 
   const isUnavailable = !listing.is_available;
+
+  const variant = listing.product_variant;
+
+  const formatCapacity = (gigabytes) =>
+    gigabytes >= 1024 && gigabytes % 1024 === 0
+      ? `${gigabytes / 1024}TB`
+      : `${gigabytes}GB`;
+
+  const offerDetails = [
+    {
+      label: "Colour",
+      value: variant?.color || "",
+      missing: "Not stated by seller",
+    },
+    {
+      label: "Storage",
+      value: variant?.storage_gb
+        ? formatCapacity(variant.storage_gb)
+        : "",
+      missing: "Not stated",
+    },
+    {
+      label: "RAM",
+      value: variant?.ram_gb ? `${variant.ram_gb}GB` : "",
+      missing: "Not stated",
+    },
+  ];
 
   return (
     <article
@@ -108,9 +138,43 @@ function MarketplaceListingCard({
             ) : null}
           </div>
 
-          <h3 className="mt-4 line-clamp-2 text-lg font-black leading-6 text-vextro-ink">
-            {listing.title}
+          {/* The phone's own name. A seller's title repeats the memory and
+              selling points that are shown as separate details below; it
+              stays available on hover for anyone who wants the original. */}
+          <h3
+            className="mt-4 line-clamp-2 text-lg font-black leading-6 text-vextro-ink"
+            title={listing.title}
+          >
+            {productName || listing.title}
           </h3>
+
+          {/* Which option this price is for. Two offers of one phone differ
+              by colour and memory, and the title alone often says neither. */}
+          <dl className="mt-3 flex flex-wrap gap-2">
+            {offerDetails.map((detail) => (
+              <div
+                key={detail.label}
+                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs ${
+                  detail.value
+                    ? "border-vextro-border bg-slate-50"
+                    : "border-dashed border-vextro-border bg-white"
+                }`}
+              >
+                <dt className="font-semibold text-vextro-muted">
+                  {detail.label}
+                </dt>
+                <dd
+                  className={
+                    detail.value
+                      ? "font-black text-vextro-ink"
+                      : "font-semibold text-vextro-muted"
+                  }
+                >
+                  {detail.value || detail.missing}
+                </dd>
+              </div>
+            ))}
+          </dl>
 
           <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-vextro-muted">
             <span>

@@ -79,6 +79,11 @@ class ProductMatchRequest(BaseModel):
         default_factory=dict,
     )
 
+    # Set by a source whose title is the marketplace's own model name
+    # rather than a seller's free text. Only then does "5G" in the title,
+    # or its absence, say which of two phones is meant.
+    exact_model_title: bool = False
+
     @field_validator("specifications")
     @classmethod
     def bound_specifications(

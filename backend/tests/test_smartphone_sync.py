@@ -29,7 +29,15 @@ from app.models.raw_review import RawReview
 from app.repositories.product_matching_repository import (
     ProductMatchCandidate,
 )
-from app.services.product_matching_service import _model_numbers_conflict
+from app.services.smartphone_normalization import (
+    clean_model_name,
+    detect_title_color,
+)
+from app.services.product_matching_service import (
+    _color_similarity,
+    _model_identity_conflict,
+    _model_numbers_conflict,
+)
 
 
 LISTINGS_ENDPOINT = "/api/v1/internal/acquisition/listings"
@@ -1217,3 +1225,630 @@ def test_model_codes_veto_only_genuine_conflicts(
     )
 
     assert _model_numbers_conflict(scraped_title, candidate) is conflicts
+
+
+# --------------------------------------------------------------------------
+# Listings a complete crawl no longer finds
+# --------------------------------------------------------------------------
+
+RUNS_ENDPOINT = "/api/v1/internal/acquisition/runs"
+
+
+def _crawl(
+    client: TestClient,
+    database_session: Session,
+    context: dict[str, object],
+    *,
+    stale: list[str],
+    seen: list[str],
+    full_crawl: bool,
+) -> dict[str, bool]:
+    """Run one PriceOye crawl and return each listing's availability."""
+
+    # Other tests leave PriceOye listings behind; park them so only this
+    # test's listings can count as unseen.
+    database_session.execute(
+        ProductListing.__table__.update()
+        .where(
+            ProductListing.platform_id
+            == select(Platform.id)
+            .where(Platform.code == "priceoye")
+            .scalar_subquery()
+        )
+        .values(is_available=False)
+    )
+    database_session.commit()
+
+    def capture(name: str, moment: datetime) -> None:
+        ingest(
+            client,
+            listing_payload(
+                context,
+                current_price=100000,
+                captured_at=moment,
+                platform_code="priceoye",
+                external_id=f"{context['external_id']}-{name}",
+            ),
+        )
+
+    for name in stale + seen:
+        capture(name, FIRST_CAPTURE)
+
+    started = client.post(
+        RUNS_ENDPOINT,
+        headers=headers(),
+        json={
+            "platform": "priceoye",
+            "spider_name": "priceoye_smartphones",
+            "trigger_type": "test",
+            "parser_version": "priceoye-test",
+        },
+    )
+    assert started.status_code == 201, started.text
+
+    for name in seen:
+        capture(name, datetime.now(timezone.utc) + timedelta(seconds=5))
+
+    finished = client.patch(
+        f"{RUNS_ENDPOINT}/{started.json()['id']}",
+        headers=headers(),
+        json={
+            "crawl_succeeded": True,
+            "full_crawl": full_crawl,
+            "items_discovered": len(seen),
+            "items_ingested": len(seen),
+            "items_rejected": 0,
+            "items_failed": 0,
+            "error_count": 0,
+        },
+    )
+    assert finished.status_code == 200, finished.text
+
+    database_session.expire_all()
+    prefix = f"{context['external_id']}-"
+
+    return {
+        external_id[len(prefix):]: is_available
+        for external_id, is_available in database_session.execute(
+            select(
+                ProductListing.external_id,
+                ProductListing.is_available,
+            ).where(ProductListing.external_id.like(f"{prefix}%"))
+        )
+    }
+
+
+def test_a_full_crawl_retires_listings_it_did_not_find(
+    client: TestClient,
+    database_session: Session,
+    sync_context: dict[str, object],
+) -> None:
+    """A colour PriceOye stopped listing must not stay "in stock"."""
+
+    availability = _crawl(
+        client,
+        database_session,
+        sync_context,
+        stale=["gone"],
+        seen=["kept-a", "kept-b"],
+        full_crawl=True,
+    )
+
+    assert availability == {"gone": False, "kept-a": True, "kept-b": True}
+
+    # The removed offer keeps its place in the catalogue and its history.
+    assert database_session.scalar(
+        select(func.count(PriceHistory.id))
+        .join(ProductListing, ProductListing.id == PriceHistory.listing_id)
+        .where(
+            ProductListing.external_id
+            == f"{sync_context['external_id']}-gone"
+        )
+    )
+
+
+def test_a_partial_crawl_retires_nothing(
+    client: TestClient,
+    database_session: Session,
+    sync_context: dict[str, object],
+) -> None:
+    """A capped or interrupted crawl says nothing about what it skipped."""
+
+    availability = _crawl(
+        client,
+        database_session,
+        sync_context,
+        stale=["unvisited"],
+        seen=["kept-a", "kept-b"],
+        full_crawl=False,
+    )
+
+    assert availability["unvisited"] is True
+
+
+def test_a_crawl_that_lost_most_of_the_catalogue_retires_nothing(
+    client: TestClient,
+    database_session: Session,
+    sync_context: dict[str, object],
+) -> None:
+    """Seeing fewer listings than would be retired is a broken crawl."""
+
+    availability = _crawl(
+        client,
+        database_session,
+        sync_context,
+        stale=["missing-a", "missing-b"],
+        seen=["kept"],
+        full_crawl=True,
+    )
+
+    assert availability == {
+        "missing-a": True,
+        "missing-b": True,
+        "kept": True,
+    }
+
+
+# --------------------------------------------------------------------------
+# Look-alike models and look-alike colours
+# --------------------------------------------------------------------------
+
+
+def _candidate(product_name: str, brand_name: str) -> ProductMatchCandidate:
+    return ProductMatchCandidate(
+        canonical_product_id=1,
+        product_variant_id=1,
+        product_name=product_name,
+        brand_name=brand_name,
+        model=product_name,
+        sku=None,
+        ram_gb=None,
+        storage_gb=None,
+        color=None,
+        condition="new",
+    )
+
+
+@pytest.mark.parametrize(
+    ("scraped_title", "product_name", "brand", "conflicts"),
+    [
+        # Pairs a full PriceOye crawl merged into one product.
+        ("Apple iPhone 17 Pro", "Apple iPhone 17 Pro Max", "Apple", True),
+        ("Apple iPhone 17 Pro Max", "Apple iPhone 17 Pro", "Apple", True),
+        ("Apple iPhone 17e", "Apple iPhone 17", "Apple", True),
+        ("Samsung Galaxy Z Fold 4", "Samsung Galaxy Z Fold 5", "Samsung", True),
+        ("Samsung Galaxy S25 FE", "Samsung Galaxy Z Flip 4", "Samsung", True),
+        ("Samsung Galaxy S26", "Samsung Galaxy S26 Ultra", "Samsung", True),
+        ("Xiaomi 17T", "Xiaomi 17T Pro", "Xiaomi", True),
+        ("Tecno Spark Go 3", "Tecno Spark Go 2", "Tecno", True),
+        ("Tecno Spark 40 Pro", "Tecno Spark 40 Pro Plus", "Tecno", True),
+        ("Nokia 105 Power", "Nokia 105 Classic", "Nokia", True),
+        ("Nokia 108 (2024)", "Nokia 125 (2024)", "Nokia", True),
+        ("Sego EpicX", "Sego Epic", "Sego", True),
+        ("Qmobile Q150", "Qmobile Q150s", "Qmobile", True),
+        ("itel it2165", "itel it2165 eco", "itel", True),
+        ("Sego Smart 20", "Sego Smart 20 HD", "Sego", True),
+        # The same phone, written differently.
+        ("Apple iPhone 17 Pro Max", "Apple Iphone 17 Pro Max", "Apple", False),
+        ("Samsung Galaxy A55", "Samsung Galaxy A556E", "Samsung", False),
+        ("Galaxy S24 Ultra 12GB 512GB", "Samsung Galaxy S24 Ultra", "Samsung", False),
+        (
+            "Samsung Galaxy A07 4GB RAM 128GB 5000mAh Battery PTA Approved",
+            "Samsung Galaxy A07",
+            "Samsung",
+            False,
+        ),
+    ],
+)
+def test_look_alike_models_are_told_apart(
+    scraped_title: str,
+    product_name: str,
+    brand: str,
+    conflicts: bool,
+) -> None:
+    """One word or digit of difference is a different, separately priced phone."""
+
+    assert _model_identity_conflict(
+        scraped_title,
+        _candidate(product_name, brand),
+    ) is conflicts
+
+
+@pytest.mark.parametrize(
+    ("requested", "stored", "same"),
+    [
+        ("Titanium Blue", "Titanium Black", False),
+        ("Blue Black", "Blue", False),
+        ("Dark Blue", "Blue", False),
+        ("Denim Blue", "Morning Blue", False),
+        ("Starlight Grey", "Titanium Grey", False),
+        ("Sage", "Lavender", False),
+        ("Natural Titanium", "Titanium", False),
+        ("Awesome Black", "Black", True),
+        ("Titanium Gray", "Titanium Grey", True),
+        ("Mist Blue", "mist blue", True),
+        ("Sage", "Sage", True),
+    ],
+)
+def test_colours_are_compared_by_hue_not_by_spelling(
+    requested: str,
+    stored: str,
+    same: bool,
+) -> None:
+    """Colours sharing a word are still different colours."""
+
+    assert (_color_similarity(requested, stored) >= 0.6) is same
+
+
+def test_every_colour_of_a_phone_gets_its_own_variant(
+    client: TestClient,
+    database_session: Session,
+    discovered_products: list[int],
+) -> None:
+    """Titanium Black, Blue and Grey are three variants, not one."""
+
+    token = uuid4().hex[:8]
+    variant_ids = {
+        colour: discover(
+            client,
+            discovered_products,
+            platform_code="priceoye",
+            external_id=f"HUE-{token}-{colour.replace(' ', '-')}",
+            title=f"Samsung Galaxy Hue{token}",
+            brand="Samsung",
+            color=colour,
+            specifications={"ram": "12GB", "storage_capacity": "512GB"},
+        )["product_variant_id"]
+        for colour in ("Titanium Black", "Titanium Blue", "Titanium Grey")
+    }
+
+    assert len(set(variant_ids.values())) == 3
+
+
+def test_a_pro_and_a_pro_max_become_separate_products(
+    client: TestClient,
+    discovered_products: list[int],
+) -> None:
+    token = uuid4().hex[:8]
+    products = [
+        discover(
+            client,
+            discovered_products,
+            platform_code="priceoye",
+            external_id=f"LOOK-{token}-{index}",
+            title=title,
+            brand="Apple",
+            color="Black",
+            specifications={"storage_capacity": "256GB"},
+        )["canonical_product_id"]
+        for index, title in enumerate((
+            f"Apple iPhone Look{token} Pro Max",
+            f"Apple iPhone Look{token} Pro",
+            f"Apple iPhone Look{token}",
+        ))
+    ]
+
+    assert len(set(products)) == 3
+
+
+def test_a_stated_colour_is_not_filed_under_a_colourless_variant(
+    client: TestClient,
+    database_session: Session,
+    discovered_products: list[int],
+) -> None:
+    """A seller's colourless variant must not swallow every colour."""
+
+    token = uuid4().hex[:8]
+    base = dict(
+        title=f"Infinix Shade{token}",
+        brand="Infinix",
+        specifications={"ram": "8GB", "storage_capacity": "256GB"},
+    )
+
+    seller = discover(
+        client,
+        discovered_products,
+        platform_code="daraz",
+        external_id=f"SHADE-{token}-SELLER",
+        **base,
+    )
+    black = discover(
+        client,
+        discovered_products,
+        platform_code="priceoye",
+        external_id=f"SHADE-{token}-BLACK",
+        color="Midnight Black",
+        **base,
+    )
+    blue = discover(
+        client,
+        discovered_products,
+        platform_code="priceoye",
+        external_id=f"SHADE-{token}-BLUE",
+        color="Ocean Blue",
+        **base,
+    )
+    black_again = discover(
+        client,
+        discovered_products,
+        platform_code="priceoye",
+        external_id=f"SHADE-{token}-BLACK-2",
+        color="Midnight Black",
+        **base,
+    )
+
+    # One phone, compared across both marketplaces...
+    assert {
+        black["canonical_product_id"],
+        blue["canonical_product_id"],
+    } == {seller["canonical_product_id"]}
+
+    # ...with a variant for each colour beside the colourless one.
+    assert len({
+        seller["product_variant_id"],
+        black["product_variant_id"],
+        blue["product_variant_id"],
+    }) == 3
+    assert black_again["product_variant_id"] == black["product_variant_id"]
+
+    variants = {
+        variant.color: (variant.ram_gb, variant.storage_gb)
+        for variant in database_session.scalars(
+            select(ProductVariant).where(
+                ProductVariant.canonical_product_id
+                == int(seller["canonical_product_id"])
+            )
+        )
+    }
+
+    assert variants == {
+        None: (8, 256),
+        "Midnight Black": (8, 256),
+        "Ocean Blue": (8, 256),
+    }
+
+
+def test_a_listing_naming_no_colour_is_not_filed_under_one(
+    client: TestClient,
+    database_session: Session,
+    discovered_products: list[int],
+) -> None:
+    """A seller title without a colour must not be shown as Fizz Blue."""
+
+    token = uuid4().hex[:8]
+    base = dict(
+        brand="Infinix",
+        specifications={"ram": "8GB", "storage_capacity": "256GB"},
+    )
+
+    blue = discover(
+        client,
+        discovered_products,
+        platform_code="priceoye",
+        external_id=f"NOHUE-{token}-BLUE",
+        title=f"Infinix Plain{token}",
+        color="Fizz Blue",
+        **base,
+    )
+    seller = discover(
+        client,
+        discovered_products,
+        platform_code="daraz",
+        external_id=f"NOHUE-{token}-SELLER",
+        title=f"Infinix Plain{token} 8GB 256GB PTA Approved",
+        **base,
+    )
+    named = discover(
+        client,
+        discovered_products,
+        platform_code="daraz",
+        external_id=f"NOHUE-{token}-NAMED",
+        title=f"Infinix Plain{token} 8GB 256GB Fizz Blue",
+        **base,
+    )
+
+    assert seller["canonical_product_id"] == blue["canonical_product_id"]
+    assert seller["product_variant_id"] != blue["product_variant_id"]
+    assert seller["color"] is None
+
+    # A title that does name the colour joins that colour's variant.
+    assert named["product_variant_id"] == blue["product_variant_id"]
+
+
+def test_listings_report_the_configuration_they_are_for(
+    client: TestClient,
+    sync_context: dict[str, object],
+) -> None:
+    """The product page needs each offer's colour, RAM and storage."""
+
+    ingest(
+        client,
+        listing_payload(
+            sync_context,
+            current_price=150000,
+            captured_at=FIRST_CAPTURE,
+        ),
+    )
+
+    listing = read_listings(client, int(sync_context["product_id"]))[0]
+
+    assert listing["product_variant"]["color"] == "Black"
+    assert listing["product_variant"]["ram_gb"] == 8
+    assert listing["product_variant"]["storage_gb"] == 256
+
+
+def test_a_5g_phone_and_its_4g_namesake_stay_separate(
+    client: TestClient,
+    discovered_products: list[int],
+) -> None:
+    """PriceOye sells the A17 and the A17 5G as two phones."""
+
+    token = uuid4().hex[:8]
+    base = dict(
+        platform_code="priceoye",
+        brand="Samsung",
+        color="Black",
+        specifications={"ram": "8GB", "storage_capacity": "256GB"},
+        exact_model_title=True,
+    )
+
+    plain = discover(
+        client,
+        discovered_products,
+        external_id=f"NET-{token}-4G",
+        title=f"Samsung Galaxy Net{token}",
+        **base,
+    )
+    fifth = discover(
+        client,
+        discovered_products,
+        external_id=f"NET-{token}-5G",
+        title=f"Samsung Galaxy Net{token} 5G",
+        **base,
+    )
+
+    assert plain["canonical_product_id"] != fifth["canonical_product_id"]
+
+    # A seller's title that drops "5G" still finds a phone.
+    seller = discover(
+        client,
+        discovered_products,
+        platform_code="daraz",
+        external_id=f"NET-{token}-SELLER",
+        title=f"Samsung Galaxy Net{token} 5G 8GB 256GB Official Warranty",
+        brand="Samsung",
+        specifications={"ram": "8GB", "storage_capacity": "256GB"},
+    )
+
+    assert seller["canonical_product_id"] in {
+        plain["canonical_product_id"],
+        fifth["canonical_product_id"],
+    }
+
+
+# --------------------------------------------------------------------------
+# Clean catalog names
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("title", "brand", "expected"),
+    [
+        ("NOTE X 6+128 BLACK SPARX", "Sparx", "Sparx Note X"),
+        ("Samsung Galaxy A17 6+128 Blue", "Samsung", "Samsung Galaxy A17"),
+        ("Realme Note 60 4/128, 32MP camera, 90Hz", "Realme", "Realme Note 60"),
+        ("SEGO iPro Smartphone", "Sego", "Sego iPro"),
+        ("Tecno Mobile Spark 40", "Tecno", "Tecno Spark 40"),
+        (
+            "Infinix Hot 60 Pro || 8GB+8GB Ram 128GB Rom || 5160mAh Battery",
+            "Infinix",
+            "Infinix Hot 60 Pro",
+        ),
+        (
+            "Samsung Galaxy S25 Ultra (12GB-256GB)",
+            "Samsung",
+            "Samsung Galaxy S25 Ultra",
+        ),
+        ("Nothing Phone Nothing 4a Pro 12+256", "Nothing", "Nothing Phone 4a Pro"),
+        ("iPhone 15 Pro", "Apple", "Apple iPhone 15 Pro"),
+        ("Apple iPhone 17 Pro Max", "Apple", "Apple iPhone 17 Pro Max"),
+    ],
+)
+def test_catalog_names_carry_the_phone_and_nothing_else(
+    title: str,
+    brand: str,
+    expected: str,
+) -> None:
+    """Memory, colour and selling points belong to a variant, not the name."""
+
+    assert clean_model_name(title, brand) == expected
+
+
+@pytest.mark.parametrize(
+    ("title", "colour"),
+    [
+        ("Samsung Galaxy A17 6+128 Blue", "Blue"),
+        ("Vivo Y05 Midnight Black 4/64", "Midnight Black"),
+        ("Infinix Hot 60 Pro 8GB RAM 128GB ROM", None),
+        ("iPhone 16 Black/Blue 128GB", None),
+    ],
+)
+def test_a_colour_is_read_from_a_seller_title_only_when_it_names_one(
+    title: str,
+    colour: str | None,
+) -> None:
+    assert detect_title_color(title) == colour
+
+
+def test_one_phone_under_two_seller_titles_is_one_product(
+    client: TestClient,
+    discovered_products: list[int],
+) -> None:
+    """Registered before any listing is stored, as within one crawl batch."""
+
+    token = uuid4().hex[:6]
+
+    first = discover(
+        client,
+        discovered_products,
+        platform_code="daraz",
+        external_id=f"TWIN-{token}-A",
+        title=f"Samsung Galaxy Tw{token} 5G 8GB 256GB",
+        brand="Samsung",
+        specifications={"ram": "8GB", "storage_capacity": "256GB"},
+    )
+    second = discover(
+        client,
+        discovered_products,
+        platform_code="daraz",
+        external_id=f"TWIN-{token}-B",
+        title=f"Samsung Mobile Tw{token} 12GB 512GB Smartphone",
+        brand="Samsung",
+        specifications={"ram": "12GB", "storage_capacity": "512GB"},
+    )
+
+    assert first["canonical_product_id"] == second["canonical_product_id"]
+    assert first["product_variant_id"] != second["product_variant_id"]
+
+
+def test_the_marketplace_model_name_replaces_a_seller_derived_one(
+    client: TestClient,
+    database_session: Session,
+    discovered_products: list[int],
+) -> None:
+    """PriceOye's name for a phone outranks what a seller title left."""
+
+    token = uuid4().hex[:6]
+
+    seller = discover(
+        client,
+        discovered_products,
+        platform_code="daraz",
+        external_id=f"NAME-{token}-SELLER",
+        title=f"Samsung Mobile Nm{token} 8GB 256GB",
+        brand="Samsung",
+        specifications={"ram": "8GB", "storage_capacity": "256GB"},
+    )
+    assert seller["product_name"] == f"Samsung Nm{token}"
+
+    priceoye = discover(
+        client,
+        discovered_products,
+        platform_code="priceoye",
+        external_id=f"NAME-{token}-PO",
+        title=f"Samsung Galaxy Nm{token}",
+        brand="Samsung",
+        color="Black",
+        specifications={"ram": "8GB", "storage_capacity": "256GB"},
+        exact_model_title=True,
+    )
+
+    assert priceoye["canonical_product_id"] == seller["canonical_product_id"]
+
+    product = database_session.get(
+        CanonicalProduct,
+        int(seller["canonical_product_id"]),
+    )
+    database_session.refresh(product)
+
+    assert product.name == f"Samsung Galaxy Nm{token}"

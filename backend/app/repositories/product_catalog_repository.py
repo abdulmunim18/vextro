@@ -297,6 +297,7 @@ def list_product_listings(
         .options(
             selectinload(ProductListing.seller),
             selectinload(ProductListing.images),
+            selectinload(ProductListing.product_variant),
         )
         .where(
             ProductVariant.canonical_product_id == product_id,

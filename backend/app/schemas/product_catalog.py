@@ -105,6 +105,10 @@ class ProductListingResponse(ORMResponse):
     seller: SellerResponse | None = None
     images: list[ProductImageResponse] = Field(default_factory=list)
 
+    # The colour, RAM and storage this offer is for. A marketplace title
+    # alone ("Apple iPhone 16") does not say which option is being priced.
+    product_variant: ProductVariantResponse | None = None
+
 
 class ProductListItemResponse(ORMResponse):
     """Compact product response used in search results."""

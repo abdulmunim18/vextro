@@ -831,6 +831,15 @@ class VextroApiIngestionPipeline:
             or specifications.get('rom')
         )
 
+        # Daraz packs a phone's whole description into its "RAM" field
+        # ("+ 256GB UFS 3.1 storage ..."), so the first capacity found
+        # there is often the storage. No phone has that much RAM, and
+        # sending it made the backend refuse the listing outright.
+        if ram_gb is not None and ram_gb > 32:
+            if storage_gb is None:
+                storage_gb = ram_gb
+            ram_gb = None
+
         match_payload = {
             'platform_code': str(
                 payload.get('platform') or ''
@@ -860,6 +869,9 @@ class VextroApiIngestionPipeline:
                 for label, value in list(specifications.items())[:60]
             },
         }
+
+        if payload.get('exact_model_title'):
+            match_payload['exact_model_title'] = True
 
         return match_payload
 
