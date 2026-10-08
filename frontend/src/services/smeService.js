@@ -109,6 +109,15 @@ export async function updateBusinessProduct(
   return response.data;
 }
 
+export async function deleteBusinessProduct(
+  organizationId,
+  productId,
+) {
+  await apiClient.delete(
+    `/sme/organizations/${organizationId}/products/${productId}`,
+  );
+}
+
 export async function getCompetitorWatchlist(
   organizationId,
   params = {},
@@ -148,6 +157,15 @@ export async function updateCompetitorWatchlistStatus(
   );
 
   return response.data;
+}
+
+export async function deleteCompetitorWatchlistEntry(
+  organizationId,
+  watchlistId,
+) {
+  await apiClient.delete(
+    `/sme/organizations/${organizationId}/competitors/${watchlistId}`,
+  );
 }
 
 export async function uploadSalesImport(

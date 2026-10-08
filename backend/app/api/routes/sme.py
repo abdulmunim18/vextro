@@ -349,6 +349,43 @@ def update_business_product_endpoint(
     )
 
 
+@router.delete(
+    (
+        "/organizations/{organization_id}"
+        "/products/{product_id}"
+    ),
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_business_product_endpoint(
+    organization_id: int = Path(
+        ge=1,
+        description="Organization ID.",
+    ),
+    product_id: int = Path(
+        ge=1,
+        description="Business product ID.",
+    ),
+    current_user: User = Depends(
+        sme_or_admin,
+    ),
+    database_session: Session = Depends(
+        get_db,
+    ),
+) -> Response:
+    """Permanently delete an unused organization product."""
+
+    sme_service.delete_business_product(
+        database_session,
+        organization_id=organization_id,
+        product_id=product_id,
+        user_id=current_user.id,
+    )
+
+    return Response(
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+
+
 @router.post(
     (
         "/organizations/{organization_id}"
@@ -445,6 +482,43 @@ def update_competitor_watchlist_status_endpoint(
         watchlist_id=watchlist_id,
         user_id=current_user.id,
         payload=payload,
+    )
+
+
+@router.delete(
+    (
+        "/organizations/{organization_id}"
+        "/competitors/{watchlist_id}"
+    ),
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_competitor_watchlist_endpoint(
+    organization_id: int = Path(
+        ge=1,
+        description="Organization ID.",
+    ),
+    watchlist_id: int = Path(
+        ge=1,
+        description="Competitor watchlist entry ID.",
+    ),
+    current_user: User = Depends(
+        sme_or_admin,
+    ),
+    database_session: Session = Depends(
+        get_db,
+    ),
+) -> Response:
+    """Permanently remove one competitor watchlist entry."""
+
+    sme_service.delete_watchlist_entry(
+        database_session,
+        organization_id=organization_id,
+        watchlist_id=watchlist_id,
+        user_id=current_user.id,
+    )
+
+    return Response(
+        status_code=status.HTTP_204_NO_CONTENT,
     )
 
 

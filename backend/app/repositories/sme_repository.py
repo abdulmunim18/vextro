@@ -22,6 +22,7 @@ from app.models.product_variant import ProductVariant
 from app.models.price_history import PriceHistory
 from app.models.platform import Platform
 from app.models.seller import Seller
+from app.models.sales_record import SalesRecord
 
 
 @dataclass(frozen=True)
@@ -404,6 +405,34 @@ class SMERepository:
         return product
 
     @staticmethod
+    def business_product_has_sales_records(
+        database_session: Session,
+        product_id: int,
+    ) -> bool:
+        """Return whether a product is referenced by sales history."""
+
+        statement = select(
+            exists().where(
+                SalesRecord.business_product_id
+                == product_id,
+            ),
+        )
+
+        return bool(
+            database_session.scalar(statement),
+        )
+
+    @staticmethod
+    def delete_business_product(
+        database_session: Session,
+        product: BusinessProduct,
+    ) -> None:
+        """Permanently delete one business product."""
+
+        database_session.delete(product)
+        database_session.flush()
+
+    @staticmethod
     def get_marketplace_listing(
         database_session: Session,
         listing_id: int,
@@ -555,6 +584,16 @@ class SMERepository:
         database_session.flush()
 
         return entry
+
+    @staticmethod
+    def delete_watchlist_entry(
+        database_session: Session,
+        entry: CompetitorWatchlist,
+    ) -> None:
+        """Permanently remove one competitor watchlist entry."""
+
+        database_session.delete(entry)
+        database_session.flush()
 
     @staticmethod
     def get_lowest_competitor_price(

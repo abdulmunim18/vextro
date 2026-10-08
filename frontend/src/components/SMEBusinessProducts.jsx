@@ -7,6 +7,7 @@ import {
 
 import {
   createBusinessProduct,
+  deleteBusinessProduct,
   getBusinessProducts,
   uploadBusinessProducts,
   updateBusinessProduct,
@@ -14,7 +15,6 @@ import {
 import { getApiErrorMessage } from "../utils/apiError";
 
 const initialProductForm = {
-  canonical_product_id: "",
   name: "",
   sku: "",
   cost_price: "",
@@ -59,16 +59,10 @@ function formatPrice(value, currency = "PKR") {
 }
 
 function buildProductPayload(form) {
-  const canonicalProductId =
-    form.canonical_product_id.trim();
-
   const costPrice = form.cost_price.trim();
   const sellingPrice = form.selling_price.trim();
 
   return {
-    canonical_product_id: canonicalProductId
-      ? Number(canonicalProductId)
-      : null,
     name: form.name.trim(),
     sku: form.sku.trim() || null,
     cost_price: costPrice
@@ -88,8 +82,6 @@ function buildProductPayload(form) {
 
 function createEditForm(product) {
   return {
-    canonical_product_id:
-      product.canonical_product_id?.toString() || "",
     name: product.name || "",
     sku: product.sku || "",
     cost_price:
@@ -163,35 +155,6 @@ function ProductFields({
           onChange={handleChange}
           placeholder="Example: SAM-A55-001"
         />
-      </div>
-
-      <div>
-        <label
-          className="mb-2 block text-sm font-black text-slate-800"
-          htmlFor={`${idPrefix}-canonical-product`}
-        >
-          Catalog product ID
-          <span className="ml-1 font-medium text-slate-400">
-            optional — name se auto-match hota hai
-          </span>
-        </label>
-
-        <input
-          id={`${idPrefix}-canonical-product`}
-          className={inputClasses}
-          name="canonical_product_id"
-          type="number"
-          min="1"
-          step="1"
-          value={form.canonical_product_id}
-          onChange={handleChange}
-          placeholder="Example: 12"
-        />
-        <p className="mt-2 text-xs leading-5 text-slate-500">
-          ID na dein to VEXTRO product name ko catalog se match karega.
-          Match na mile to product phir bhi save hoga, magar marketplace
-          listings unavailable show hongi.
-        </p>
       </div>
 
       <div>
@@ -317,7 +280,9 @@ function ProductCard({
   onCancelEdit,
   onSaveEdit,
   onToggleStatus,
+  onDelete,
   isUpdating,
+  isDeleting,
 }) {
   const isLowStock =
     product.stock_level <= product.reorder_level;
@@ -414,18 +379,19 @@ function ProductCard({
           ) : null}
         </div>
 
-        <div className="flex shrink-0 gap-2">
+        <div className="flex shrink-0 flex-wrap gap-2">
           <button
             type="button"
+            disabled={isUpdating || isDeleting}
             onClick={onStartEdit}
-            className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-black text-blue-700 transition hover:bg-blue-100"
+            className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-black text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Edit
           </button>
 
           <button
             type="button"
-            disabled={isUpdating}
+            disabled={isUpdating || isDeleting}
             onClick={onToggleStatus}
             className={[
               "rounded-xl border px-4 py-2 text-xs font-black transition disabled:cursor-not-allowed disabled:opacity-60",
@@ -439,6 +405,15 @@ function ProductCard({
               : product.is_active
                 ? "Deactivate"
                 : "Activate"}
+          </button>
+
+          <button
+            type="button"
+            disabled={isUpdating || isDeleting}
+            onClick={onDelete}
+            className="rounded-xl border border-red-300 bg-red-600 px-4 py-2 text-xs font-black text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isDeleting ? "Deleting..." : "Delete"}
           </button>
         </div>
       </div>
@@ -536,6 +511,8 @@ function SMEBusinessProducts({
   const [isCreating, setIsCreating] =
     useState(false);
   const [updatingProductId, setUpdatingProductId] =
+    useState(null);
+  const [deletingProductId, setDeletingProductId] =
     useState(null);
 
   const [loadError, setLoadError] = useState("");
@@ -761,6 +738,48 @@ function SMEBusinessProducts({
       );
     } finally {
       setUpdatingProductId(null);
+    }
+  }
+
+  async function handleDeleteProduct(product) {
+    const shouldDelete = window.confirm(
+      `Delete "${product.name}" permanently? This action cannot be undone.`,
+    );
+
+    if (!shouldDelete) {
+      return;
+    }
+
+    setDeletingProductId(product.id);
+    setActionError("");
+
+    try {
+      await deleteBusinessProduct(
+        organizationId,
+        product.id,
+      );
+
+      setProducts((currentProducts) =>
+        currentProducts.filter(
+          (currentProduct) =>
+            currentProduct.id !== product.id,
+        ),
+      );
+
+      if (editingProductId === product.id) {
+        setEditingProductId(null);
+      }
+
+      onProductsChanged?.();
+    } catch (error) {
+      setActionError(
+        getApiErrorMessage(
+          error,
+          "Product could not be deleted.",
+        ),
+      );
+    } finally {
+      setDeletingProductId(null);
     }
   }
 
@@ -1063,8 +1082,14 @@ function SMEBusinessProducts({
                 onToggleStatus={() =>
                   handleToggleStatus(product)
                 }
+                onDelete={() =>
+                  handleDeleteProduct(product)
+                }
                 isUpdating={
                   updatingProductId === product.id
+                }
+                isDeleting={
+                  deletingProductId === product.id
                 }
               />
             ))}
