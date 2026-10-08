@@ -408,6 +408,26 @@ def test_sme_can_import_and_read_valid_sales_csv(
 
     assert int(stored_record_count or 0) == 2
 
+    product_id = int(
+        sales_context["business_product_id"],
+    )
+    organization_id = int(
+        sales_context["organization_id"],
+    )
+    delete_response = client.delete(
+        (
+            f"{ORGANIZATIONS_ENDPOINT}/"
+            f"{organization_id}/products/{product_id}"
+        ),
+        headers=headers,
+    )
+
+    assert delete_response.status_code == 409
+    assert delete_response.json()["detail"] == (
+        "This product has sales history and cannot be "
+        "deleted. Deactivate it instead."
+    )
+
 
 def test_sales_import_returns_row_validation_errors(
     client: TestClient,

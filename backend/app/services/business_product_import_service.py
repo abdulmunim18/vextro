@@ -223,6 +223,10 @@ class BusinessProductImportService:
                     organization_id=organization_id,
                     user_id=user_id,
                     payload=payload,
+                    catalog_reference_name=(
+                        row.get("catalog_product_name")
+                        or row["name"]
+                    ),
                 )
                 products.append(created)
                 if created.canonical_product_id is not None:

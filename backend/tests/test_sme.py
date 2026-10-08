@@ -489,7 +489,7 @@ def test_sme_can_manage_business_products(
     sme_context: dict[str, object],
     marketplace_context: dict[str, object],
 ) -> None:
-    """Create, list and update an SME product."""
+    """Create, list, update and delete an SME product."""
 
     headers = sme_context["headers"]
 
@@ -510,7 +510,11 @@ def test_sme_can_manage_business_products(
                 "canonical_product_id"
             ],
         ),
-        "name": "Samsung Business Phone",
+        "name": str(
+            marketplace_context[
+                "canonical_product_name"
+            ],
+        ),
         "sku": "sme-phone-001",
         "cost_price": 105000,
         "selling_price": 120000,
@@ -541,7 +545,6 @@ def test_sme_can_manage_business_products(
         headers=headers,
         json={
             **product_payload,
-            "name": "Duplicate SKU Phone",
             "sku": "SME-PHONE-001",
         },
     )
@@ -557,7 +560,7 @@ def test_sme_can_manage_business_products(
         products_endpoint,
         headers=headers,
         params={
-            "query": "Samsung",
+            "query": "SME Marketplace",
             "page": 1,
             "page_size": 10,
         },
@@ -594,6 +597,21 @@ def test_sme_can_manage_business_products(
 
     assert updated_product["stock_level"] == 14
     assert updated_product["reorder_level"] == 6
+
+    delete_response = client.delete(
+        f"{products_endpoint}/{product_id}",
+        headers=headers,
+    )
+
+    assert delete_response.status_code == 204
+    assert delete_response.content == b""
+
+    read_deleted_response = client.get(
+        f"{products_endpoint}/{product_id}",
+        headers=headers,
+    )
+
+    assert read_deleted_response.status_code == 404
 
 
 def test_sme_can_import_business_products_from_csv_and_excel(
@@ -729,6 +747,35 @@ def test_watchlist_rejects_listing_for_an_unlinked_product(
     assert "does not belong" in response.json()["detail"]
 
 
+def test_sme_rejects_an_unrelated_manual_catalog_id(
+    client: TestClient,
+    sme_context: dict[str, object],
+    marketplace_context: dict[str, object],
+) -> None:
+    """Do not let a raw catalog ID connect an unrelated product."""
+
+    headers = sme_context["headers"]
+    assert isinstance(headers, dict)
+    organization_id = int(sme_context["organization_id"])
+    response = client.post(
+        f"{ORGANIZATIONS_ENDPOINT}/{organization_id}/products",
+        headers=headers,
+        json={
+            "canonical_product_id": int(
+                marketplace_context["canonical_product_id"],
+            ),
+            "name": "PakTech AirBuds Z5",
+            "sku": "UNRELATED-CATALOG-ID",
+            "currency": "PKR",
+            "stock_level": 1,
+            "reorder_level": 0,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "does not match" in response.json()["detail"]
+
+
 def test_sme_can_manage_competitor_watchlist(
     client: TestClient,
     sme_context: dict[str, object],
@@ -758,7 +805,11 @@ def test_sme_can_manage_competitor_watchlist(
                     "canonical_product_id"
                 ],
             ),
-            "name": "Watchlist Test Product",
+            "name": str(
+                marketplace_context[
+                    "canonical_product_name"
+                ],
+            ),
             "sku": "WATCH-001",
             "cost_price": 100000,
             "selling_price": 122000,
@@ -905,3 +956,18 @@ def test_sme_can_manage_competitor_watchlist(
 
     assert active_only_response.status_code == 200
     assert active_only_response.json()["total"] == 0
+
+    delete_response = client.delete(
+        f"{competitors_endpoint}/{watchlist_id}",
+        headers=headers,
+    )
+
+    assert delete_response.status_code == 204
+
+    list_after_delete_response = client.get(
+        competitors_endpoint,
+        headers=headers,
+    )
+
+    assert list_after_delete_response.status_code == 200
+    assert list_after_delete_response.json()["total"] == 0

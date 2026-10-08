@@ -11,6 +11,7 @@ import {
 } from "../services/catalogService";
 import {
   createCompetitorWatchlistEntry,
+  deleteCompetitorWatchlistEntry,
   getBusinessProducts,
   getCompetitorWatchlist,
   updateCompetitorWatchlistStatus,
@@ -82,7 +83,9 @@ function CompetitorCard({
   listing,
   platformName,
   isUpdating,
+  isDeleting,
   onToggleStatus,
+  onDelete,
 }) {
   const priceGapText = getPriceGapText(
     businessProduct,
@@ -143,23 +146,34 @@ function CompetitorCard({
           </p>
         </div>
 
-        <button
-          type="button"
-          disabled={isUpdating}
-          onClick={onToggleStatus}
-          className={[
-            "inline-flex min-h-11 shrink-0 items-center justify-center rounded-xl border px-5 text-xs font-black transition disabled:cursor-not-allowed disabled:opacity-60",
-            entry.is_active
-              ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
-              : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100",
-          ].join(" ")}
-        >
-          {isUpdating
-            ? "Updating..."
-            : entry.is_active
-              ? "Pause monitoring"
-              : "Resume monitoring"}
-        </button>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={isUpdating || isDeleting}
+            onClick={onToggleStatus}
+            className={[
+              "inline-flex min-h-11 items-center justify-center rounded-xl border px-5 text-xs font-black transition disabled:cursor-not-allowed disabled:opacity-60",
+              entry.is_active
+                ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+                : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100",
+            ].join(" ")}
+          >
+            {isUpdating
+              ? "Updating..."
+              : entry.is_active
+                ? "Pause monitoring"
+                : "Resume monitoring"}
+          </button>
+
+          <button
+            type="button"
+            disabled={isUpdating || isDeleting}
+            onClick={onDelete}
+            className="inline-flex min-h-11 items-center justify-center rounded-xl border border-red-300 bg-red-600 px-5 text-xs font-black text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isDeleting ? "Deleting..." : "Delete"}
+          </button>
+        </div>
       </div>
 
       <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
@@ -284,6 +298,9 @@ function SMECompetitorWatchlist({
     useState(false);
 
   const [updatingEntryId, setUpdatingEntryId] =
+    useState(null);
+
+  const [deletingEntryId, setDeletingEntryId] =
     useState(null);
 
   const [loadError, setLoadError] =
@@ -670,6 +687,47 @@ function SMECompetitorWatchlist({
     }
   }
 
+  async function handleDeleteEntry(entry) {
+    const shouldDelete = window.confirm(
+      "Delete this competitor listing from the watchlist permanently?",
+    );
+
+    if (!shouldDelete) {
+      return;
+    }
+
+    setDeletingEntryId(entry.id);
+    setActionError("");
+    setSuccessMessage("");
+
+    try {
+      await deleteCompetitorWatchlistEntry(
+        organizationId,
+        entry.id,
+      );
+
+      setWatchlistEntries((currentEntries) =>
+        currentEntries.filter(
+          (currentEntry) =>
+            currentEntry.id !== entry.id,
+        ),
+      );
+
+      setSuccessMessage(
+        "Competitor listing was removed from the watchlist.",
+      );
+    } catch (error) {
+      setActionError(
+        getApiErrorMessage(
+          error,
+          "Competitor listing could not be deleted.",
+        ),
+      );
+    } finally {
+      setDeletingEntryId(null);
+    }
+  }
+
   return (
     <section className="mt-8">
       <div className="rounded-3xl border border-slate-200 bg-slate-950 p-7 text-white shadow-xl sm:p-9">
@@ -863,10 +921,9 @@ function SMECompetitorWatchlist({
           !selectedBusinessProduct
             .canonical_product_id ? (
             <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold leading-6 text-amber-800">
-              Is business product ke saath
-              Catalog Product ID connected nahi hai.
-              Product ko edit karke valid catalog ID
-              add karo.
+              Is business product ka VEXTRO catalog mein
+              reliable match nahi mila. Is liye Daraz ya
+              PriceOye listing recommend nahi ki jayegi.
             </div>
           ) : null}
 
@@ -1023,8 +1080,15 @@ function SMECompetitorWatchlist({
                     updatingEntryId ===
                     entry.id
                   }
+                  isDeleting={
+                    deletingEntryId ===
+                    entry.id
+                  }
                   onToggleStatus={() =>
                     handleToggleStatus(entry)
+                  }
+                  onDelete={() =>
+                    handleDeleteEntry(entry)
                   }
                 />
               );

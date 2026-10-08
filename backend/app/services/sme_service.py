@@ -225,6 +225,33 @@ class SMEService:
 
         return ranked[0][1]
 
+    def _require_matching_catalog_product(
+        self,
+        database_session: Session,
+        *,
+        product_name: str,
+        canonical_product_id: int,
+    ) -> None:
+        """Reject a catalog link that does not match the product name."""
+
+        matched_product = self._resolve_catalog_product(
+            database_session,
+            product_name,
+        )
+
+        if (
+            matched_product is None
+            or matched_product.id != canonical_product_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "The selected catalog product does not match the "
+                    "business product name. Leave the catalog link "
+                    "empty when no marketplace match exists."
+                ),
+            )
+
     @staticmethod
     def _commit_and_refresh(
         database_session: Session,
@@ -417,6 +444,7 @@ class SMEService:
         organization_id: int,
         user_id: int,
         payload: BusinessProductCreate,
+        catalog_reference_name: str | None = None,
     ) -> BusinessProductResponse:
         """Create a product inside an SME organization."""
 
@@ -456,6 +484,17 @@ class SMEService:
                         "is inactive."
                     ),
                 )
+
+            self._require_matching_catalog_product(
+                database_session,
+                product_name=(
+                    catalog_reference_name
+                    or payload.name
+                ),
+                canonical_product_id=(
+                    canonical_product_id
+                ),
+            )
         else:
             matched_product = self._resolve_catalog_product(
                 database_session,
@@ -692,6 +731,17 @@ class SMEService:
                         ),
                     )
 
+                self._require_matching_catalog_product(
+                    database_session,
+                    product_name=str(
+                        update_data.get("name")
+                        or product.name
+                    ),
+                    canonical_product_id=int(
+                        canonical_product_id
+                    ),
+                )
+
         if (
             update_data.get("canonical_product_id") is None
             and "name" in update_data
@@ -762,6 +812,69 @@ class SMEService:
         return BusinessProductResponse.model_validate(
             product,
         )
+
+    def delete_business_product(
+        self,
+        database_session: Session,
+        *,
+        organization_id: int,
+        product_id: int,
+        user_id: int,
+    ) -> None:
+        """Permanently delete a product that has no sales history."""
+
+        self._get_accessible_organization(
+            database_session,
+            organization_id=organization_id,
+            user_id=user_id,
+        )
+
+        product = self.repository.get_business_product(
+            database_session,
+            organization_id=organization_id,
+            product_id=product_id,
+            include_inactive=True,
+        )
+
+        if product is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    "The requested business product "
+                    "was not found."
+                ),
+            )
+
+        if self.repository.business_product_has_sales_records(
+            database_session,
+            product.id,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "This product has sales history and cannot be "
+                    "deleted. Deactivate it instead."
+                ),
+            )
+
+        try:
+            self.repository.delete_business_product(
+                database_session,
+                product,
+            )
+            database_session.commit()
+        except IntegrityError as error:
+            database_session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "This product is still used by business records "
+                    "and cannot be deleted. Deactivate it instead."
+                ),
+            ) from error
+        except Exception:
+            database_session.rollback()
+            raise
 
     def create_watchlist_entry(
         self,
@@ -1002,6 +1115,47 @@ class SMEService:
         return CompetitorWatchlistResponse.model_validate(
             entry,
         )
+
+    def delete_watchlist_entry(
+        self,
+        database_session: Session,
+        *,
+        organization_id: int,
+        watchlist_id: int,
+        user_id: int,
+    ) -> None:
+        """Permanently remove one competitor mapping."""
+
+        self._get_accessible_organization(
+            database_session,
+            organization_id=organization_id,
+            user_id=user_id,
+        )
+
+        entry = self.repository.get_watchlist_entry(
+            database_session,
+            organization_id=organization_id,
+            watchlist_id=watchlist_id,
+        )
+
+        if entry is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    "The requested competitor "
+                    "watchlist entry was not found."
+                ),
+            )
+
+        try:
+            self.repository.delete_watchlist_entry(
+                database_session,
+                entry,
+            )
+            database_session.commit()
+        except Exception:
+            database_session.rollback()
+            raise
 
     def get_competitor_intelligence(
         self,
