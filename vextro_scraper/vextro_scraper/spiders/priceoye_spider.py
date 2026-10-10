@@ -66,6 +66,46 @@ class PriceoyeSpider(scrapy.Spider):
     reached_catalog_end = False
     failed_page_count = 0
 
+    PRODUCT_URL_PREFIX = "https://priceoye.pk/mobiles/"
+
+    def __init__(self, product_urls=None, *args, **kwargs):
+        """Crawl the whole catalogue, or only the product pages given.
+
+        ``-a product_urls=<url>[,<url>...]`` re-reads just those phones,
+        which is how the backend refreshes one product when a shopper
+        opens it. Such a run never reaches the catalogue's end, so it can
+        never be mistaken for a full crawl.
+        """
+
+        super().__init__(*args, **kwargs)
+        self.targeted_urls = [
+            url
+            for url in (
+                part.strip() for part in str(product_urls or '').split(',')
+            )
+            if url.startswith(self.PRODUCT_URL_PREFIX)
+        ]
+
+    async def start(self):
+        if not self.targeted_urls:
+            async for request in super().start():
+                yield request
+            return
+
+        for url in dict.fromkeys(self.targeted_urls):
+            item = SmartphoneItem()
+            item['platform'] = 'PriceOye'
+            item['exact_model_title'] = True
+            item['product_url'] = url
+            item['scrape_timestamp'] = datetime.now(timezone.utc).isoformat()
+
+            yield scrapy.Request(
+                url,
+                callback=self.parse_product,
+                errback=self.page_fetch_error,
+                meta={'item': item},
+            )
+
     @property
     def full_crawl_completed(self):
         """True when every catalogue page and product page was read.
@@ -609,6 +649,17 @@ class PriceoyeSpider(scrapy.Spider):
         # describe only the option PriceOye pre-selects; the page's own
         # offer matrix states the price and stock of every other one.
         product_data = self.extract_product_data(response)
+
+        if not item.get('model'):
+            # A page reached directly, not through a listing, names the
+            # phone itself.
+            data_set = (product_data or {}).get('dataSet')
+            item['model'] = optional_text(
+                (data_set.get('title') if isinstance(data_set, dict) else None)
+                or response.css('h1 ::text').get(),
+                max_length=255,
+            )
+
         variant_items = self.variant_offer_items(item, product_data)
 
         if variant_items:

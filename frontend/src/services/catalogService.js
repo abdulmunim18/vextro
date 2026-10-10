@@ -38,6 +38,18 @@ export async function getProductListings(productId) {
 
   return response.data;
 }
+// Asks VEXTRO to re-read this product's marketplace pages when its offers
+// have not been confirmed recently. Returns at once; `refreshing` says
+// whether a refresh is under way and `retry_after_seconds` when to read
+// the offers again.
+export async function refreshProductOffers(productId) {
+  const response = await apiClient.post(
+    `/products/${productId}/refresh`,
+  );
+
+  return response.data;
+}
+
 export async function getProductPriceHistory(
   productId,
   params = {},
