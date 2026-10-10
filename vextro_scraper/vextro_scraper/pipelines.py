@@ -280,6 +280,11 @@ class VextroCleaningPipeline:
         if adapter.get('reviews') is not None:
             return item
 
+        # Community opinions describe a phone, not an offer: there is no
+        # price to validate and no seller title to clean.
+        if adapter.get('opinions') is not None:
+            return item
+
         # 1. Accept only finite, positive marketplace prices. A failed parse
         # is an invalid item state, never a numeric sentinel such as zero.
         raw_price = adapter.get('price')
@@ -948,6 +953,12 @@ class VextroApiIngestionPipeline:
 
     def process_item(self, item, spider):
         payload = dict(ItemAdapter(item))
+
+        if payload.get('opinions') is not None:
+            # Delivered by its own pipeline step; a listing is never built
+            # from an opinions item.
+            return item
+
         context = self._context(payload)
 
         if payload.get('reviews') is not None:
