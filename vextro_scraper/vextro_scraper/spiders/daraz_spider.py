@@ -1,5 +1,6 @@
 import scrapy
 import json
+import random
 import re
 from scrapy.exceptions import IgnoreRequest
 from math import ceil
@@ -30,6 +31,20 @@ class DarazReviewParserError(ValueError):
 
     error_type = "review_parse_error"
     error_stage = "parse"
+
+
+class DarazLookupBlockedError(RuntimeError):
+    """Daraz served its anti-bot page instead of a name lookup's results.
+
+    Daraz tolerates a limited number of searches from one address and then
+    answers every further one with a challenge page for a while. A crawl
+    that kept asking recorded one parse failure per phone - 413 in one run -
+    and prolonged the block. The lookups stop at the first such answer and
+    resume on a later crawl.
+    """
+
+    error_type = "catalog_lookup_blocked"
+    error_stage = "fetch"
 
 
 class DarazReviewBlockedError(RuntimeError):
@@ -115,6 +130,7 @@ class DarazSpider(scrapy.Spider):
         self.reviews_blocked = False
         self.seen_item_ids = set()
         self.walk_item_ids = set()
+        self.pending_lookups = []
         self.requested_brand_paths = set()
         self.targeted_terms = [
             term
@@ -129,19 +145,50 @@ class DarazSpider(scrapy.Spider):
 
     async def start(self):
         if self.targeted_terms:
-            for request in self.search_requests(self.targeted_terms):
+            self.queue_lookups(self.targeted_terms)
+        else:
+            async for request in super().start():
                 yield request
-            return
 
-        async for request in super().start():
-            yield request
+            # The category and brand listings show Daraz's best sellers,
+            # not everything it sells: a phone VEXTRO lists from another
+            # marketplace can be on Daraz and never appear in them. Asking
+            # Daraz for some of those phones by name, each crawl, is what
+            # finds them.
+            self.queue_lookups(self.catalog_phone_names())
 
-        # The category and brand listings show Daraz's best sellers, not
-        # everything it sells: a phone VEXTRO lists from another
-        # marketplace can be on Daraz and never appear in them. Asking
-        # Daraz for each phone by name is what finds those.
-        for request in self.search_requests(self.catalog_phone_names()):
-            yield request
+        first_lookup = self.next_lookup_request()
+        if first_lookup is not None:
+            yield first_lookup
+
+    def queue_lookups(self, terms):
+        """Remember the phone names to look up, one after another."""
+
+        self.pending_lookups = [
+            term
+            for term in dict.fromkeys(
+                ' '.join(str(term).split()) for term in terms
+            )
+            if len(term) >= 3
+        ]
+
+    def next_lookup_request(self):
+        """Return the next name lookup, or ``None`` when none is left.
+
+        Lookups are chained rather than queued all at once, so the first
+        blocked answer can stop the rest from being sent.
+        """
+
+        if not self.pending_lookups:
+            return None
+
+        term = self.pending_lookups.pop(0)
+
+        return scrapy.Request(
+            url=self.search_url(term),
+            callback=self.parse,
+            cb_kwargs={'search_term': term},
+        )
 
     @classmethod
     def search_url(cls, term):
@@ -151,21 +198,6 @@ class DarazSpider(scrapy.Spider):
             f"https://www.daraz.pk{cls.CATALOG_PATH}"
             f"?ajax=true&q={quote_plus(term)}"
         )
-
-    def search_requests(self, terms):
-        """Return one category search per distinct phone name."""
-
-        for term in dict.fromkeys(
-            ' '.join(str(term).split()) for term in terms
-        ):
-            if len(term) < 3:
-                continue
-
-            yield scrapy.Request(
-                url=self.search_url(term),
-                callback=self.parse,
-                cb_kwargs={'search_term': term},
-            )
 
     def catalog_phone_names(self):
         """Return the names of the phones VEXTRO already lists.
@@ -185,12 +217,15 @@ class DarazSpider(scrapy.Spider):
         base_url = str(
             settings.get('VEXTRO_API_URL', 'http://127.0.0.1:8000')
         ).rstrip('/')
-        limit = settings.getint('DARAZ_CATALOG_SEARCH_LIMIT', 1500)
+        # Daraz starts challenging an address after roughly 150 searches,
+        # so one crawl asks about a share of the catalogue and the next
+        # crawl about another.
+        limit = settings.getint('DARAZ_CATALOG_SEARCH_LIMIT', 80)
         names = []
         page = 1
 
         try:
-            while len(names) < limit:
+            while True:
                 response = requests.get(
                     f'{base_url}/api/v1/products',
                     params={
@@ -204,7 +239,12 @@ class DarazSpider(scrapy.Spider):
                 body = response.json()
                 items = body.get('items') or []
                 names.extend(
-                    item['name'] for item in items if item.get('name')
+                    (
+                        item['name'],
+                        'daraz' in (item.get('platform_codes') or []),
+                    )
+                    for item in items
+                    if item.get('name')
                 )
 
                 if not items or page >= int(body.get('total_pages') or 0):
@@ -219,12 +259,19 @@ class DarazSpider(scrapy.Spider):
             )
             return []
 
+        # Phones with no Daraz listing yet come first; within each group
+        # the order is random, so successive crawls cover different phones.
+        random.shuffle(names)
+        names.sort(key=lambda entry: entry[1])
+        chosen = [name for name, _ in names[:limit]]
+
         self.logger.info(
-            'Looking up %s catalogue phones on Daraz by name.',
-            len(names[:limit]),
+            'Looking up %s of %s catalogue phones on Daraz by name.',
+            len(chosen),
+            len(names),
         )
 
-        return names[:limit]
+        return chosen
 
     @staticmethod
     def catalog_url(path, page_number=1):
@@ -456,6 +503,14 @@ class DarazSpider(scrapy.Spider):
     ):
         catalog_path = catalog_path or self.CATALOG_PATH
 
+        if search_term is not None and self._is_blocked_response(response):
+            skipped = len(self.pending_lookups)
+            self.pending_lookups = []
+            raise DarazLookupBlockedError(
+                'Daraz answered a name lookup with its anti-bot page; '
+                f'{skipped} further lookups were left for a later crawl.'
+            )
+
         try:
             data = json.loads(response.text)
         except json.JSONDecodeError as exc:
@@ -593,7 +648,10 @@ class DarazSpider(scrapy.Spider):
 
         if search_term is not None:
             # A lookup for one phone: its first page of results is the
-            # answer, and it starts no further walks.
+            # answer, and it starts no listing walk - only the next lookup.
+            next_lookup = self.next_lookup_request()
+            if next_lookup is not None:
+                yield next_lookup
             return
 
         if catalog_path == self.CATALOG_PATH and page == 1:

@@ -3,10 +3,14 @@
 import asyncio
 import json
 
-from scrapy.http import Request, TextResponse
+import pytest
+from scrapy.http import HtmlResponse, Request, TextResponse
 
 from vextro_scraper.items import SmartphoneItem
-from vextro_scraper.spiders.daraz_spider import DarazSpider
+from vextro_scraper.spiders.daraz_spider import (
+    DarazLookupBlockedError,
+    DarazSpider,
+)
 
 
 def collect(async_generator):
@@ -49,20 +53,31 @@ def test_a_phone_is_searched_inside_the_smartphone_category():
     )
 
 
-def test_given_names_only_those_phones_are_looked_up():
+def test_given_names_only_those_phones_are_looked_up_one_after_another():
     """How the backend refreshes one product: no listing walk at all."""
 
     spider = DarazSpider(search_terms='Dcode Cygnal Prime| Honor X9d |ab')
-    requests = collect(spider.start())
+    first = collect(spider.start())
 
-    assert [request.url for request in requests] == [
+    assert [request.url for request in first] == [
         spider.search_url('Dcode Cygnal Prime'),
+    ]
+    assert first[0].cb_kwargs == {'search_term': 'Dcode Cygnal Prime'}
+
+    # The answer to one lookup is what sends the next.
+    outputs = list(spider.parse(
+        search_response(spider, 'Dcode Cygnal Prime', [501]),
+        search_term='Dcode Cygnal Prime',
+    ))
+    follow_ups = [o for o in outputs if isinstance(o, Request)]
+
+    assert [request.url for request in follow_ups] == [
         spider.search_url('Honor X9d'),
     ]
-    assert requests[0].cb_kwargs == {'search_term': 'Dcode Cygnal Prime'}
+    assert spider.pending_lookups == []
 
 
-def test_a_lookup_yields_its_results_and_starts_no_walk():
+def test_a_lookup_yields_its_results_and_starts_no_listing_walk():
     spider = DarazSpider()
     outputs = list(spider.parse(
         search_response(spider, 'Dcode Cygnal Prime', [501, 502]),
@@ -76,6 +91,29 @@ def test_a_lookup_yields_its_results_and_starts_no_walk():
     ] == ['501', '502']
     # No next page and no brand listings: one page answers one phone.
     assert [output for output in outputs if isinstance(output, Request)] == []
+
+
+def test_the_first_blocked_answer_stops_the_remaining_lookups():
+    """Daraz challenges an address that searches too much; asking on only
+    lengthens the block."""
+
+    spider = DarazSpider(search_terms='Phone One|Phone Two|Phone Three')
+    collect(spider.start())
+    blocked = HtmlResponse(
+        url=spider.search_url('Phone One'),
+        encoding='utf-8',
+        body=(
+            '<script>var url = "//www.daraz.pk//smartphones//_____tmd_____'
+            '/punish?x5secdata=abc";</script>'
+        ),
+    )
+
+    with pytest.raises(DarazLookupBlockedError) as raised:
+        list(spider.parse(blocked, search_term='Phone One'))
+
+    assert '2 further lookups' in str(raised.value)
+    assert spider.pending_lookups == []
+    assert spider.next_lookup_request() is None
 
 
 def test_an_item_a_lookup_found_first_does_not_end_a_listing_walk_early():
