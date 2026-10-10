@@ -40,7 +40,12 @@ from vextro_scraper.single_instance import (
 SCRAPER_PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = SCRAPER_PROJECT_ROOT.parent
 
-DEFAULT_SPIDERS = ("priceoye_smartphones", "daraz_smartphones")
+DEFAULT_SPIDERS = (
+    "priceoye_smartphones",
+    "daraz_smartphones",
+    # Last: it looks up the phones the two marketplace crawls just listed.
+    "whatmobile_opinions",
+)
 JOB_ID = "vextro-marketplace-refresh"
 
 # One crawl at a time, process-wide. The OS lock keeps other processes out;

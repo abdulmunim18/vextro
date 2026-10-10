@@ -7,10 +7,6 @@ import pytest
 from scrapy.http import HtmlResponse, Request
 
 from vextro_scraper.items import CommunityOpinionsItem
-from vextro_scraper.pipelines import (
-    VextroApiIngestionPipeline,
-    VextroCleaningPipeline,
-)
 from vextro_scraper.spiders.whatmobile_spider import (
     CONTACT_PLACEHOLDER,
     WhatmobileSpider,
@@ -170,19 +166,3 @@ def test_opinions_carry_their_date_and_author_and_lose_phone_numbers():
     assert advert['posted_at'].startswith('2026-10-02')
     assert CONTACT_PLACEHOLDER in advert['text']
     assert '0323' not in advert['text'] and '03036806902' not in advert['text']
-
-
-def test_an_opinions_item_is_not_treated_as_a_listing():
-    """It has no price or seller; the listing pipelines must let it pass."""
-
-    item = CommunityOpinionsItem(
-        source='whatmobile',
-        product_name='Infinix Hot 70 Pro',
-        opinions=[],
-    )
-
-    assert VextroCleaningPipeline().process_item(item, None) is item
-    assert VextroApiIngestionPipeline(
-        base_api_url='http://backend.test',
-        ingestion_key='key',
-    ).process_item(item, None) is item

@@ -951,12 +951,71 @@ class VextroApiIngestionPipeline:
             listing_payload['product_variant_id'] = product_variant_id
         return listing_payload
 
+    COMMUNITY_OPINIONS_PATH = (
+        '/api/v1/internal/acquisition/community-opinions'
+    )
+
+    def _deliver_community_opinions(self, payload):
+        """Send one phone's guide-site rating and opinions to the backend."""
+
+        context = (
+            f"source={payload.get('source')} "
+            f"phone={str(payload.get('product_name'))[:80]}"
+        )
+        result = self._post_json(
+            self.COMMUNITY_OPINIONS_PATH,
+            {
+                'source': payload.get('source'),
+                'product_name': payload.get('product_name'),
+                'catalog_name': payload.get('catalog_name'),
+                'brand': _optional_text(payload.get('brand')),
+                'source_url': payload.get('source_url'),
+                'opinions_url': payload.get('opinions_url'),
+                'rating': payload.get('rating'),
+                'rating_count': payload.get('rating_count') or 0,
+                'reference_price': payload.get('reference_price'),
+                'opinions': [
+                    {
+                        'position': opinion.get('position'),
+                        'author': _optional_text(opinion.get('author')),
+                        'posted_at': opinion.get('posted_at'),
+                        'text': opinion.get('text'),
+                        'contact_removed': bool(
+                            opinion.get('contact_removed')
+                        ),
+                    }
+                    for opinion in (payload.get('opinions') or [])
+                    if opinion.get('text')
+                ],
+                'scraped_at': _normalize_scraped_at(
+                    payload.get('scrape_timestamp')
+                ),
+            },
+            context,
+        )
+
+        if not result.get('matched'):
+            raise AcquisitionDeliveryError(
+                f'No catalog phone for this guide-site page ({context}).',
+                error_type='product_unmatched',
+                error_stage='matching',
+                outcome='rejected',
+            )
+
+        logging.info(
+            'Community opinions delivered (%s, created=%s, duplicates=%s).',
+            context,
+            result.get('created_count'),
+            result.get('duplicate_count'),
+        )
+
     def process_item(self, item, spider):
         payload = dict(ItemAdapter(item))
 
         if payload.get('opinions') is not None:
-            # Delivered by its own pipeline step; a listing is never built
-            # from an opinions item.
+            # A guide-site page describes a phone, not an offer: it goes to
+            # its own endpoint and a listing is never built from it.
+            self._deliver_community_opinions(payload)
             return item
 
         context = self._context(payload)

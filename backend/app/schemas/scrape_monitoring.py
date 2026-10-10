@@ -7,7 +7,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-PlatformCode = Literal["daraz", "priceoye"]
+# Marketplaces, plus guide sites that are crawled and monitored the same
+# way although they have no listings.
+PlatformCode = Literal["daraz", "priceoye", "whatmobile"]
 TriggerType = Literal["manual", "scheduler", "test"]
 RunStatus = Literal["running", "completed", "partial", "failed"]
 ErrorStage = Literal[

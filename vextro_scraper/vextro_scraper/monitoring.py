@@ -16,6 +16,10 @@ from vextro_scraper.pipelines import (
 )
 
 
+# Marketplaces, and guide sites crawled the same way.
+MONITORED_PLATFORMS = frozenset({'daraz', 'priceoye', 'whatmobile'})
+
+
 class ScrapeMonitoringExtension:
     """Persist one run per spider and terminal outcomes per emitted item."""
 
@@ -164,7 +168,7 @@ class ScrapeMonitoringExtension:
     def spider_opened(self, spider):
         platform = getattr(spider, 'platform_code', None)
         parser_version = getattr(spider, 'parser_version', None)
-        if platform not in {'daraz', 'priceoye'} or not parser_version:
+        if platform not in MONITORED_PLATFORMS or not parser_version:
             logging.error(
                 'Scrape monitoring not started: spider=%s lacks '
                 'platform/version metadata.',

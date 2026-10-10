@@ -6,6 +6,10 @@ from app.models.business_product import BusinessProduct
 from app.models.notification import Notification
 from app.models.canonical_product import CanonicalProduct
 from app.models.category import Category
+from app.models.community_opinion import (
+    CommunityOpinion,
+    ProductCommunityRating,
+)
 from app.models.competitor_watchlist import CompetitorWatchlist
 from app.models.digest_run import DigestRun
 from app.models.notification_delivery import NotificationDelivery
@@ -44,6 +48,8 @@ __all__ = [
     "AuthToken",
     "BusinessProduct",
     "CanonicalProduct",
+    "CommunityOpinion",
+    "ProductCommunityRating",
     "Category",
     "CompetitorWatchlist",
     "DigestRun",
