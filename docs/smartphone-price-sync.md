@@ -333,6 +333,40 @@ Remove it again with `Unregister-ScheduledTask -TaskName "VEXTRO Scraper Schedul
 The code does not depend on Task Scheduler: once the process is running, the
 startup crawl and the twelve-hour interval are the scheduler's own doing.
 
+### Refreshing one product when its page is opened
+
+The scheduled crawl leaves a price up to one interval old. To close that gap
+for the phone someone is actually looking at, the product page calls
+`POST /api/v1/products/{id}/refresh` when it opens. If a marketplace's offers
+for that product were last confirmed more than
+`ON_DEMAND_REFRESH_MAX_AGE_MINUTES` ago, the backend re-reads just that
+product's pages and the page picks up the result about ten seconds later.
+
+Nothing is parsed twice. The refresh runs the marketplace's own spider for
+one product (`scrapy crawl <spider> -a product_urls=<url>`), so the listing
+goes through the same cleaning, matching and ingestion as a full crawl.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `ON_DEMAND_REFRESH_ENABLED` | `true` | Refresh at all |
+| `ON_DEMAND_REFRESH_MAX_AGE_MINUTES` | `60` | Offers older than this are re-read |
+| `ON_DEMAND_REFRESH_COOLDOWN_SECONDS` | `120` | One refresh per product serves everyone opening it meanwhile |
+| `ON_DEMAND_REFRESH_MAX_PARALLEL` | `2` | Refreshes running at once |
+
+**Adding a marketplace.** Two things, both small:
+
+1. Its spider accepts `-a product_urls=<url>[,<url>...]` and, given that
+   argument, requests only those pages. `PriceoyeSpider.__init__` and
+   `start()` are the pattern to copy.
+2. One entry in `TARGETED_SPIDERS` in
+   `backend/app/services/listing_refresh_service.py`, mapping the platform
+   code to the spider name.
+
+A marketplace belongs there only if one product page states its offers.
+Daraz does not qualify: its listings come from the category feed and its
+product pages load prices through a signed request. Daraz is as fresh as
+the scheduled crawl, which takes about two minutes.
+
 ---
 
 ## 8. Run tracking

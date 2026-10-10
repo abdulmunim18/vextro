@@ -11,6 +11,7 @@ import pytest
 from scrapy.http import HtmlResponse, Request, TextResponse
 
 from vextro_scraper.items import ReviewBatchItem
+from vextro_scraper.normalizers import warranty_from_text
 from vextro_scraper.normalizers import (
     extract_json_ld_products,
     json_ld_availability,
@@ -676,3 +677,32 @@ def test_daraz_marks_official_mall_stores_as_verified():
     })
 
     assert seller["is_verified"] is True
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "Infinix Hot 60 Pro 8GB 128GB PTA Approved 1 Year Official Brand Warranty",
+            "1 Year Brand Warranty",
+        ),
+        ("Vivo Y05 4/64 Official One Year Brand Warranty", "1 Year Brand Warranty"),
+        ("Samsung A17 8/256 - 2 Year Warranty", "2 Years Warranty"),
+        ("Tecno Spark 40 Official Warranty", "Brand Warranty"),
+        ("Used iPhone 11 64GB No Warranty", "No Warranty"),
+        ("Redmi 15C 6GB 128GB 5000mAh Battery", None),
+    ],
+)
+def test_a_warranty_is_read_from_seller_text_only_when_stated(text, expected):
+    """A title that states no warranty yields none, never a default."""
+
+    assert warranty_from_text(text) == expected
+
+
+def test_daraz_records_the_warranty_a_seller_writes_into_the_title():
+    item = daraz_items({
+        **DARAZ_DISCOUNTED_ITEM,
+        "name": "Realme Note 60 4GB 128GB 1 Year Brand Warranty",
+    })[0]
+
+    assert item["warranty"] == "1 Year Brand Warranty"

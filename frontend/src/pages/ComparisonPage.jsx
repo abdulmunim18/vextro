@@ -11,6 +11,7 @@ import {
 import { getProductComparison } from "../services/catalogService";
 import { getApiErrorMessage } from "../utils/apiError";
 import { getMarketplaceDestination } from "../utils/marketplaceDestination";
+import { formatWarranty } from "../utils/productDisplay";
 
 
 function parseProductIds(value) {
@@ -575,11 +576,7 @@ function ComparisonPage() {
                             </span>
                           ) : null}
 
-                          {listing.warranty ? (
-                            <span>
-                              {listing.warranty}
-                            </span>
-                          ) : null}
+                          <span>{formatWarranty(listing)}</span>
                         </div>
                       </a>
                     ))

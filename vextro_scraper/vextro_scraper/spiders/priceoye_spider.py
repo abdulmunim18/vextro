@@ -66,6 +66,46 @@ class PriceoyeSpider(scrapy.Spider):
     reached_catalog_end = False
     failed_page_count = 0
 
+    PRODUCT_URL_PREFIX = "https://priceoye.pk/mobiles/"
+
+    def __init__(self, product_urls=None, *args, **kwargs):
+        """Crawl the whole catalogue, or only the product pages given.
+
+        ``-a product_urls=<url>[,<url>...]`` re-reads just those phones,
+        which is how the backend refreshes one product when a shopper
+        opens it. Such a run never reaches the catalogue's end, so it can
+        never be mistaken for a full crawl.
+        """
+
+        super().__init__(*args, **kwargs)
+        self.targeted_urls = [
+            url
+            for url in (
+                part.strip() for part in str(product_urls or '').split(',')
+            )
+            if url.startswith(self.PRODUCT_URL_PREFIX)
+        ]
+
+    async def start(self):
+        if not self.targeted_urls:
+            async for request in super().start():
+                yield request
+            return
+
+        for url in dict.fromkeys(self.targeted_urls):
+            item = SmartphoneItem()
+            item['platform'] = 'PriceOye'
+            item['exact_model_title'] = True
+            item['product_url'] = url
+            item['scrape_timestamp'] = datetime.now(timezone.utc).isoformat()
+
+            yield scrapy.Request(
+                url,
+                callback=self.parse_product,
+                errback=self.page_fetch_error,
+                meta={'item': item},
+            )
+
     @property
     def full_crawl_completed(self):
         """True when every catalogue page and product page was read.
@@ -609,6 +649,17 @@ class PriceoyeSpider(scrapy.Spider):
         # describe only the option PriceOye pre-selects; the page's own
         # offer matrix states the price and stock of every other one.
         product_data = self.extract_product_data(response)
+
+        if not item.get('model'):
+            # A page reached directly, not through a listing, names the
+            # phone itself.
+            data_set = (product_data or {}).get('dataSet')
+            item['model'] = optional_text(
+                (data_set.get('title') if isinstance(data_set, dict) else None)
+                or response.css('h1 ::text').get(),
+                max_length=255,
+            )
+
         variant_items = self.variant_offer_items(item, product_data)
 
         if variant_items:
@@ -734,6 +785,32 @@ class PriceoyeSpider(scrapy.Spider):
 
         return ram_gb, storage_gb
 
+    @staticmethod
+    def normalize_warranty(value):
+        """Spell one warranty one way: "1 Year", "1 year warranty"."""
+
+        text = ' '.join(str(value or '').split())
+
+        if not text:
+            return None
+
+        if re.fullmatch(r'no\s+warranty', text, re.I):
+            return 'No Warranty'
+
+        period = re.fullmatch(
+            r'(\d{1,2})\s*(year|yr|month)s?(?:\s+warranty)?',
+            text,
+            re.I,
+        )
+
+        if period is None:
+            return text
+
+        number = period.group(1)
+        unit = 'Month' if period.group(2).lower() == 'month' else 'Year'
+
+        return f"{number} {unit}{'' if number == '1' else 's'} Warranty"
+
     def variant_offer_items(self, base_item, product_data):
         """Return one item per colour and storage option on the page."""
 
@@ -744,6 +821,13 @@ class PriceoyeSpider(scrapy.Spider):
         color_images = product_data.get('product_color_images')
         if not isinstance(color_images, dict):
             color_images = {}
+
+        page_warranty = optional_text(
+            (product_data.get('dataSet') or {}).get('warranty')
+            if isinstance(product_data.get('dataSet'), dict)
+            else None,
+            max_length=255,
+        )
 
         base_id = base_item.get('external_id')
         base_images = list(base_item.get('image_urls') or [])
@@ -780,6 +864,14 @@ class PriceoyeSpider(scrapy.Spider):
                 retail_price
                 if retail_price is not None and retail_price > price
                 else None
+            )
+
+            # PriceOye states the warranty with each offer; the product page
+            # no longer carries it in a specification table.
+            item['warranty'] = self.normalize_warranty(
+                optional_text(offer.get('product_warranty'), max_length=255)
+                or page_warranty
+                or base_item.get('warranty')
             )
 
             availability = str(

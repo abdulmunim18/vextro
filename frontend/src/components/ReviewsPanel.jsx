@@ -12,7 +12,11 @@ import { formatDate } from "../utils/productDisplay";
 // single product without a second request.
 const FETCH_PAGE_SIZE = 100;
 const REVIEWS_PER_PLATFORM_BOX = 6;
-const SUPPORTED_PLATFORM_CODES = ["daraz", "priceoye"];
+// Only marketplaces whose review text VEXTRO can actually read get a box.
+// Daraz closes its review pages to other sites, so it has none to show;
+// its star rating still appears on each Daraz offer card. Adding "daraz"
+// back here restores its box and the marketplace comparison.
+const SUPPORTED_PLATFORM_CODES = ["priceoye"];
 const MIN_REVIEWS_FOR_RECOMMENDATION = 3;
 
 const SUSPICION_STYLES = {
@@ -91,27 +95,178 @@ function dominantLevel(low, medium, high) {
   return "low";
 }
 
-function EmptyPlatformCard({ label }) {
+// What the marketplace itself reports for this phone: its star rating and
+// how many buyers rated it. VEXTRO can read only some of the review text
+// (none of it on Daraz, which closes its review pages to other sites), so
+// these figures are the fuller picture of what buyers think.
+function summariseMarketplaceRatings(listings) {
+  const rated = listings.filter(
+    (listing) =>
+      Number(listing.review_count) > 0 && Number(listing.rating) > 0,
+  );
+
+  if (rated.length === 0) {
+    return null;
+  }
+
+  // A marketplace that sells the phone itself repeats one product-wide
+  // figure on every colour; separate sellers each have their own buyers.
+  const bySeller = new Map();
+  rated.forEach((listing) => {
+    const key = listing.seller?.id ?? "marketplace";
+    const count = Number(listing.review_count);
+    const current = bySeller.get(key);
+
+    if (listing.seller?.id == null) {
+      if (!current || count > current.count) {
+        bySeller.set(key, {
+          name: null,
+          count,
+          rating: Number(listing.rating),
+          url: listing.product_url,
+        });
+      }
+      return;
+    }
+
+    if (!current) {
+      bySeller.set(key, {
+        name: listing.seller.name,
+        count,
+        weighted: Number(listing.rating) * count,
+        url: listing.product_url,
+        topCount: count,
+      });
+      return;
+    }
+
+    current.count += count;
+    current.weighted += Number(listing.rating) * count;
+    if (count > current.topCount) {
+      current.topCount = count;
+      current.url = listing.product_url;
+    }
+  });
+
+  const sources = [...bySeller.values()]
+    .map((source) => ({
+      name: source.name,
+      count: source.count,
+      rating:
+        source.weighted !== undefined
+          ? source.weighted / source.count
+          : source.rating,
+      url: source.url,
+    }))
+    .sort((first, second) => second.count - first.count);
+
+  const count = sources.reduce((sum, source) => sum + source.count, 0);
+  const rating =
+    sources.reduce(
+      (sum, source) => sum + source.rating * source.count,
+      0,
+    ) / count;
+
+  return { count, rating, sources };
+}
+
+function MarketplaceRatingSummary({ label, summary }) {
+  if (!summary) {
+    return null;
+  }
+
+  const namedSources = summary.sources.filter((source) => source.name);
+
   return (
-    <div className="flex h-full flex-col rounded-3xl border border-dashed border-slate-300 bg-white p-6 text-center">
-      <div className="flex items-center justify-center gap-2">
+    <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 text-left">
+      <div className="text-[10px] font-black uppercase tracking-[0.14em] text-amber-700">
+        Rating on {label}
+      </div>
+      <div className="mt-2 flex flex-wrap items-end gap-2">
+        <strong className="text-3xl font-black text-vextro-ink">
+          {summary.rating.toFixed(1)}
+        </strong>
+        <span className="pb-1 text-xs font-bold text-vextro-muted">
+          / 5
+        </span>
+        <div className="pb-1">
+          <StarRating value={summary.rating} />
+        </div>
+        <span className="pb-1 text-xs font-bold text-vextro-muted">
+          from {summary.count.toLocaleString()}{" "}
+          {summary.count === 1 ? "buyer" : "buyers"}
+        </span>
+      </div>
+
+      {namedSources.length > 0 ? (
+        <ul className="mt-3 space-y-1.5">
+          {namedSources.slice(0, 4).map((source) => (
+            <li
+              key={source.name}
+              className="flex flex-wrap items-center justify-between gap-2 text-xs"
+            >
+              <span className="font-bold text-vextro-ink">
+                {source.name}
+              </span>
+              <span className="text-vextro-muted">
+                ★ {source.rating.toFixed(1)} ·{" "}
+                {source.count.toLocaleString()}{" "}
+                {source.count === 1 ? "review" : "reviews"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {summary.sources[0]?.url ? (
+        <a
+          className="mt-3 inline-flex text-xs font-black text-vextro-primary hover:underline"
+          href={summary.sources[0].url}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Read the reviews on {label} ↗
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
+function EmptyPlatformCard({ label, marketplace, isListed }) {
+  return (
+    <div className="flex h-full flex-col rounded-3xl border border-dashed border-slate-300 bg-white p-6">
+      <div className="flex items-center justify-between gap-2">
         <span className="rounded-full bg-slate-100 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-vextro-muted">
           {label}
         </span>
       </div>
-      <div className="mt-6 flex flex-1 flex-col items-center justify-center">
-        <span className="text-4xl" aria-hidden="true">
-          💬
-        </span>
-        <h4 className="mt-3 text-base font-black text-vextro-ink">
-          No reviews collected from {label} yet
-        </h4>
-        <p className="mt-2 text-xs leading-6 text-vextro-muted">
-          {label === "Daraz"
-            ? "Daraz review ingestion has not run for this product. As soon as the next scrape captures reviews, they'll appear here automatically."
-            : `Reviews from ${label} will appear here as they are ingested.`}
-        </p>
-      </div>
+
+      {marketplace ? (
+        <div className="mt-5">
+          <MarketplaceRatingSummary label={label} summary={marketplace} />
+          <p className="mt-4 text-xs leading-6 text-vextro-muted">
+            {label} does not let other sites collect the text of its
+            reviews, so VEXTRO shows {label}'s own rating and review
+            count. Open {label} to read what buyers wrote.
+          </p>
+        </div>
+      ) : (
+        <div className="mt-6 flex flex-1 flex-col items-center justify-center text-center">
+          <span className="text-4xl" aria-hidden="true">
+            💬
+          </span>
+          <h4 className="mt-3 text-base font-black text-vextro-ink">
+            {isListed
+              ? `No buyer has reviewed this phone on ${label} yet`
+              : `This phone is not listed on ${label}`}
+          </h4>
+          <p className="mt-2 text-xs leading-6 text-vextro-muted">
+            {isListed
+              ? `Reviews will appear here as soon as ${label} shows any.`
+              : `There are no ${label} reviews to compare.`}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -119,6 +274,7 @@ function EmptyPlatformCard({ label }) {
 function PlatformReviewBox({ label, group }) {
   const {
     reviews,
+    marketplace,
     total,
     averageRating,
     distribution,
@@ -141,9 +297,19 @@ function PlatformReviewBox({ label, group }) {
           {label}
         </span>
         <span className="rounded-full border border-vextro-border bg-white px-3 py-1 text-[10px] font-black text-vextro-muted">
-          {total} {total === 1 ? "review" : "reviews"}
+          {total} {total === 1 ? "review" : "reviews"} shown
         </span>
       </div>
+
+      {marketplace && marketplace.count > total ? (
+        <div className="mt-4">
+          <MarketplaceRatingSummary label={label} summary={marketplace} />
+          <p className="mt-3 text-[11px] leading-5 text-vextro-muted">
+            Below: the {total === 1 ? "review" : `${total} reviews`}{" "}
+            VEXTRO could read from {label}.
+          </p>
+        </div>
+      ) : null}
 
       <div className="mt-5 flex items-end gap-3">
         <strong className="text-4xl font-black text-vextro-ink">
@@ -251,20 +417,41 @@ function TrustRecommendation({ groups }) {
   );
 
   if (eligible.length === 0) {
+    const rated = groups.filter((group) => group.marketplace);
+
     return (
       <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-5">
         <div className="text-[10px] font-black uppercase tracking-[0.14em] text-vextro-muted">
-          Which platform can you trust?
+          How buyers rate it on each marketplace
         </div>
-        <p className="mt-2 text-sm font-bold text-vextro-ink">
-          Not enough analysed reviews yet to recommend a trusted
-          marketplace.
-        </p>
-        <p className="mt-1 text-xs leading-6 text-vextro-muted">
-          VEXTRO needs at least {MIN_REVIEWS_FOR_RECOMMENDATION}{" "}
-          risk-scored reviews on a platform before it will call one
-          more trustworthy than the other. Check back after the next
-          ingestion.
+        {rated.length > 0 ? (
+          <div className="mt-3 grid gap-2 text-xs md:grid-cols-2">
+            {rated.map((group) => (
+              <div
+                key={group.code}
+                className="rounded-xl bg-white p-3"
+              >
+                <div className="font-black text-vextro-ink">
+                  {group.label}
+                </div>
+                <div className="text-vextro-muted">
+                  ★ {group.marketplace.rating.toFixed(1)} / 5 from{" "}
+                  {group.marketplace.count.toLocaleString()}{" "}
+                  {group.marketplace.count === 1 ? "buyer" : "buyers"}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-2 text-sm font-bold text-vextro-ink">
+            No buyer has rated this phone on either marketplace yet.
+          </p>
+        )}
+        <p className="mt-3 text-xs leading-6 text-vextro-muted">
+          VEXTRO names a more trustworthy marketplace only once it has
+          read and risk-scored at least {MIN_REVIEWS_FOR_RECOMMENDATION}{" "}
+          reviews from one. Until then the ratings above are each
+          marketplace's own figures, for you to weigh.
         </p>
       </div>
     );
@@ -365,7 +552,7 @@ function TrustRecommendation({ groups }) {
   );
 }
 
-function ReviewsPanel({ productId }) {
+function ReviewsPanel({ productId, listings = [], platformNames }) {
   const [reviewsResponse, setReviewsResponse] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -474,10 +661,19 @@ function ReviewsPanel({ productId }) {
         ? sumSuspicion / analyzed
         : null;
 
+      const platformListings = listings.filter(
+        (listing) =>
+          String(
+            platformNames?.get(listing.platform_id) ?? "",
+          ).toLowerCase() === code,
+      );
+
       return {
         code,
         label,
         reviews: platformReviews,
+        marketplace: summariseMarketplaceRatings(platformListings),
+        isListed: platformListings.length > 0,
         total,
         averageRating,
         distribution,
@@ -488,9 +684,20 @@ function ReviewsPanel({ productId }) {
         averageSuspicion,
       };
     });
-  }, [reviewsResponse, analysis]);
+  }, [reviewsResponse, analysis, listings, platformNames]);
 
-  const overallTotal = reviewsResponse?.total ?? 0;
+  const comparesMarketplaces = platformGroups.length > 1;
+  // Counted from the boxes on screen, so a marketplace without a box
+  // does not inflate the figure.
+  const shownTotal = platformGroups.reduce(
+    (sum, group) => sum + group.total,
+    0,
+  );
+  const marketplaceTotal = platformGroups.reduce(
+    (sum, group) =>
+      sum + Math.max(group.marketplace?.count ?? 0, group.total),
+    0,
+  );
 
   if (isLoading && reviewsResponse === null) {
     return (
@@ -521,27 +728,37 @@ function ReviewsPanel({ productId }) {
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <span className="text-xs font-black uppercase tracking-[0.18em] text-vextro-primary">
-            Customer Reviews by Marketplace
+            {comparesMarketplaces
+              ? "Customer Reviews by Marketplace"
+              : "Customer Reviews"}
           </span>
           <h2 className="mt-3 text-3xl font-black tracking-tight text-vextro-ink sm:text-4xl">
-            Compare what buyers said
+            {comparesMarketplaces
+              ? "Compare what buyers said"
+              : `What ${platformGroups[0]?.label ?? "buyers"} buyers said`}
           </h2>
           <p className="mt-3 text-sm leading-7 text-vextro-muted">
-            Reviews are grouped by marketplace so you can see, per
-            platform, how many buyers left feedback and how the
-            deterministic review-risk engine scored it. Use this to
-            decide which marketplace to buy from — not just which
-            one is cheaper.
+            {comparesMarketplaces
+              ? "Each marketplace's own rating and review count, with the reviews VEXTRO could read and how its review-risk engine scored them. Use this to decide which marketplace to buy from — not just which one is cheaper."
+              : "The marketplace's own rating and review count, with the reviews VEXTRO could read and how its review-risk engine scored each one."}
           </p>
         </div>
         <span className="rounded-full border border-vextro-border bg-white px-4 py-2 text-xs font-black text-vextro-muted">
-          {overallTotal} total {overallTotal === 1 ? "review" : "reviews"}
+          {marketplaceTotal.toLocaleString()}{" "}
+          {marketplaceTotal === 1 ? "buyer rating" : "buyer ratings"} ·{" "}
+          {shownTotal} shown
         </span>
       </div>
 
-      <TrustRecommendation groups={platformGroups} />
+      {comparesMarketplaces ? (
+        <TrustRecommendation groups={platformGroups} />
+      ) : null}
 
-      <div className="mt-6 grid gap-5 md:grid-cols-2">
+      <div
+        className={`mt-6 grid gap-5 ${
+          comparesMarketplaces ? "md:grid-cols-2" : ""
+        }`}
+      >
         {platformGroups.map((group) =>
           group.total > 0 ? (
             <PlatformReviewBox
@@ -550,7 +767,12 @@ function ReviewsPanel({ productId }) {
               group={group}
             />
           ) : (
-            <EmptyPlatformCard key={group.code} label={group.label} />
+            <EmptyPlatformCard
+              key={group.code}
+              label={group.label}
+              marketplace={group.marketplace}
+              isListed={group.isListed}
+            />
           ),
         )}
       </div>
