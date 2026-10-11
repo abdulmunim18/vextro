@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.services.opinion_risk_engine import (
+    KIND_ABUSIVE,
     KIND_ADVERT,
     KIND_OPINION,
     KIND_QUESTION,
@@ -141,3 +142,21 @@ def test_every_score_comes_with_a_reason_a_person_can_read() -> None:
     assert clean["reasons"] == [
         "No configured pattern was found; it reads as a view of the phone."
     ]
+
+
+def test_an_insult_aimed_at_a_person_is_named_abusive() -> None:
+    result = analyze("Mushtaq Ahmad Your Illegal Father OPPO is providing 6 Gen 1 in 135K.")
+
+    assert result["opinion_kind"] == KIND_ABUSIVE
+    assert result["suspicion_level"] == "medium"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Vivo ghitya tareen company, bakwas mobile hai",
+        "Bkawas phone third class specifications please don't waste money",
+    ],
+)
+def test_harsh_words_about_the_phone_are_still_an_opinion(text: str) -> None:
+    assert analyze(text)["opinion_kind"] == KIND_OPINION

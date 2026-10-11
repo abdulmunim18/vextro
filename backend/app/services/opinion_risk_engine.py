@@ -38,6 +38,7 @@ WEIGHTS = {
     "moderate_similarity": 12,
     "similar_post_burst": 15,
     "repeated_author_wording": 10,
+    "abusive_language": 30,
     "excessive_formatting": 4,
     "too_short_to_judge": 3,
 }
@@ -47,6 +48,7 @@ BURST_WINDOW = timedelta(hours=24)
 KIND_ADVERT = "advert"
 KIND_QUESTION = "question"
 KIND_OPINION = "opinion"
+KIND_ABUSIVE = "abusive"
 
 # A visitor offering to sell, swap or source a handset, in the English and
 # Roman Urdu spellings people use. "buy" alone is left out: "I want to buy
@@ -100,6 +102,27 @@ QUESTION = re.compile(
 )
 
 
+# Insults aimed at a person. Harsh words about the phone itself ("bakwas",
+# "ghatya") are opinions and are deliberately not listed.
+ABUSIVE_LANGUAGE = re.compile(
+    r"""
+      \billegal\s+(?:father|son|child)\b
+    | \bharam(?:i|zad[aey]|khor)\b
+    | \bkutt[aey]\b
+    | \bkamin[aey]\b
+    | \bb[ae]ghairat\b
+    | \bbastards?\b
+    | \bbitch(?:es)?\b
+    | \bassholes?\b
+    | \bfuck\w*
+    | \b(?:bhen|behn|madar)\s*chod\w*
+    | \bchutiy[aeo]\w*
+    | \bgand[ou]\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
 @dataclass(frozen=True)
 class OpinionEvidence:
     """What the scorer is told about one post."""
@@ -111,8 +134,17 @@ class OpinionEvidence:
     contact_removed: bool = False
 
 
-def classify(text: str, *, trade_offer: bool, contact_removed: bool) -> str:
-    """Name what a post is: an advert, a question or an opinion."""
+def classify(
+    text: str,
+    *,
+    trade_offer: bool,
+    contact_removed: bool,
+    abusive: bool = False,
+) -> str:
+    """Name what a post is: abuse, an advert, a question or an opinion."""
+
+    if abusive:
+        return KIND_ABUSIVE
 
     if trade_offer or contact_removed:
         return KIND_ADVERT
@@ -135,6 +167,7 @@ def analyze_opinion(
 
     trade_offer = bool(TRADE_OFFER.search(normalized))
     used_phone_pitch = bool(USED_PHONE_PITCH.search(normalized))
+    abusive = bool(ABUSIVE_LANGUAGE.search(normalized))
 
     comparisons: list[tuple[OpinionEvidence, float, bool]] = []
     for peer in peers:
@@ -183,6 +216,9 @@ def analyze_opinion(
         reasons.append(
             "It describes a second-hand handset the way a seller would (condition, box, warranty left)."
         )
+    if abusive:
+        weighted["abusive_language"] = WEIGHTS["abusive_language"]
+        reasons.append("It insults a person instead of describing the phone.")
     if exact_count:
         weighted["exact_duplicate"] = WEIGHTS["exact_duplicate"]
         reasons.append(
@@ -236,6 +272,7 @@ def analyze_opinion(
             normalized,
             trade_offer=trade_offer,
             contact_removed=opinion.contact_removed,
+            abusive=abusive,
         ),
         "applied_weights": weighted,
         "reasons": reasons,
@@ -243,6 +280,7 @@ def analyze_opinion(
 
 
 __all__ = [
+    "KIND_ABUSIVE",
     "KIND_ADVERT",
     "KIND_OPINION",
     "KIND_QUESTION",

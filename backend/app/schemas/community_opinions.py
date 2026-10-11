@@ -93,6 +93,8 @@ class CommunitySourceResponse(BaseModel):
     genuine_opinion_count: int = 0
     advert_count: int = 0
     question_count: int = 0
+    # Posts withheld from readers because they insult a person.
+    hidden_count: int = 0
     opinions: list[CommunityOpinionResponse] = Field(default_factory=list)
 
 

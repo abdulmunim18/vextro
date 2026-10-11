@@ -164,6 +164,37 @@ def test_a_copy_arriving_in_a_later_crawl_rescored_the_older_post(
     assert all(copy["suspicion_score"] == 40 for copy in copies)
 
 
+def test_an_abusive_post_is_stored_but_never_served(
+    client: TestClient,
+    database_session: Session,
+    sync_context: dict[str, object],
+) -> None:
+    payload = page(sync_context)
+    payload["opinions"] = [
+        *payload["opinions"],
+        {
+            "position": 3,
+            "author": "visitor3",
+            "posted_at": "2026-09-01T00:00:00Z",
+            "text": "visitor1 your illegal father makes better phones",
+        },
+    ]
+    ingest(client, payload)
+    product_id = int(sync_context["product_id"])
+
+    source = read(client, product_id)["sources"][0]
+
+    assert source["opinion_count"] == 3
+    assert source["hidden_count"] == 1
+    assert len(source["opinions"]) == 2
+    assert all("illegal" not in o["opinion_text"] for o in source["opinions"])
+    assert database_session.scalar(
+        select(func.count(CommunityOpinion.id)).where(
+            CommunityOpinion.canonical_product_id == product_id
+        )
+    ) == 3
+
+
 def test_a_second_crawl_adds_only_the_opinions_it_has_not_seen(
     client: TestClient,
     database_session: Session,

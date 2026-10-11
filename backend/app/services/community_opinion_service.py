@@ -33,6 +33,7 @@ from app.services.cross_marketplace_matching import (
     cross_marketplace_product_key,
 )
 from app.services.opinion_risk_engine import (
+    KIND_ABUSIVE,
     KIND_ADVERT,
     KIND_OPINION,
     KIND_QUESTION,
@@ -297,9 +298,15 @@ class CommunityOpinionService:
                 )
             }
             opinion_count = sum(kind_counts.values())
+            # Abuse is kept as evidence but never served to a reader.
             opinions = database_session.scalars(
                 select(CommunityOpinion)
-                .where(*filters)
+                .where(
+                    *filters,
+                    CommunityOpinion.opinion_kind.is_distinct_from(
+                        KIND_ABUSIVE
+                    ),
+                )
                 .order_by(
                     CommunityOpinion.posted_at.desc().nulls_last(),
                     CommunityOpinion.id.desc(),
@@ -321,6 +328,7 @@ class CommunityOpinionService:
                     genuine_opinion_count=kind_counts.get(KIND_OPINION, 0),
                     advert_count=kind_counts.get(KIND_ADVERT, 0),
                     question_count=kind_counts.get(KIND_QUESTION, 0),
+                    hidden_count=kind_counts.get(KIND_ABUSIVE, 0),
                     opinions=[
                         CommunityOpinionResponse.model_validate(opinion)
                         for opinion in opinions
