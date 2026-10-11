@@ -88,6 +88,11 @@ class CommunitySourceResponse(BaseModel):
     reference_price: Decimal | None
     last_seen_at: datetime
     opinion_count: int
+    # How the posts divide: views of the phone, buy-and-sell adverts, and
+    # questions. Unscored posts are in none of the three.
+    genuine_opinion_count: int = 0
+    advert_count: int = 0
+    question_count: int = 0
     opinions: list[CommunityOpinionResponse] = Field(default_factory=list)
 
 

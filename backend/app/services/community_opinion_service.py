@@ -32,6 +32,13 @@ from app.schemas.community_opinions import (
 from app.services.cross_marketplace_matching import (
     cross_marketplace_product_key,
 )
+from app.services.opinion_risk_engine import (
+    KIND_ADVERT,
+    KIND_OPINION,
+    KIND_QUESTION,
+    OpinionEvidence,
+    analyze_opinion,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -199,6 +206,11 @@ class CommunityOpinionService:
                 )
                 created += 1
 
+            # A new post can be a copy of an older one, so every post about
+            # the phone is scored again, not only the ones just added.
+            database_session.flush()
+            self.score_product(database_session, product.id, payload.source)
+
             database_session.commit()
 
             return CommunityOpinionsIngestResponse(
@@ -211,6 +223,46 @@ class CommunityOpinionService:
         except Exception:
             database_session.rollback()
             raise
+
+    def score_product(
+        self,
+        database_session: Session,
+        product_id: int,
+        source: str,
+    ) -> int:
+        """Score every post one source holds about a phone; returns how many.
+
+        The caller commits.
+        """
+
+        opinions = list(
+            database_session.scalars(
+                select(CommunityOpinion).where(
+                    CommunityOpinion.canonical_product_id == product_id,
+                    CommunityOpinion.source == source,
+                )
+            )
+        )
+        evidence = [
+            OpinionEvidence(
+                id=opinion.id,
+                text=opinion.opinion_text,
+                author=opinion.author_display_name,
+                posted_at=opinion.posted_at,
+                contact_removed=opinion.contact_removed,
+            )
+            for opinion in opinions
+        ]
+
+        for opinion, subject in zip(opinions, evidence):
+            analysis = analyze_opinion(subject, evidence)
+            opinion.analysis_version = analysis["analysis_version"]
+            opinion.suspicion_score = analysis["suspicion_score"]
+            opinion.suspicion_level = analysis["suspicion_level"]
+            opinion.opinion_kind = analysis["opinion_kind"]
+            opinion.analysis_reasons = analysis["reasons"]
+
+        return len(opinions)
 
     def product_opinions(
         self,
@@ -233,9 +285,18 @@ class CommunityOpinionService:
                 CommunityOpinion.canonical_product_id == product_id,
                 CommunityOpinion.source == rating.source,
             )
-            opinion_count = database_session.scalar(
-                select(func.count(CommunityOpinion.id)).where(*filters)
-            ) or 0
+            kind_counts = {
+                kind: count
+                for kind, count in database_session.execute(
+                    select(
+                        CommunityOpinion.opinion_kind,
+                        func.count(CommunityOpinion.id),
+                    )
+                    .where(*filters)
+                    .group_by(CommunityOpinion.opinion_kind)
+                )
+            }
+            opinion_count = sum(kind_counts.values())
             opinions = database_session.scalars(
                 select(CommunityOpinion)
                 .where(*filters)
@@ -257,6 +318,9 @@ class CommunityOpinionService:
                     reference_price=rating.reference_price,
                     last_seen_at=rating.last_seen_at,
                     opinion_count=opinion_count,
+                    genuine_opinion_count=kind_counts.get(KIND_OPINION, 0),
+                    advert_count=kind_counts.get(KIND_ADVERT, 0),
+                    question_count=kind_counts.get(KIND_QUESTION, 0),
                     opinions=[
                         CommunityOpinionResponse.model_validate(opinion)
                         for opinion in opinions

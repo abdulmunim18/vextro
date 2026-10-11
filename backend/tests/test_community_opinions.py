@@ -98,6 +98,72 @@ def test_a_guide_site_page_is_stored_against_the_phone_it_names(
     assert source["opinions"][1]["contact_removed"] is True
 
 
+def test_stored_posts_are_scored_and_counted_by_kind(
+    client: TestClient,
+    sync_context: dict[str, object],
+) -> None:
+    payload = page(sync_context)
+    payload["opinions"] = [
+        *payload["opinions"],
+        {
+            "position": 3,
+            "author": "visitor3",
+            "posted_at": "2026-09-01T00:00:00Z",
+            "text": "pakistan me kb aye ga",
+        },
+    ]
+    ingest(client, payload)
+
+    source = read(client, int(sync_context["product_id"]))["sources"][0]
+
+    assert source["opinion_count"] == 3
+    assert source["genuine_opinion_count"] == 1
+    assert source["advert_count"] == 1
+    assert source["question_count"] == 1
+
+    view, advert, question = source["opinions"]
+    assert view["opinion_kind"] == "opinion"
+    assert view["suspicion_level"] == "low"
+    assert advert["opinion_kind"] == "advert"
+    assert advert["suspicion_level"] == "high"
+    assert advert["suspicion_score"] == 70
+    assert len(advert["analysis_reasons"]) == 2
+    assert question["opinion_kind"] == "question"
+
+
+def test_a_copy_arriving_in_a_later_crawl_rescored_the_older_post(
+    client: TestClient,
+    sync_context: dict[str, object],
+) -> None:
+    """Scores depend on the other posts, so old posts are scored again."""
+
+    ingest(client, page(sync_context))
+    product_id = int(sync_context["product_id"])
+    assert read(client, product_id)["sources"][0]["opinions"][0][
+        "suspicion_score"
+    ] == 0
+
+    later = page(sync_context)
+    later["opinions"] = [
+        {
+            "position": 1,
+            "author": "visitor9",
+            "posted_at": "2026-10-09T00:00:00Z",
+            "text": "IPS display in this expensive phone.",
+        },
+    ]
+    ingest(client, later)
+
+    opinions = read(client, product_id)["sources"][0]["opinions"]
+    copies = [
+        opinion
+        for opinion in opinions
+        if opinion["opinion_text"] == "IPS display in this expensive phone."
+    ]
+    assert len(copies) == 2
+    assert all(copy["suspicion_score"] == 40 for copy in copies)
+
+
 def test_a_second_crawl_adds_only_the_opinions_it_has_not_seen(
     client: TestClient,
     database_session: Session,

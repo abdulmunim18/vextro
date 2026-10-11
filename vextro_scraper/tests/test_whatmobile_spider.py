@@ -76,6 +76,21 @@ def test_ordinary_numbers_in_an_opinion_are_kept():
     assert "124k" in cleaned and "256GB" in cleaned
 
 
+@pytest.mark.parametrize(
+    ("published", "expected"),
+    [
+        ("Total bakwas mobilernPrice is too much rn", "Total bakwas mobile Price is too much"),
+        ("snapdragon 6 Gen 3rnPrice 120rnWhat a joke", "snapdragon 6 Gen 3 Price 120 What a joke"),
+        ("Official PTA rnWhatsapp par", "Official PTA Whatsapp par"),
+        ("modern phone, return policy acha", "modern phone, return policy acha"),
+    ],
+)
+def test_the_sites_lost_line_breaks_do_not_reach_the_reader(published, expected):
+    cleaned, _ = remove_contact_numbers(published)
+
+    assert cleaned == expected
+
+
 def test_only_the_brands_of_wanted_phones_are_opened():
     spider = WhatmobileSpider(
         phone_names='Infinix Hot 70 Pro|Samsung Galaxy A27|Infinix Note 60',

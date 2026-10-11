@@ -34,6 +34,8 @@ CONTACT_NUMBER = re.compile(
 )
 CONTACT_PLACEHOLDER = '[number removed]'
 
+LOST_LINE_BREAK = re.compile(r'(?<=\S)rn(?=[A-Z0-9])|(?<!\S)rn(?=[A-Z]|\s|$)')
+
 # Words that carry no model identity when a phone name is compared.
 NAME_NOISE = frozenset({'mobile', 'mobiles', 'phone', 'smartphone', '5g', '4g'})
 
@@ -51,10 +53,24 @@ def name_key(name):
     return ' '.join(sorted(token for token in tokens if token not in NAME_NOISE))
 
 
+def restore_line_breaks(text):
+    """Turn the stray "rn" WhatMobile prints for a line break into a space.
+
+    The site loses the backslashes of "\\r\\n", leaving "mobilernPrice" or
+    a trailing " rn". Only an "rn" glued to a capital or a digit, or standing
+    alone, is touched, so "return" and "modern" stay as written.
+    """
+
+    return LOST_LINE_BREAK.sub(' ', text or '')
+
+
 def remove_contact_numbers(text):
     """Return ``(text, removed)`` with phone numbers replaced."""
 
-    cleaned, count = CONTACT_NUMBER.subn(CONTACT_PLACEHOLDER, text or '')
+    cleaned, count = CONTACT_NUMBER.subn(
+        CONTACT_PLACEHOLDER,
+        restore_line_breaks(text),
+    )
 
     return ' '.join(cleaned.split()), count > 0
 
