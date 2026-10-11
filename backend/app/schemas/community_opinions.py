@@ -4,7 +4,15 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
+
+from app.services.contact_redaction import redact_contact_numbers
 
 
 CommunitySource = Literal["whatmobile"]
@@ -22,6 +30,16 @@ class CommunityOpinionInput(BaseModel):
     posted_at: datetime | None = None
     text: str = Field(min_length=1, max_length=2000)
     contact_removed: bool = False
+
+    @model_validator(mode="after")
+    def remove_contact_numbers(self) -> "CommunityOpinionInput":
+        """Strip any phone number the crawler let through."""
+
+        text, removed = redact_contact_numbers(self.text)
+        self.text = text
+        self.contact_removed = self.contact_removed or removed
+
+        return self
 
 
 class CommunityOpinionsInput(BaseModel):

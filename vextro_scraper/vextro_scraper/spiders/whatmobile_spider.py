@@ -30,11 +30,25 @@ BASE_URL = 'https://www.whatmobile.com.pk'
 # Pakistani mobile numbers as people type them, and any other long digit
 # run that could be one: "0323 4004838", "+92-300-1234567", "03036806902".
 CONTACT_NUMBER = re.compile(
-    r'(?:\+?92|0)[\s-]?3\d{2}[\s-]?\d{3}[\s-]?\d{4}|\b\d[\d\s-]{8,}\d\b'
+    # A mobile number however its digits are spaced or punctuated
+    # ("0301.9294806", "0322_6604704", "0344/444/9964", "0332 - 2229442").
+    r'(?:\+?92|(?<!\d)0)[\s._/-]{0,3}3(?:[\s._/-]{0,3}\d){9}'
+    # Any other number written with a leading zero and one break.
+    r'|(?<!\d)0\d{2,4}[\s._/-]{1,3}\d{6,9}(?!\d)'
+    # A mobile number typed without its leading zero ("345 7281327").
+    r'|(?<!\d)3\d{2}[\s.-]?\d{7}(?!\d)'
+    # Any run of ten digits or more. Spaced-out figures such as
+    # "8 128 5000 50" are specifications and are left alone.
+    r'|\d{10,}'
 )
 CONTACT_PLACEHOLDER = '[number removed]'
 
-LOST_LINE_BREAK = re.compile(r'(?<=\S)rn(?=[A-Z0-9])|(?<!\S)rn(?=[A-Z]|\s|$)')
+LOST_LINE_BREAK = re.compile(
+    r'(?:rn){2,}'
+    r'|(?<=\S)rn(?=[A-Z0-9+])'
+    r'|(?<!\S)rn(?=[A-Z0-9+]|\s|$)'
+    r'|(?<=[\d.,!?;:)])rn(?=\s|$)'
+)
 
 # Words that carry no model identity when a phone name is compared.
 NAME_NOISE = frozenset({'mobile', 'mobiles', 'phone', 'smartphone', '5g', '4g'})
@@ -45,10 +59,22 @@ def name_key(name):
 
     "Samsung Galaxy A27 5G", "Samsung_Galaxy-A27" and "samsung galaxy a27"
     are one phone; the key ignores case, punctuation, word order and the
-    network generation, which the two sites state differently.
+    network generation, which the two sites state differently. Letters and
+    digits are split apart, so "Reno14" and "Reno-14" also agree.
     """
 
-    tokens = re.findall(r'[a-z0-9]+', str(name or '').lower())
+    # "13+" is a different phone from "13"; the sign is kept as a word.
+    words = re.findall(
+        r'[a-z0-9]+',
+        str(name or '').lower().replace('+', ' plus '),
+    )
+    tokens = [
+        part
+        for word in words
+        for part in (
+            [word] if word in NAME_NOISE else re.findall(r'[a-z]+|\d+', word)
+        )
+    ]
 
     return ' '.join(sorted(token for token in tokens if token not in NAME_NOISE))
 
@@ -107,14 +133,19 @@ class WhatmobileSpider(scrapy.Spider):
             )
             if len(name) >= 3
         ]
+        # first catalogue name of a page -> the other names it also serves.
+        self.shared_pages = {}
         # name key -> the name VEXTRO uses for that phone.
         self.wanted = {}
 
     async def start(self):
         names = self.targeted_names or self.catalog_phone_names()
-        self.wanted = {
-            name_key(name): name for name in names if name_key(name)
-        }
+        # name key -> the catalogue names it stands for. "Galaxy A17" and
+        # "Galaxy A17 5G" are separate products here but one page there.
+        self.wanted = {}
+        for name in names:
+            if name_key(name):
+                self.wanted.setdefault(name_key(name), []).append(name)
 
         if not self.wanted:
             self.logger.warning(
@@ -125,7 +156,9 @@ class WhatmobileSpider(scrapy.Spider):
         # A phone's page is found through its brand's listing, so only the
         # brands VEXTRO's phones belong to are opened.
         brands = sorted({
-            self.brand_slug(name) for name in self.wanted.values()
+            self.brand_slug(name)
+            for same_phone in self.wanted.values()
+            for name in same_phone
         } - {''})
 
         for brand in brands:
@@ -206,16 +239,28 @@ class WhatmobileSpider(scrapy.Spider):
                 continue
 
             seen.add(slug)
-            catalog_name = self.wanted.get(name_key(slug))
+            same_phone = self.wanted.get(name_key(slug))
 
-            if catalog_name is None:
+            if not same_phone:
                 continue
+
+            self.shared_pages[same_phone[0]] = same_phone[1:]
 
             yield scrapy.Request(
                 f'{BASE_URL}/{slug}',
                 callback=self.parse_phone,
-                cb_kwargs={'slug': slug, 'catalog_name': catalog_name},
+                cb_kwargs={'slug': slug, 'catalog_name': same_phone[0]},
             )
+
+    def deliveries(self, item):
+        """Yield the page once for every catalogue phone it describes."""
+
+        yield item
+
+        for name in self.shared_pages.get(item.get('catalog_name'), ()):
+            twin = item.copy()
+            twin['catalog_name'] = name
+            yield twin
 
     def parse_phone(self, response, slug, catalog_name):
         """Read the phone's rating, then fetch its opinions page."""
@@ -224,7 +269,12 @@ class WhatmobileSpider(scrapy.Spider):
         item = CommunityOpinionsItem()
         item['source'] = self.platform_code
         item['product_name'] = optional_text(
-            response.css('h1 ::text').get(),
+            re.sub(
+                r'\s+Price\b.*$',
+                '',
+                response.css('h1 ::text').get() or '',
+                flags=re.IGNORECASE,
+            ),
             max_length=255,
         ) or catalog_name
         item['catalog_name'] = catalog_name
@@ -252,7 +302,7 @@ class WhatmobileSpider(scrapy.Spider):
         item['scrape_timestamp'] = datetime.now(timezone.utc).isoformat()
 
         if not item['rating_count']:
-            yield item
+            yield from self.deliveries(item)
             return
 
         yield scrapy.Request(
@@ -341,7 +391,7 @@ class WhatmobileSpider(scrapy.Spider):
         item['opinions'] = opinions
         item['opinions_url'] = response.url
 
-        yield item
+        yield from self.deliveries(item)
 
     def opinions_unavailable(self, failure):
         """Deliver the rating even when the opinions page would not load."""
@@ -350,7 +400,7 @@ class WhatmobileSpider(scrapy.Spider):
         item = request.meta.get('item') if request is not None else None
 
         if item is not None:
-            yield item
+            yield from self.deliveries(item)
 
     @staticmethod
     def _parse_date(value):

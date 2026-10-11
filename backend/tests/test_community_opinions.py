@@ -164,6 +164,34 @@ def test_a_copy_arriving_in_a_later_crawl_rescored_the_older_post(
     assert all(copy["suspicion_score"] == 40 for copy in copies)
 
 
+def test_a_phone_number_the_crawler_missed_is_removed_on_arrival(
+    client: TestClient,
+    database_session: Session,
+    sync_context: dict[str, object],
+) -> None:
+    payload = page(sync_context)
+    payload["opinions"] = [
+        {
+            "position": 1,
+            "author": "visitor1",
+            "posted_at": "2026-09-18T00:00:00Z",
+            "text": "for sale, serious buyers only 0300/6689848 or 0344/444/9964",
+        },
+    ]
+    ingest(client, payload)
+
+    stored = database_session.scalars(
+        select(CommunityOpinion).where(
+            CommunityOpinion.canonical_product_id
+            == int(sync_context["product_id"])
+        )
+    ).one()
+
+    assert stored.contact_removed is True
+    assert not any(character.isdigit() for character in stored.opinion_text)
+    assert stored.opinion_kind == "advert"
+
+
 def test_an_abusive_post_is_stored_but_never_served(
     client: TestClient,
     database_session: Session,

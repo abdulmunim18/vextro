@@ -70,6 +70,23 @@ TRADE_OFFER = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+# Wording that is ordinary on its own ("available", "I need") but, beside a
+# phone number, is someone trading a handset or a part.
+TRADE_OFFER_BESIDE_NUMBER = re.compile(
+    r"""
+      \bcont[ae]ct\w*|\bcntc?t\b|\bcntxt\b
+    | \bra+b[ai]?t[ah]+\b|\brafta\b|\brpta\b
+    | \bcall\b|\bsms\b|\bwh?ats?\s*'?[au]pp?\b|\bwts\b
+    | \bdemand\b|\bdimand\b|\bfinal\b|\bprice\b|\brate\b
+    | \bavailable\b|\bx?change\b|\bexchange\b|\binstal+ments?\b
+    | \bsale\b|\bsell\b|\bsal\b|\bresale\b|\bbuy\b|\bpurchase\b
+    | \bneed\b|\brequired?\b|\bchah?i?y[ae]\w*|\blen[ai]\b|\bly?na\b
+    | \b(?:mere|mery|mary|mera|made)\s+pas+\b|\bk[aey]*\s+pas+\b
+    | \bi\s+have\b|\bwar+[ae]nty\b|\bcondition\b|\bbox\b|\buse[d]?\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
 # How a second-hand handset is described to a buyer.
 USED_PHONE_PITCH = re.compile(
     r"""
@@ -96,7 +113,9 @@ QUESTION = re.compile(
     | \bkoi\s+(?:bata|bta)
     | \b(?:bata|bta)\s*(?:de|den|do|dy|sakta|skta)\b
     | \b(?:bataen|btaen|btay)\b
-    | \bkes[ia]\s+h[aey]i?\b|\bkais[ia]\s+h[aey]i?\b      # kesi hai, kaisa ha
+    | \bk(?:ai|e|a)?[sc][aiy]\s+h[aeiy]*\b                # kesi hai, kaisa ha, ksa hai
+    | \bany\s+(?:feedback|idea)\b|\bwanna\s+know\b|\btell\s+me\b
+    | \b(?:lena|lana|lu|loon|lun)\s+cha[h]?i?y[ae]\s+ya\b  # lena chahiye ya nahi
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -117,7 +136,7 @@ ABUSIVE_LANGUAGE = re.compile(
     | \bfuck\w*
     | \b(?:bhen|behn|madar)\s*chod\w*
     | \bchutiy[aeo]\w*
-    | \bgand[ou]\b
+    | \bgand+[ou]\b
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -165,7 +184,10 @@ def analyze_opinion(
     words = normalized.split()
     author = normalize_comparison_text(opinion.author)
 
-    trade_offer = bool(TRADE_OFFER.search(normalized))
+    trade_offer = bool(TRADE_OFFER.search(normalized)) or (
+        opinion.contact_removed
+        and bool(TRADE_OFFER_BESIDE_NUMBER.search(normalized))
+    )
     used_phone_pitch = bool(USED_PHONE_PITCH.search(normalized))
     abusive = bool(ABUSIVE_LANGUAGE.search(normalized))
 

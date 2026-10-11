@@ -87,6 +87,9 @@ def test_a_view_of_the_phone_is_low_risk(text: str) -> None:
         "When it will be launch in Pakistan....?",
         "Ya mobile kab tak markeet main ajay ga please koi bata sakta many buy krna hai",
         "Is phone ki network coverage kesi hai. Indoor/Outdoor 4G/5G signal strength bta de koi",
+        "Yeh mobile kasa ha lana chaye ya nahi games kalie",
+        "Ksa hai yeh phone use krne mea... Any feedback...",
+        "iss ka front camera kitna pixels ka ha i wanna know about it",
     ],
 )
 def test_a_question_is_named_as_one_and_is_not_suspicious(text: str) -> None:
