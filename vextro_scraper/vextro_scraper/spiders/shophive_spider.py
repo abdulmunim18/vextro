@@ -19,6 +19,14 @@ What the feed says, and what this spider does with it:
 * The specification table sometimes contradicts the product's name (a
   "6GB" page whose table says 4GB). The name is what the shop sells the
   phone as, so it wins and the table only fills what the name leaves out.
+
+The feed is trusted only as far as it can be checked. It silently ignores
+a filter it does not support and answers with the whole store instead
+(asking for a product by its ``url_key`` returns all 8,500 products, from
+televisions to coffee machines). So phones are only ever asked for by
+category, every product received must be filed under a phone category, and
+a category that answers with far more products than it holds stops the
+crawl.
 """
 
 import json
@@ -27,6 +35,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import scrapy
+from scrapy.exceptions import CloseSpider
 from scrapy.http import JsonRequest
 
 from vextro_scraper.items import SmartphoneItem
@@ -66,6 +75,7 @@ query($filter: ProductAttributeFilterInput!, $page: Int!, $size: Int!) {
       url_key
       url_suffix
       stock_status
+      categories { url_path }
       price_range {
         minimum_price {
           regular_price { value }
@@ -107,6 +117,7 @@ MEMORY_PAIR = re.compile(
 # A lone figure, as on iPhones: "512GB", "2TB".
 MEMORY_SINGLE = re.compile(r'\b(\d{1,4})\s*(GB|TB)\b', re.I)
 PTA_APPROVED = re.compile(r'\bPTA\s+Approved\b', re.I)
+SECOND_GENERATION = re.compile(r'(?<![A-Za-z0-9])2G(?![A-Za-z0-9])', re.I)
 
 COLOUR_OPTION_TITLE = re.compile(r'^\s*colou?rs?\s*$', re.I)
 
@@ -179,6 +190,9 @@ def parse_name(name):
 
     pta_approved = bool(PTA_APPROVED.search(text))
     text = PTA_APPROVED.sub(' ', text)
+    # Shophive labels its feature phones "2G". No model is told apart by
+    # it, and other marketplaces name the same phones without it.
+    text = SECOND_GENERATION.sub(' ', text)
     text = re.sub(r'\(\s*\)', ' ', text)
     model = ' '.join(text.split()).strip(' -–—_|/,;:.')
 
@@ -270,19 +284,25 @@ class ShophiveSpider(scrapy.Spider):
 
         ``-a product_urls=<url>[,<url>...]`` re-reads just those phones,
         which is how the backend refreshes one product when a shopper
-        opens it. Such a run reads no category to its end, so it can never
-        be mistaken for a full crawl.
+        opens it. The feed cannot be asked for a product by its address,
+        so such a run walks the phone categories like a full crawl, emits
+        only the phones named and stops once it has found them all. It is
+        never counted as a full crawl.
         """
 
         super().__init__(*args, **kwargs)
-        self.targeted_keys = list(dict.fromkeys(
+        self.targeted = bool(str(product_urls or '').strip())
+        self.targeted_keys = {
             key
             for key in (
                 self.url_key(part)
                 for part in str(product_urls or '').split(',')
             )
             if key
-        ))
+        }
+        self.found_keys = set()
+        # category path -> the number of phones its own record says it has.
+        self.category_sizes = {}
         # category path -> the number of phones Shophive says it holds.
         self.expected_counts = {}
         # category path -> the SKUs this run received from it.
@@ -316,7 +336,7 @@ class ShophiveSpider(scrapy.Spider):
         """
 
         return (
-            not self.targeted_keys
+            not self.targeted
             and self.failed_page_count == 0
             and all(
                 path in self.finished_categories
@@ -328,11 +348,10 @@ class ShophiveSpider(scrapy.Spider):
         )
 
     async def start(self):
-        if self.targeted_keys:
-            yield self.products_request(
-                {'url_key': {'in': self.targeted_keys}},
-                page=1,
-                category=None,
+        if self.targeted and not self.targeted_keys:
+            self.logger.warning(
+                'None of the pages given is a Shophive product page; '
+                'nothing to refresh.'
             )
             return
 
@@ -346,13 +365,15 @@ class ShophiveSpider(scrapy.Spider):
             errback=self.feed_fetch_error,
         )
 
-    def products_request(self, product_filter, *, page, category):
+    def products_request(self, category_uid, *, page, category):
         return JsonRequest(
             GRAPHQL_URL,
             data={
                 'query': PRODUCTS_QUERY,
                 'variables': {
-                    'filter': product_filter,
+                    # The one product filter this spider uses. The feed
+                    # honours it; it does not honour ``url_key``.
+                    'filter': {'category_uid': {'eq': category_uid}},
                     'page': page,
                     'size': PAGE_SIZE,
                 },
@@ -360,7 +381,7 @@ class ShophiveSpider(scrapy.Spider):
             callback=self.parse_products,
             errback=self.feed_fetch_error,
             cb_kwargs={
-                'product_filter': product_filter,
+                'category_uid': category_uid,
                 'page': page,
                 'category': category,
             },
@@ -424,31 +445,79 @@ class ShophiveSpider(scrapy.Spider):
                 )
                 continue
 
+            self.category_sizes[path] = int(category.get('product_count') or 0)
+
             yield self.products_request(
-                {'category_uid': {'eq': category['uid']}},
+                category['uid'],
                 page=1,
                 category=path,
             )
 
-    def parse_products(self, response, product_filter, page, category):
+    @staticmethod
+    def filed_under(product, category):
+        """Report whether the feed files a product under a phone category."""
+
+        return any(
+            isinstance(entry, dict)
+            and (
+                entry.get('url_path') == category
+                or str(entry.get('url_path') or '').startswith(f'{category}/')
+            )
+            for entry in product.get('categories') or []
+        )
+
+    def refuse_unfiltered_answer(self, category, total_count, entries):
+        """Stop the crawl when the feed did not apply the category filter.
+
+        An ignored filter is not an error to the feed: it answers with the
+        whole store. Nothing from such an answer may reach the catalogue.
+        """
+
+        strangers = [
+            entry.get('name')
+            for entry in entries
+            if not self.filed_under(entry, category)
+        ]
+        ceiling = self.category_sizes.get(category, 0) * 2 + 20
+
+        if not strangers and total_count <= ceiling:
+            return
+
+        self.failed_page_count += 1
+        self.logger.error(
+            'Shophive answered for %r with products outside it '
+            '(total=%s, category holds %s, e.g. %r). Crawl stopped.',
+            category,
+            total_count,
+            self.category_sizes.get(category),
+            strangers[:3],
+        )
+        raise CloseSpider('shophive_category_filter_ignored')
+
+    def parse_products(self, response, category_uid, page, category):
         products = self.feed_data(response).get('products') or {}
         entries = [
             entry
             for entry in products.get('items') or []
             if isinstance(entry, dict) and entry.get('sku')
         ]
+        total_count = int(products.get('total_count') or 0)
 
-        if category is not None:
-            self.expected_counts[category] = int(
-                products.get('total_count') or 0
-            )
-            self.received_skus.setdefault(category, set()).update(
-                entry['sku'] for entry in entries
-            )
+        self.refuse_unfiltered_answer(category, total_count, entries)
+
+        self.expected_counts[category] = total_count
+        self.received_skus.setdefault(category, set()).update(
+            entry['sku'] for entry in entries
+        )
 
         for entry in entries:
             if entry['sku'] in self.emitted_skus:
                 continue
+
+            if self.targeted:
+                if entry.get('url_key') not in self.targeted_keys:
+                    continue
+                self.found_keys.add(entry['url_key'])
 
             self.emitted_skus.add(entry['sku'])
             yield from self.product_items(entry)
@@ -457,13 +526,17 @@ class ShophiveSpider(scrapy.Spider):
             (products.get('page_info') or {}).get('total_pages') or 0
         )
 
+        if self.targeted and self.found_keys >= self.targeted_keys:
+            # Every phone asked for has been read; the rest is not needed.
+            return
+
         if page < min(total_pages, MAX_PAGES_PER_CATEGORY):
             yield self.products_request(
-                product_filter,
+                category_uid,
                 page=page + 1,
                 category=category,
             )
-        elif category is not None and page >= total_pages:
+        elif page >= total_pages:
             self.finished_categories.add(category)
 
     @staticmethod
@@ -677,8 +750,17 @@ class ShophiveSpider(scrapy.Spider):
             yield item
 
     def closed(self, reason):
+        missing = sorted(self.targeted_keys - self.found_keys)
+
+        if self.targeted and missing:
+            self.logger.warning(
+                'Shophive no longer lists %s of the phones asked for: %s',
+                len(missing),
+                missing[:10],
+            )
+
         self.logger.info(
-            'Shophive crawl closed (%s): phones received=%s, not yet '
+            'Shophive crawl closed (%s): phones read=%s, not yet '
             'priced=%s, expected per category=%s, complete=%s.',
             reason,
             len(self.emitted_skus),

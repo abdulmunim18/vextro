@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 import pytest
+from scrapy.exceptions import CloseSpider
 from scrapy.http import Request, TextResponse
 
 from vextro_scraper.pipelines import VextroCleaningPipeline
@@ -25,6 +26,7 @@ from vextro_scraper.spiders.shophive_spider import (
 
 
 FIXTURE = Path(__file__).parent / 'fixtures' / 'shophive_products.json'
+PHONES, IPHONES = CATEGORY_PATHS
 
 
 def feed_response(body):
@@ -35,17 +37,29 @@ def feed_response(body):
     )
 
 
-def fixture_products():
-    return json.loads(FIXTURE.read_text(encoding='utf-8'))
+def fixture_entries(category=None):
+    """The fixture's phones, or only those the feed files under a category."""
+
+    entries = json.loads(
+        FIXTURE.read_text(encoding='utf-8')
+    )['data']['products']['items']
+
+    if category is None:
+        return entries
+
+    return [
+        entry for entry in entries
+        if ShophiveSpider.filed_under(entry, category)
+    ]
 
 
-def products_page(items, *, total=None, pages=1):
+def products_page(entries, *, total=None, pages=1):
     return {
         'data': {
             'products': {
-                'total_count': len(items) if total is None else total,
+                'total_count': len(entries) if total is None else total,
                 'page_info': {'current_page': 1, 'total_pages': pages},
-                'items': items,
+                'items': entries,
             }
         }
     }
@@ -58,16 +72,34 @@ def collect(async_generator):
     return asyncio.run(drain())
 
 
-def crawl_fixture(spider=None, category='mobile-phones'):
-    spider = spider or ShophiveSpider()
-    outputs = list(spider.parse_products(
-        feed_response(fixture_products()),
-        product_filter={'category_uid': {'eq': 'Mjc2Mg=='}},
-        page=1,
+def read_category(spider, category, entries, *, total=None, pages=1, page=1):
+    """Feed one category page to the spider; returns everything it yields."""
+
+    spider.category_sizes.setdefault(
+        category,
+        len(entries) if total is None else total,
+    )
+
+    return list(spider.parse_products(
+        feed_response(products_page(entries, total=total, pages=pages)),
+        category_uid=f'uid-of-{category}',
+        page=page,
         category=category,
     ))
 
-    return spider, [output for output in outputs if not isinstance(output, Request)]
+
+def crawl_fixture(spider=None):
+    """Run both phone categories of the fixture; returns (spider, offers)."""
+
+    spider = spider or ShophiveSpider()
+    outputs = [
+        *read_category(spider, PHONES, fixture_entries(PHONES)),
+        *read_category(spider, IPHONES, fixture_entries(IPHONES)),
+    ]
+
+    return spider, [
+        output for output in outputs if not isinstance(output, Request)
+    ]
 
 
 def offers_of(items, sku):
@@ -92,7 +124,7 @@ def offers_of(items, sku):
         ('Apple iPhone 17 Pro Max 512GB PTA Approved', ('Apple iPhone 17 Pro Max', None, 512, True)),
         ('Apple iPhone 18 Pro Max 2TB PTA Approved', ('Apple iPhone 18 Pro Max', None, 2048, True)),
         ('Itel A50C 2GB 64GB (Special Edition)', ('Itel A50C (Special Edition)', 2, 64, False)),
-        ('Nokia 5310 2G (2024)', ('Nokia 5310 2G (2024)', None, None, False)),
+        ('Nokia 5310 2G (2024)', ('Nokia 5310 (2024)', None, None, False)),
         ('Nokia 105 Power', ('Nokia 105 Power', None, None, False)),
     ],
 )
@@ -286,7 +318,7 @@ def test_every_offer_passes_the_cleaning_step_as_a_phone():
 # --------------------------------------------------------------------------
 
 
-def test_a_full_crawl_first_asks_for_the_two_phone_categories():
+def test_a_crawl_first_asks_for_the_two_phone_categories():
     requests = collect(ShophiveSpider().start())
 
     assert len(requests) == 1
@@ -301,8 +333,8 @@ def test_each_category_is_opened_by_the_identifier_the_feed_gives():
     spider = ShophiveSpider()
     requests = list(spider.parse_categories(feed_response({
         'data': {'categoryList': [
-            {'uid': 'Mjc2Mg==', 'url_path': 'mobile-phones', 'product_count': 126},
-            {'uid': 'MTgwMA==', 'url_path': 'apple/iphone', 'product_count': 29},
+            {'uid': 'Mjc2Mg==', 'url_path': PHONES, 'product_count': 126},
+            {'uid': 'MTgwMA==', 'url_path': IPHONES, 'product_count': 29},
         ]},
     })))
 
@@ -313,47 +345,38 @@ def test_each_category_is_opened_by_the_identifier_the_feed_gives():
         {'category_uid': {'eq': 'MTgwMA=='}},
     ]
     assert [request.cb_kwargs['category'] for request in requests] == [
-        'mobile-phones',
-        'apple/iphone',
+        PHONES,
+        IPHONES,
     ]
+    assert spider.category_sizes == {PHONES: 126, IPHONES: 29}
     assert spider.failed_page_count == 0
 
 
 def test_a_category_is_followed_to_its_last_page():
     spider = ShophiveSpider()
-    items = fixture_products()['data']['products']['items']
-    outputs = list(spider.parse_products(
-        feed_response(products_page(items, total=126, pages=3)),
-        product_filter={'category_uid': {'eq': 'Mjc2Mg=='}},
-        page=1,
-        category='mobile-phones',
-    ))
+    outputs = read_category(
+        spider, PHONES, fixture_entries(PHONES), total=126, pages=3,
+    )
     follow_ups = [output for output in outputs if isinstance(output, Request)]
 
     assert len(follow_ups) == 1
-    assert json.loads(follow_ups[0].body)['variables']['page'] == 2
-    assert 'mobile-phones' not in spider.finished_categories
+    variables = json.loads(follow_ups[0].body)['variables']
+    assert variables['page'] == 2
+    assert variables['filter'] == {'category_uid': {'eq': f'uid-of-{PHONES}'}}
+    assert PHONES not in spider.finished_categories
 
 
 def test_a_run_is_complete_only_when_the_shops_own_count_is_met():
     spider = ShophiveSpider()
-    items = fixture_products()['data']['products']['items']
+    phones, iphones = fixture_entries(PHONES), fixture_entries(IPHONES)
 
-    def read(category, entries, total):
-        list(spider.parse_products(
-            feed_response(products_page(entries, total=total)),
-            product_filter={'category_uid': {'eq': 'x'}},
-            page=1,
-            category=category,
-        ))
-
-    read('mobile-phones', items[:9], 9)
+    read_category(spider, PHONES, phones)
     assert spider.full_crawl_completed is False   # iPhones not read yet
 
-    read('apple/iphone', items[9:], 4)            # the feed promised 4, sent 3
-    assert spider.full_crawl_completed is False
+    read_category(spider, IPHONES, iphones, total=len(iphones) + 1)
+    assert spider.full_crawl_completed is False   # one promised, not sent
 
-    read('apple/iphone', items[9:], 3)
+    read_category(spider, IPHONES, iphones)
     assert spider.full_crawl_completed is True
 
 
@@ -361,7 +384,7 @@ def test_a_missing_category_stops_the_run_counting_as_complete():
     spider = ShophiveSpider()
     requests = list(spider.parse_categories(feed_response({
         'data': {'categoryList': [
-            {'uid': 'Mjc2Mg==', 'url_path': 'mobile-phones', 'product_count': 126},
+            {'uid': 'Mjc2Mg==', 'url_path': PHONES, 'product_count': 126},
         ]},
     })))
 
@@ -376,9 +399,9 @@ def test_an_error_from_the_feed_fails_the_page_loudly():
     with pytest.raises(ShophiveFeedError):
         list(spider.parse_products(
             feed_response({'errors': [{'message': 'Internal server error'}]}),
-            product_filter={},
+            category_uid='Mjc2Mg==',
             page=1,
-            category='mobile-phones',
+            category=PHONES,
         ))
 
     assert spider.failed_page_count == 1
@@ -387,11 +410,92 @@ def test_an_error_from_the_feed_fails_the_page_loudly():
 
 def test_a_phone_filed_in_both_categories_is_emitted_once():
     spider = ShophiveSpider()
-    _, first = crawl_fixture(spider, 'mobile-phones')
-    _, second = crawl_fixture(spider, 'apple/iphone')
+    shared = dict(fixture_entries(IPHONES)[0])
+    shared['categories'] = [{'url_path': PHONES}, {'url_path': IPHONES}]
+
+    first = read_category(spider, PHONES, [shared])
+    second = read_category(spider, IPHONES, [shared])
 
     assert first
     assert second == []
+    assert spider.full_crawl_completed is True
+
+
+# --------------------------------------------------------------------------
+# An answer the feed did not filter
+# --------------------------------------------------------------------------
+
+TELEVISION = {
+    'sku': 'S72701',
+    'name': 'TCL 55P7L 55" QLED 4K Smart TV',
+    'url_key': 'tcl-55p7l',
+    'url_suffix': '/',
+    'stock_status': 'IN_STOCK',
+    'categories': [{'url_path': 'tv-home-theater/tv'}],
+    'price_range': {'minimum_price': {
+        'regular_price': {'value': 157999},
+        'final_price': {'value': 157999},
+    }},
+    'image': {'url': 'https://www.shophive.com/media/t/c/tcl.jpg'},
+    'media_gallery': [],
+    'options': [],
+}
+
+
+def test_a_product_outside_the_phone_categories_stops_the_crawl():
+    """Asked for something it cannot filter by, the feed sends the store.
+
+    This happened: a request by ``url_key`` came back with 8,584 products.
+    """
+
+    spider = ShophiveSpider()
+    spider.category_sizes[PHONES] = 126
+
+    with pytest.raises(CloseSpider):
+        list(spider.parse_products(
+            feed_response(products_page(
+                [*fixture_entries(PHONES)[:2], TELEVISION],
+                total=126,
+            )),
+            category_uid='Mjc2Mg==',
+            page=1,
+            category=PHONES,
+        ))
+
+    assert spider.emitted_skus == set()
+    assert spider.failed_page_count == 1
+    assert spider.full_crawl_completed is False
+
+
+def test_a_category_answering_with_the_whole_store_stops_the_crawl():
+    spider = ShophiveSpider()
+    spider.category_sizes[PHONES] = 126
+
+    with pytest.raises(CloseSpider):
+        list(spider.parse_products(
+            feed_response(products_page(
+                fixture_entries(PHONES),
+                total=8584,
+                pages=172,
+            )),
+            category_uid='Mjc2Mg==',
+            page=1,
+            category=PHONES,
+        ))
+
+    assert spider.emitted_skus == set()
+    assert spider.full_crawl_completed is False
+
+
+def test_the_feed_is_only_ever_asked_for_products_by_category():
+    spider = ShophiveSpider(
+        product_urls='https://www.shophive.com/samsung-galaxy-a17-6gb-128gb/',
+    )
+    request = spider.products_request('Mjc2Mg==', page=1, category=PHONES)
+
+    assert list(json.loads(request.body)['variables']['filter']) == [
+        'category_uid',
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -399,7 +503,7 @@ def test_a_phone_filed_in_both_categories_is_emitted_once():
 # --------------------------------------------------------------------------
 
 
-def test_chosen_pages_are_asked_for_by_their_key_and_nothing_else():
+def test_only_shophive_product_pages_are_taken_as_phones_to_refresh():
     spider = ShophiveSpider(product_urls=(
         'https://www.shophive.com/samsung-galaxy-a17-6gb-128gb/,'
         'https://www.shophive.com/xiaomi-17t-12gb-512gb/,'
@@ -407,27 +511,45 @@ def test_chosen_pages_are_asked_for_by_their_key_and_nothing_else():
         'https://priceoye.pk/mobiles/samsung/samsung-galaxy-a17,'
         'https://www.shophive.com/mobile-phones/samsung'
     ))
-    requests = collect(spider.start())
 
-    assert len(requests) == 1
-    assert json.loads(requests[0].body)['variables']['filter'] == {
-        'url_key': {'in': [
-            'samsung-galaxy-a17-6gb-128gb',
-            'xiaomi-17t-12gb-512gb',
-        ]},
+    assert spider.targeted_keys == {
+        'samsung-galaxy-a17-6gb-128gb',
+        'xiaomi-17t-12gb-512gb',
     }
+    # It walks the categories like any crawl; it cannot ask by address.
+    assert len(collect(spider.start())) == 1
 
 
-def test_a_refresh_of_chosen_pages_never_counts_as_a_full_crawl():
+def test_a_refresh_given_no_shophive_page_asks_for_nothing():
+    spider = ShophiveSpider(
+        product_urls='https://priceoye.pk/mobiles/samsung/samsung-galaxy-a17',
+    )
+
+    assert collect(spider.start()) == []
+
+
+def test_a_refresh_emits_only_the_phones_asked_for():
     spider = ShophiveSpider(
         product_urls='https://www.shophive.com/samsung-galaxy-a17-6gb-128gb/',
     )
-    outputs = list(spider.parse_products(
-        feed_response(fixture_products()),
-        product_filter={'url_key': {'in': ['samsung-galaxy-a17-6gb-128gb']}},
-        page=1,
-        category=None,
-    ))
+    outputs = read_category(
+        spider, PHONES, fixture_entries(PHONES), total=126, pages=3,
+    )
 
     assert outputs
+    assert all(not isinstance(output, Request) for output in outputs)
+    assert {output['model'] for output in outputs} == {'Samsung Galaxy A17'}
     assert spider.full_crawl_completed is False
+
+
+def test_a_refresh_keeps_reading_until_it_has_found_its_phones():
+    spider = ShophiveSpider(
+        product_urls='https://www.shophive.com/a-phone-on-a-later-page/',
+    )
+    outputs = read_category(
+        spider, PHONES, fixture_entries(PHONES), total=126, pages=3,
+    )
+
+    assert len(outputs) == 1
+    assert isinstance(outputs[0], Request)
+    assert json.loads(outputs[0].body)['variables']['page'] == 2
