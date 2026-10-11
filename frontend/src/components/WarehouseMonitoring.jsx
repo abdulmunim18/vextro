@@ -172,7 +172,7 @@ export default function WarehouseMonitoring() {
             {metrics?.product_listings_count || 0}
           </div>
           <div className="text-xs text-blue-400 mt-1">
-            Across Daraz & PriceOye
+            Across Daraz, PriceOye & Shophive
           </div>
         </div>
 

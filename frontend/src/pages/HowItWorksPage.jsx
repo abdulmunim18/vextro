@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 
 const steps = [
   ["01", "Search a product", "Find a phone or other product by its familiar brand and model name."],
-  ["02", "We normalize listings", "VEXTRO groups equivalent Daraz and PriceOye titles into one product while keeping variants separate."],
+  ["02", "We normalize listings", "VEXTRO groups equivalent Daraz, PriceOye and Shophive titles into one product while keeping variants separate."],
   ["03", "Compare with context", "Review current offers, seller links, specifications and historical price movement before deciding."],
 ];
 
