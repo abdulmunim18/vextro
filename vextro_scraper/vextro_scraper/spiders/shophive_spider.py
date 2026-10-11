@@ -118,6 +118,8 @@ MEMORY_PAIR = re.compile(
 MEMORY_SINGLE = re.compile(r'\b(\d{1,4})\s*(GB|TB)\b', re.I)
 PTA_APPROVED = re.compile(r'\bPTA\s+Approved\b', re.I)
 SECOND_GENERATION = re.compile(r'(?<![A-Za-z0-9])2G(?![A-Za-z0-9])', re.I)
+BRACKETED = re.compile(r'\(\s*([^()]*?)\s*\)')
+MODEL_YEAR = re.compile(r'(?:19|20)\d{2}')
 
 COLOUR_OPTION_TITLE = re.compile(r'^\s*colou?rs?\s*$', re.I)
 
@@ -193,6 +195,18 @@ def parse_name(name):
     # Shophive labels its feature phones "2G". No model is told apart by
     # it, and other marketplaces name the same phones without it.
     text = SECOND_GENERATION.sub(' ', text)
+    # "(Special Edition)" is part of the model's name and other
+    # marketplaces write it without brackets. A bracketed year stays as
+    # it is: "(2024)" is how every marketplace marks a feature phone's
+    # generation.
+    text = BRACKETED.sub(
+        lambda match: (
+            match.group(0)
+            if MODEL_YEAR.fullmatch(match.group(1))
+            else f' {match.group(1)} '
+        ),
+        text,
+    )
     text = re.sub(r'\(\s*\)', ' ', text)
     model = ' '.join(text.split()).strip(' -–—_|/,;:.')
 
