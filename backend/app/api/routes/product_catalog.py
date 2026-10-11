@@ -21,6 +21,7 @@ from app.schemas.product_catalog import (
     ProductListResponse,
     ProductListingsResponse,
 )
+from app.schemas.listing_refresh import ProductRefreshResponse
 from app.schemas.reviews import ProductReviewsResponse
 from app.schemas.review_analysis import ProductReviewAnalysisResponse, ReviewAnalysisResponse
 from app.schemas.seller_trust import SellerTrustResponse
@@ -32,6 +33,7 @@ from app.services.product_catalog_service import (
 from app.services.product_comparison_service import (
     get_product_comparison_response,
 )
+from app.services.listing_refresh_service import listing_refresh_service
 from app.services.review_service import ReviewService
 from app.services.review_analysis_service import ReviewAnalysisService
 from app.services.seller_trust_service import SellerTrustService
@@ -239,6 +241,29 @@ def read_product_listings(
         )
 
     return result
+
+
+@router.post(
+    "/{product_id}/refresh",
+    response_model=ProductRefreshResponse,
+    status_code=status.HTTP_200_OK,
+)
+def refresh_product_offers(
+    product_id: int = Path(..., ge=1),
+    database_session: Session = Depends(get_db),
+) -> ProductRefreshResponse:
+    """Re-read this product's marketplace pages if its offers are stale.
+
+    Public and safe to call on every page view: a product whose offers
+    were confirmed recently is left alone, and one refresh serves everyone
+    who opens the page while it runs. The call returns at once; the page
+    reads the offers again after ``retry_after_seconds``.
+    """
+
+    return listing_refresh_service.refresh_product(
+        database_session,
+        product_id,
+    )
 
 
 @router.get(

@@ -1,6 +1,7 @@
 import {
   formatDate,
   formatPrice,
+  formatWarranty,
   toFiniteNumber,
 } from "../utils/productDisplay";
 import { getMarketplaceDestination } from "../utils/marketplaceDestination";
@@ -236,7 +237,7 @@ function MarketplaceListingCard({
                 <span>
                   Warranty:{" "}
                   <strong className="text-vextro-ink">
-                    {listing.warranty || "Not listed"}
+                    {formatWarranty(listing)}
                   </strong>
                 </span>
 

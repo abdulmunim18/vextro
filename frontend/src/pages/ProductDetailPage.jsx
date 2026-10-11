@@ -26,6 +26,7 @@ import {
   getProductById,
   getProductListings,
   getProductPriceHistory,
+  refreshProductOffers,
   getProductPriceForecast,
   getProductBuyGuidance,
   getPersonalizedProductBuyGuidance,
@@ -284,6 +285,10 @@ function ProductDetailPage() {
   const [errorMessage, setErrorMessage] =
     useState("");
 
+  // "idle" | "checking" | "updated": whether this page is waiting on a
+  // fresh read of the marketplace prices.
+  const [priceRefresh, setPriceRefresh] = useState("idle");
+
   useEffect(() => {
     let isMounted = true;
 
@@ -377,6 +382,77 @@ function ProductDetailPage() {
       isMounted = false;
     };
   }, [canPersonalizeGuidance, productId]);
+
+  // The stored offers are shown at once. If they have not been confirmed
+  // recently, VEXTRO re-reads this one product in the background and the
+  // page picks up the result, so the price on screen is the marketplace's
+  // current one rather than the last scheduled crawl's.
+  const loadedProductId = product?.id;
+
+  useEffect(() => {
+    if (!loadedProductId) {
+      return undefined;
+    }
+
+    let isMounted = true;
+    const timers = [];
+
+    async function reloadOffers(isFinal) {
+      try {
+        const [listingsData, historyData] = await Promise.all([
+          getProductListings(loadedProductId),
+          getProductPriceHistory(loadedProductId),
+        ]);
+
+        if (!isMounted) {
+          return;
+        }
+
+        setListingResponse(listingsData);
+        setPriceHistory(historyData);
+      } catch {
+        // The offers already on screen stay; a failed re-read is not an
+        // error the shopper needs to act on.
+      } finally {
+        if (isMounted && isFinal) {
+          setPriceRefresh("updated");
+        }
+      }
+    }
+
+    async function requestRefresh() {
+      try {
+        const result = await refreshProductOffers(loadedProductId);
+
+        if (!isMounted || !result?.refreshing) {
+          return;
+        }
+
+        setPriceRefresh("checking");
+
+        const wait = Math.max(
+          4,
+          Number(result.retry_after_seconds) || 10,
+        ) * 1000;
+
+        timers.push(window.setTimeout(() => reloadOffers(false), wait));
+        timers.push(window.setTimeout(() => reloadOffers(true), wait * 2));
+      } catch {
+        // Refreshing is a courtesy; the page works without it.
+      }
+    }
+
+    const startTimer = window.setTimeout(() => {
+      setPriceRefresh("idle");
+      requestRefresh();
+    }, 0);
+
+    return () => {
+      isMounted = false;
+      window.clearTimeout(startTimer);
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [loadedProductId]);
 
   const refreshPersonalizedGuidance = useCallback(
     async () => {
@@ -513,6 +589,8 @@ function ProductDetailPage() {
           page: 1,
           page_size: 9,
           sort_by: "price_asc",
+          // Suggest only phones that can be bought right now.
+          is_available: true,
         });
 
         if (!isMounted) {
@@ -933,10 +1011,25 @@ function ProductDetailPage() {
               </p>
             </div>
 
-            <span className="rounded-full border border-vextro-border bg-white px-4 py-2 text-xs font-black text-vextro-muted">
-              {listingResponse?.total || 0}{" "}
-              {listingResponse?.total === 1 ? "offer" : "offers"}
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              {priceRefresh === "checking" ? (
+                <span className="flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-black text-vextro-primary">
+                  <span className="size-2 animate-pulse rounded-full bg-vextro-primary" />
+                  Checking latest prices…
+                </span>
+              ) : null}
+
+              {priceRefresh === "updated" ? (
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-black text-emerald-700">
+                  ✓ Prices checked just now
+                </span>
+              ) : null}
+
+              <span className="rounded-full border border-vextro-border bg-white px-4 py-2 text-xs font-black text-vextro-muted">
+                {listingResponse?.total || 0}{" "}
+                {listingResponse?.total === 1 ? "offer" : "offers"}
+              </span>
+            </div>
           </div>
 
           {platformAvailability.length > 0 ? (
@@ -1151,7 +1244,12 @@ function ProductDetailPage() {
 
         <BuyTimeGuidanceCard guidance={buyGuidance} />
 
-        <ReviewsPanel productId={product.id} />
+        <ReviewsPanel
+          key={product.id}
+          productId={product.id}
+          listings={listings}
+          platformNames={platformNames}
+        />
 
         {specifications.length > 0 ? (
           <section className="mt-10">
