@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  getProductCommunityOpinions,
   getProductReviewAnalysis,
   getProductReviews,
 } from "../services/catalogService";
 import { formatDate } from "../utils/productDisplay";
+import CommunitySourceBox from "./CommunitySourceBox";
 
 // The reviews API only paginates in one direction, so we pull a generous
 // first page and split it client-side by platform. 100 is the server's
@@ -557,6 +559,29 @@ function ReviewsPanel({ productId, listings = [], platformNames }) {
   const [analysis, setAnalysis] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState(null);
+  const [communitySources, setCommunitySources] = useState([]);
+
+  useEffect(() => {
+    if (!productId) {
+      return undefined;
+    }
+
+    let isMounted = true;
+
+    // The guide-site box is an extra; the reviews stand without it.
+    getProductCommunityOpinions(productId)
+      .then((data) => data?.sources ?? [])
+      .catch(() => [])
+      .then((sources) => {
+        if (isMounted) {
+          setCommunitySources(sources);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [productId]);
 
   useEffect(() => {
     if (!productId) {
@@ -735,7 +760,9 @@ function ReviewsPanel({ productId, listings = [], platformNames }) {
           <h2 className="mt-3 text-3xl font-black tracking-tight text-vextro-ink sm:text-4xl">
             {comparesMarketplaces
               ? "Compare what buyers said"
-              : `What ${platformGroups[0]?.label ?? "buyers"} buyers said`}
+              : communitySources.length > 0
+                ? "What buyers and visitors said"
+                : `What ${platformGroups[0]?.label ?? "buyers"} buyers said`}
           </h2>
           <p className="mt-3 text-sm leading-7 text-vextro-muted">
             {comparesMarketplaces
@@ -755,8 +782,10 @@ function ReviewsPanel({ productId, listings = [], platformNames }) {
       ) : null}
 
       <div
-        className={`mt-6 grid gap-5 ${
-          comparesMarketplaces ? "md:grid-cols-2" : ""
+        className={`mt-6 grid items-start gap-5 ${
+          platformGroups.length + communitySources.length > 1
+            ? "lg:grid-cols-2"
+            : ""
         }`}
       >
         {platformGroups.map((group) =>
@@ -775,6 +804,9 @@ function ReviewsPanel({ productId, listings = [], platformNames }) {
             />
           ),
         )}
+        {communitySources.map((source) => (
+          <CommunitySourceBox key={source.source} source={source} />
+        ))}
       </div>
 
       <p className="mt-6 text-[11px] leading-5 text-vextro-muted">

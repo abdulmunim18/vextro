@@ -15,7 +15,6 @@ import PriceHistoryChart from "../components/PriceHistoryChart";
 import PriceForecastCard from "../components/PriceForecastCard";
 import BuyTimeGuidanceCard from "../components/BuyTimeGuidanceCard";
 import RelatedProductCard from "../components/RelatedProductCard";
-import CommunityOpinionsPanel from "../components/CommunityOpinionsPanel";
 import ReviewsPanel from "../components/ReviewsPanel";
 import RouteLoadingState from "../components/RouteLoadingState";
 import { useAuth } from "../context/useAuth";
@@ -1251,8 +1250,6 @@ function ProductDetailPage() {
           listings={listings}
           platformNames={platformNames}
         />
-
-        <CommunityOpinionsPanel key={`community-${product.id}`} productId={product.id} />
 
         {specifications.length > 0 ? (
           <section className="mt-10">
