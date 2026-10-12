@@ -212,6 +212,12 @@ def prepare_test_database() -> Generator[None, None, None]:
                 base_url="https://priceoye.pk",
                 is_active=True,
             ),
+            Platform(
+                name="Shophive",
+                code="shophive",
+                base_url="https://www.shophive.com",
+                is_active=True,
+            ),
         ]
 
         database_session.add_all(

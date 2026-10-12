@@ -20,6 +20,7 @@ import {
 const platformColors = {
   daraz: "#ea580c",
   priceoye: "#3157d5",
+  shophive: "#0f9f6e",
 };
 
 const fallbackColors = ["#0fba83", "#7c3aed", "#0891b2", "#db2777"];

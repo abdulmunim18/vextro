@@ -1223,7 +1223,7 @@ function AdminPage() {
 
                 <p className="mt-3 max-w-2xl text-sm leading-7 text-vextro-muted">
                   User access, canonical products and
-                  Daraz or PriceOye listings can now
+                  Daraz, PriceOye or Shophive listings can now
                   be reviewed through role-protected
                   administrator APIs.
                 </p>
@@ -2017,7 +2017,7 @@ function AdminPage() {
                   </span>
 
                   <h2 className="mt-2 text-3xl font-black tracking-tight text-vextro-ink">
-                    Daraz and PriceOye listings
+                    Daraz, PriceOye and Shophive listings
                   </h2>
 
                   <p className="mt-3 text-sm leading-7 text-vextro-muted">

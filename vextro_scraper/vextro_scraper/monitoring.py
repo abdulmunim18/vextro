@@ -17,7 +17,9 @@ from vextro_scraper.pipelines import (
 
 
 # Marketplaces, and guide sites crawled the same way.
-MONITORED_PLATFORMS = frozenset({'daraz', 'priceoye', 'whatmobile'})
+MONITORED_PLATFORMS = frozenset(
+    {'daraz', 'priceoye', 'shophive', 'whatmobile'}
+)
 
 
 class ScrapeMonitoringExtension:

@@ -1,6 +1,7 @@
 """Business logic for marketplace acquisition ingestion."""
 
 import logging
+from typing import get_args
 
 from fastapi import HTTPException, status
 from pydantic import ValidationError
@@ -16,6 +17,7 @@ from app.schemas.acquisition import (
     AcquisitionBulkInput,
     AcquisitionBulkItemResponse,
     AcquisitionBulkResponse,
+    PlatformCode,
 )
 from app.services.price_alert_service import (
     evaluate_price_alerts_for_capture,
@@ -481,7 +483,7 @@ class AcquisitionService:
             external_id = raw_item.get("external_id")
             safe_platform = (
                 platform_code
-                if platform_code in {"daraz", "priceoye"}
+                if platform_code in get_args(PlatformCode)
                 else None
             )
             safe_external_id = (

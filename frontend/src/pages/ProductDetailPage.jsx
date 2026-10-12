@@ -38,6 +38,7 @@ import {
   toFiniteNumber,
 } from "../utils/productDisplay";
 import { getMarketplaceDestination } from "../utils/marketplaceDestination";
+import { isMarketplace } from "../utils/marketplaces";
 
 function extractItems(responseData) {
   if (Array.isArray(responseData)) {
@@ -507,25 +508,18 @@ function ProductDetailPage() {
       listings.map((listing) => listing.platform_id),
     );
 
-    return platforms.filter((platform) => {
-      const platformCode = platform.code?.toLowerCase();
-      return (
-        ["daraz", "priceoye"].includes(platformCode) &&
-        !listingPlatformIds.has(platform.id)
-      );
-    });
+    return platforms.filter(
+      (platform) =>
+        isMarketplace(platform) && !listingPlatformIds.has(platform.id),
+    );
   }, [listings, platforms]);
 
-  // One entry per supported marketplace (Daraz, PriceOye) so the
+  // One entry per supported marketplace so the
   // stock summary strip renders even for platforms that have zero
   // listings for this product. The `status` value drives the chip
   // colour: "in_stock" | "out_of_stock" | "not_listed".
   const platformAvailability = useMemo(() => {
-    const supportedPlatforms = platforms.filter((platform) =>
-      ["daraz", "priceoye"].includes(
-        platform.code?.toLowerCase(),
-      ),
-    );
+    const supportedPlatforms = platforms.filter(isMarketplace);
 
     return supportedPlatforms.map((platform) => {
       const platformListings = listings.filter(

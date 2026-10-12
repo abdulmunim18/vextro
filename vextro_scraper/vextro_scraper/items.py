@@ -26,7 +26,7 @@ class SmartphoneItem(scrapy.Item):
     review_count = scrapy.Field()
 
     # NLP & Operational Data
-    platform = scrapy.Field()     # 'Daraz' or 'PriceOye'
+    platform = scrapy.Field()     # 'Daraz', 'PriceOye' or 'Shophive'
     product_url = scrapy.Field()
     image_urls = scrapy.Field()   # Ordered product gallery URLs
     specifications = scrapy.Field() # Normalized label/value technical data

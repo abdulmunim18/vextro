@@ -38,7 +38,7 @@ class PendingProductMatch(Base):
             name="uq_pending_product_matches_platform_external_id",
         ),
         CheckConstraint(
-            "platform_code IN ('daraz', 'priceoye')",
+            "platform_code IN ('daraz', 'priceoye', 'shophive')",
             name="ck_pending_product_matches_platform_valid",
         ),
         CheckConstraint(
