@@ -26,7 +26,7 @@ class SmartphoneItem(scrapy.Item):
     review_count = scrapy.Field()
 
     # NLP & Operational Data
-    platform = scrapy.Field()     # 'Daraz' or 'PriceOye'
+    platform = scrapy.Field()     # 'Daraz', 'PriceOye' or 'Shophive'
     product_url = scrapy.Field()
     image_urls = scrapy.Field()   # Ordered product gallery URLs
     specifications = scrapy.Field() # Normalized label/value technical data
@@ -41,3 +41,23 @@ class ReviewBatchItem(scrapy.Item):
     external_listing_id = scrapy.Field()
     source_url = scrapy.Field()
     reviews = scrapy.Field()
+
+
+class CommunityOpinionsItem(scrapy.Item):
+    """A phone's public rating and visitor opinions from a guide site.
+
+    Not an offer and not buyer reviews: the source sells nothing, and its
+    opinions are posted by anyone, without a star rating of their own.
+    """
+
+    source = scrapy.Field()           # e.g. 'whatmobile'
+    product_name = scrapy.Field()     # the phone as the source names it
+    catalog_name = scrapy.Field()     # the VEXTRO phone it was looked up for
+    brand = scrapy.Field()
+    source_url = scrapy.Field()
+    opinions_url = scrapy.Field()
+    rating = scrapy.Field()           # the phone's overall rating, 0-5
+    rating_count = scrapy.Field()
+    reference_price = scrapy.Field()  # listed retail price, not an offer
+    opinions = scrapy.Field()         # [{position, author, posted_at, text, contact_removed}]
+    scrape_timestamp = scrapy.Field()

@@ -337,16 +337,15 @@ class AcquisitionRepository:
         *,
         captured_at: datetime,
     ) -> PriceHistory:
-        """Extend an unchanged observation to the latest scrape time.
+        """Acknowledge a price that has not changed since it was recorded.
 
-        Repeating an identical price is not a new data point. Moving the
-        timestamp keeps "this price was still live at" accurate without
-        filling the chart with flat duplicates every twelve hours.
+        Repeating an identical price is not a new data point, and the
+        existing point is left exactly where it is: its timestamp is the
+        moment this price began. Moving it forward on every scrape erased
+        that moment, so a price that had held for a month was drawn as if
+        it started today. When the offer was last confirmed is the
+        listing's ``last_seen_at``, not a fact about the price point.
         """
-
-        if captured_at > price_history.captured_at:
-            price_history.captured_at = captured_at
-            database_session.flush()
 
         return price_history
 

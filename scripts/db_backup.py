@@ -1,99 +1,215 @@
 #!/usr/bin/env python3
-"""
-VEXTRO Data Warehouse - Automated Database Backup Utility
-Usage:
+"""Back up the VEXTRO database and keep the most recent copies.
+
     python scripts/db_backup.py
+    python scripts/db_backup.py --keep 30 --backup-dir D:/vextro-backups
+
+Meant to be run unattended by a scheduler (see
+``scripts/install-backup-schedule.ps1`` and ``docs/deployment-and-demo.md``).
+
+The database is the one the API uses, read from ``backend/.env``. The backup
+is a ``pg_dump`` custom-format archive, the format ``pg_restore`` and the
+team's restore instructions expect. It is written under a temporary name,
+checked by asking ``pg_restore`` to list its contents, and only then given
+its final name, so a file called ``*.dump`` is always a usable backup. Older
+backups of the same database beyond ``--keep`` are then removed.
+
+The exit code is 0 only when a verified backup was written. There is no
+fallback that writes something else and reports success: a scheduler has to
+be able to tell that a backup failed.
 """
 
-import os
-import sys
+from __future__ import annotations
+
+import argparse
+import re
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
-# Ensure backup directory exists
-BACKUP_DIR = Path(__file__).resolve().parent.parent / "backups"
-BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+from db_tools import (
+    DEFAULT_BACKUP_DIR,
+    ENV_FILE,
+    ConfigurationError,
+    DatabaseTarget,
+    configuration,
+    database_target,
+    find_tool,
+)
 
-# PostgreSQL Configuration
-DB_HOST = os.getenv("POSTGRES_HOST", "localhost")
-DB_PORT = os.getenv("POSTGRES_PORT", "5432")
-DB_USER = os.getenv("POSTGRES_USER", "postgres")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "1234")
-DB_NAME = os.getenv("POSTGRES_DB", "vextro_db")
 
-def create_backup():
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_filename = f"vextro_warehouse_backup_{timestamp}.sql"
-    backup_filepath = BACKUP_DIR / backup_filename
+DEFAULT_KEEP = 14
+HISTORY_FILE = "backup_history.log"
+STAMP = "%Y%m%d_%H%M%S"
 
-    print(f"[*] Starting PostgreSQL Database Backup...")
-    print(f"   Database : {DB_NAME}")
-    print(f"   Target   : {backup_filepath}")
 
-    env = os.environ.copy()
-    env["PGPASSWORD"] = DB_PASSWORD
+class BackupError(RuntimeError):
+    """No usable backup was produced."""
 
-    pg_dump_bin = "pg_dump"
-    pg_dump_paths = [
-        r"C:\Program Files\PostgreSQL\16\bin\pg_dump.exe",
-        r"C:\Program Files\PostgreSQL\15\bin\pg_dump.exe",
-        r"C:\Program Files\PostgreSQL\17\bin\pg_dump.exe",
-        r"C:\Program Files\PostgreSQL\18\bin\pg_dump.exe",
-        r"C:\Program Files\PostgreSQL\14\bin\pg_dump.exe",
-        r"D:\download floder\PostgreSQL18\bin\pg_dump.exe",
-    ]
 
-    for p in pg_dump_paths:
-        if os.path.exists(p):
-            pg_dump_bin = p
-            break
+def backup_name(database: str, moment: datetime) -> str:
+    return f"{database}_{moment.strftime(STAMP)}.dump"
 
-    cmd = [
-        pg_dump_bin,
-        "-h", DB_HOST,
-        "-p", DB_PORT,
-        "-U", DB_USER,
-        "-F", "p",  # plain text SQL format
-        "-f", str(backup_filepath),
-        DB_NAME,
-    ]
+
+def backups_of(backup_dir: Path, database: str) -> list[Path]:
+    """Return this script's backups of one database, newest first.
+
+    Matched by the exact name this script writes, so nothing else kept in
+    the directory (a colleague's dump, another database's backups) is ever
+    counted or removed.
+    """
+
+    pattern = re.compile(rf"{re.escape(database)}_\d{{8}}_\d{{6}}\.dump")
+
+    return sorted(
+        (
+            path
+            for path in backup_dir.glob(f"{database}_*.dump")
+            if pattern.fullmatch(path.name)
+        ),
+        key=lambda path: path.name,
+        reverse=True,
+    )
+
+
+def verify_backup(path: Path, target: DatabaseTarget, pg_restore: str, run) -> int:
+    """Confirm an archive is readable and holds table data; return the count.
+
+    ``pg_restore --list`` reads the archive's table of contents without
+    touching any database. An archive it cannot read cannot be restored.
+    """
+
+    if not path.is_file() or path.stat().st_size == 0:
+        raise BackupError("pg_dump wrote no data.")
+
+    listing = run(
+        [pg_restore, "--list", str(path)],
+        env=target.environment(),
+        capture_output=True,
+        text=True,
+    )
+
+    if listing.returncode != 0:
+        raise BackupError(
+            f"The archive could not be read back: {listing.stderr.strip()[:300]}"
+        )
+
+    tables = sum(" TABLE DATA " in line for line in listing.stdout.splitlines())
+
+    if tables == 0:
+        raise BackupError("The archive holds no table data.")
+
+    return tables
+
+
+def create_backup(
+    target: DatabaseTarget,
+    backup_dir: Path,
+    *,
+    pg_dump: str,
+    pg_restore: str,
+    moment: datetime | None = None,
+    name: str | None = None,
+    run=subprocess.run,
+) -> tuple[Path, int]:
+    """Write one verified backup; return its path and its table count."""
+
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    final = backup_dir / (name or backup_name(target.name, moment or datetime.now()))
+    partial = final.with_name(final.name + ".partial")
 
     try:
-        result = subprocess.run(cmd, env=env, capture_output=True, text=True, check=True)
-        size_mb = round(backup_filepath.stat().st_size / (1024 * 1024), 2)
-        print(f"[+] Backup completed successfully!")
-        print(f"   File : {backup_filename}")
-        print(f"   Size : {size_mb} MB")
-        return str(backup_filepath)
-    except FileNotFoundError:
-        print(f"[!] pg_dump binary not found in PATH or standard PostgreSQL paths.")
-        print(f"    Writing fallback schema dump using SQLAlchemy...")
-        return fallback_dump(backup_filepath)
-    except subprocess.CalledProcessError as e:
-        print(f"[!] pg_dump error: {e.stderr}")
-        return fallback_dump(backup_filepath)
+        dump = run(
+            [
+                pg_dump,
+                *target.connection_arguments(),
+                "--format=custom",
+                "--file",
+                str(partial),
+                target.name,
+            ],
+            env=target.environment(),
+            capture_output=True,
+            text=True,
+        )
 
-def fallback_dump(target_path):
-    """Fallback python script to export database snapshot if pg_dump binary isn't in system PATH."""
-    from sqlalchemy import create_engine, text
+        if dump.returncode != 0:
+            raise BackupError(f"pg_dump failed: {dump.stderr.strip()[:300]}")
 
-    db_url = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-    engine = create_engine(db_url)
+        tables = verify_backup(partial, target, pg_restore, run)
+        partial.replace(final)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
 
-    with engine.connect() as conn:
-        tables = conn.execute(text("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")).fetchall()
-        table_names = [t[0] for t in tables]
+    return final, tables
 
-        with open(target_path, "w", encoding="utf-8") as f:
-            f.write(f"-- VEXTRO Warehouse Snapshot Backup\n")
-            f.write(f"-- Exported at: {datetime.now().isoformat()}\n\n")
-            for tname in table_names:
-                count = conn.execute(text(f"SELECT count(*) FROM {tname}")).scalar()
-                f.write(f"-- Table {tname}: {count} records\n")
 
-    print(f"[+] Fallback metadata snapshot written to {target_path}")
-    return str(target_path)
+def prune_backups(backup_dir: Path, database: str, keep: int) -> list[Path]:
+    """Remove this database's backups beyond the newest ``keep``."""
+
+    removed = backups_of(backup_dir, database)[max(1, keep):]
+
+    for path in removed:
+        path.unlink()
+
+    return removed
+
+
+def record(backup_dir: Path, message: str) -> None:
+    """Append one line to the history a person can read afterwards."""
+
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    with (backup_dir / HISTORY_FILE).open("a", encoding="utf-8") as history:
+        history.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}\n")
+
+
+def main(argv: list[str] | None = None, *, run=subprocess.run) -> int:
+    parser = argparse.ArgumentParser(
+        description="Back up the VEXTRO database and keep the most recent copies.",
+    )
+    parser.add_argument("--backup-dir", help="where backups are kept (default: backups/, or BACKUP_DIR)")
+    parser.add_argument("--keep", type=int, help=f"how many backups to keep (default: {DEFAULT_KEEP}, or BACKUP_KEEP)")
+    parser.add_argument("--pg-bin", help="directory holding pg_dump and pg_restore (default: PATH, or PG_BIN_DIR)")
+    parser.add_argument("--env-file", default=str(ENV_FILE), help="env file naming the database (default: backend/.env)")
+    arguments = parser.parse_args(argv)
+
+    values = configuration(Path(arguments.env_file))
+    backup_dir = Path(
+        arguments.backup_dir or values.get("BACKUP_DIR") or DEFAULT_BACKUP_DIR
+    )
+
+    try:
+        keep = arguments.keep or int(values.get("BACKUP_KEEP") or DEFAULT_KEEP)
+        bin_dir = arguments.pg_bin or values.get("PG_BIN_DIR") or None
+        target = database_target(values)
+        backup, tables = create_backup(
+            target,
+            backup_dir,
+            pg_dump=find_tool("pg_dump", bin_dir),
+            pg_restore=find_tool("pg_restore", bin_dir),
+            run=run,
+        )
+    except (BackupError, ConfigurationError, OSError, ValueError) as error:
+        print(f"Backup FAILED: {error}", file=sys.stderr)
+        record(backup_dir, f"FAILED {error}")
+        return 1
+
+    removed = prune_backups(backup_dir, target.name, keep)
+    size_mb = backup.stat().st_size / (1024 * 1024)
+    summary = (
+        f"OK {backup.name} database={target.name} tables={tables} "
+        f"size={size_mb:.1f}MB kept={len(backups_of(backup_dir, target.name))} "
+        f"removed={len(removed)}"
+    )
+    print(f"Backup {summary}")
+    print(f"Stored in {backup_dir}")
+    record(backup_dir, summary)
+
+    return 0
+
 
 if __name__ == "__main__":
-    create_backup()
+    sys.exit(main())

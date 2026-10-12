@@ -54,6 +54,10 @@ def override_get_db() -> Generator[Session, None, None]:
 
 app.dependency_overrides[get_db] = override_get_db
 
+# A developer's .env may start the crawl scheduler with the API. Tests start
+# the API many times and must never launch a real crawl of the marketplaces.
+settings.scraper_autostart_with_api = False
+
 
 @pytest.fixture(autouse=True)
 def stub_auth_email_delivery(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -206,6 +210,12 @@ def prepare_test_database() -> Generator[None, None, None]:
                 name="PriceOye",
                 code="priceoye",
                 base_url="https://priceoye.pk",
+                is_active=True,
+            ),
+            Platform(
+                name="Shophive",
+                code="shophive",
+                base_url="https://www.shophive.com",
                 is_active=True,
             ),
         ]

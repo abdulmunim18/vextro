@@ -333,6 +333,40 @@ Remove it again with `Unregister-ScheduledTask -TaskName "VEXTRO Scraper Schedul
 The code does not depend on Task Scheduler: once the process is running, the
 startup crawl and the twelve-hour interval are the scheduler's own doing.
 
+### Refreshing one product when its page is opened
+
+The scheduled crawl leaves a price up to one interval old. To close that gap
+for the phone someone is actually looking at, the product page calls
+`POST /api/v1/products/{id}/refresh` when it opens. If a marketplace's offers
+for that product were last confirmed more than
+`ON_DEMAND_REFRESH_MAX_AGE_MINUTES` ago, the backend re-reads just that
+product's pages and the page picks up the result about ten seconds later.
+
+Nothing is parsed twice. The refresh runs the marketplace's own spider for
+one product (`scrapy crawl <spider> -a product_urls=<url>`), so the listing
+goes through the same cleaning, matching and ingestion as a full crawl.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `ON_DEMAND_REFRESH_ENABLED` | `true` | Refresh at all |
+| `ON_DEMAND_REFRESH_MAX_AGE_MINUTES` | `60` | Offers older than this are re-read |
+| `ON_DEMAND_REFRESH_COOLDOWN_SECONDS` | `120` | One refresh per product serves everyone opening it meanwhile |
+| `ON_DEMAND_REFRESH_MAX_PARALLEL` | `2` | Refreshes running at once |
+
+**Adding a marketplace.** Two things, both small:
+
+1. Its spider accepts `-a product_urls=<url>[,<url>...]` and, given that
+   argument, requests only those pages. `PriceoyeSpider.__init__` and
+   `start()` are the pattern to copy.
+2. One entry in `TARGETED_SPIDERS` in
+   `backend/app/services/listing_refresh_service.py`, mapping the platform
+   code to the spider name.
+
+A marketplace belongs there only if one product page states its offers.
+Daraz does not qualify: its listings come from the category feed and its
+product pages load prices through a signed request. Daraz is as fresh as
+the scheduled crawl, which takes about two minutes.
+
 ---
 
 ## 8. Run tracking
@@ -380,3 +414,98 @@ watches is preserved and reported instead of deleted, and such a product
 deliberately keeps its demo slug so a later `--force-drop-alerts` run can
 still find it. Competitor-watchlist entries that would be removed alongside a
 demo listing are reported before the commit.
+
+---
+
+## 10. Shophive
+
+Shophive (`shophive.com`) is a single retailer, like PriceOye: it names no
+seller per offer. It runs on Magento 2, whose storefront publishes its
+catalogue through a GraphQL endpoint (`/graphql`). That is the data its own
+pages are built from and it needs no login; `robots.txt` is empty. The
+spider `shophive_smartphones` reads it instead of the HTML: five requests
+and about 40 KB compressed for every phone, against roughly 170 page loads.
+
+### Source of truth
+
+| | Shophive |
+|---|---|
+| Phones | categories `mobile-phones` and `apple/iphone`, by `category_uid` |
+| Current price | `price_range.minimum_price.final_price`, plus the colour's surcharge |
+| List price | `regular_price`, plus the same surcharge |
+| Availability | `stock_status`, and not "Coming Soon" in the Shipping row |
+| Colours | the product's "Colors" custom option; one listing per value |
+| RAM / storage | the product name ("8GB 256GB"); the Internal Memory row only when the name states no storage |
+| Warranty | the Warranty row, as stated |
+| Listing id | `<sku>-<colour option id>`, or `<sku>` when there are no colours |
+| Reviews | none: every phone has zero |
+
+Each RAM and storage combination is a product of its own on Shophive, and
+its colours are options on it.
+
+### Rules
+
+- **Rs 0 is not an offer.** Unreleased phones are listed at zero. They are
+  skipped and counted in the run's closing log line.
+- **Priced but "Coming Soon"** is stored with its price and marked
+  unavailable.
+- **The name wins over the specification table.** The table contradicts the
+  name on a handful of phones (the Galaxy A17 "6GB" page says RAM 4GB), and
+  its RAM row is inconsistent across iPhone sizes, so RAM is taken only from
+  the name.
+- **A run is complete only when the count agrees.** The feed states how
+  many phones each category holds. `full_crawl_completed` is true only when
+  both categories were read to the last page and delivered exactly that
+  many, which is what lets the backend retire listings the shop dropped.
+
+### The feed ignores filters it does not support
+
+Asked for products by `url_key`, the feed does not fail: it answers with all
+8,500 products in the store. `sku` and `category_uid` are honoured. So:
+
+- the spider only ever filters by category;
+- a refresh of chosen pages (`-a product_urls=...`) walks the two
+  categories, emits only the phones named and stops once it has them;
+- every product must be filed under a phone category, and a category must
+  not answer with far more products than its own record says it holds.
+  Either one closes the spider with `shophive_category_filter_ignored`
+  before anything from that answer is delivered.
+
+### One phone, two spellings
+
+Shophive writes "Oppo Reno 15F 5G" where PriceOye writes "Oppo Reno 15F".
+PriceOye also sells the "Galaxy A17" and the "Galaxy A17 5G" as two phones,
+so "5G" cannot simply be ignored. The rule in the matcher: a "5G"
+difference separates two phones only when the *same* marketplace already
+uses the other spelling for that product, the one case that shows it sells
+both. Between two marketplaces it is a naming habit and the phone is one
+product. The name each marketplace resolved under is kept on the variant
+(`variant_attributes.named_by`), written at resolve time because listings
+arrive in batches after the phones in the batch were resolved.
+
+The product keeps one name: the first marketplace in
+`MODEL_NAME_AUTHORITIES` (`priceoye`, then `shophive`) that lists a phone
+names it, so the name does not flip between crawls.
+
+### Running it
+
+```bash
+# every phone Shophive lists (about 30 seconds)
+scrapy crawl shophive_smartphones
+
+# only these pages, as the backend does when a product is opened
+scrapy crawl shophive_smartphones -a product_urls=https://www.shophive.com/samsung-galaxy-a17-6gb-128gb/
+```
+
+The scheduler runs it after PriceOye and Daraz. `alembic upgrade head` adds
+the `shophive` platform row; no seed step is needed.
+
+### Known limits
+
+- Stock is not stated per colour, so every colour of a page carries the
+  page's stock status.
+- A colour's own photo is picked by its file name and falls back to the
+  product's main photo when no file clearly matches.
+- Feature phones are told apart by year ("Nokia 5310 (2024)"), which the
+  catalogue's product names do not carry, so two generations of one model
+  number share a product.

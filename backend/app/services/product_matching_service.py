@@ -446,7 +446,9 @@ def names_differ_on_5g(first: str | None, second: str | None) -> bool:
 
     A marketplace sells the "Galaxy A17" and the "Galaxy A17 5G" as two
     phones at two prices. Sellers add and drop "5G" freely in their own
-    titles, so this only means something between two exact model names.
+    titles, so this only means something between two exact model names,
+    and only within one marketplace: one shop writes "Reno 15F 5G" where
+    another writes "Reno 15F" for the same phone.
     """
 
     return bool(_FIFTH_GENERATION.search(first or "")) != bool(
@@ -459,6 +461,7 @@ def _model_identity_conflict(
     candidate: ProductMatchCandidate,
     *,
     exact_model_title: bool = False,
+    same_source_names: frozenset[str] = frozenset(),
 ) -> bool:
     """Report whether a title names a look-alike rather than this phone.
 
@@ -482,9 +485,12 @@ def _model_identity_conflict(
     if not title_tokens or not name_tokens:
         return False
 
-    if exact_model_title and names_differ_on_5g(
-        title,
-        candidate.product_name,
+    # "5G" tells two phones apart only where the marketplace sending this
+    # name already uses the other spelling for this candidate, so it sells
+    # both. Between two marketplaces it is a habit of naming: one writes
+    # "Reno 15F 5G" where the other writes "Reno 15F".
+    if exact_model_title and any(
+        names_differ_on_5g(title, own_name) for own_name in same_source_names
     ):
         return True
 
@@ -599,6 +605,7 @@ def _score_candidate(
     requested_storage: int | None,
     requested_color: str | None,
     exact_model_title: bool = False,
+    same_source_names: frozenset[str] = frozenset(),
 ) -> _ScoredCandidate:
     """Weigh every available identity signal for one catalog variant."""
 
@@ -704,6 +711,7 @@ def _score_candidate(
         title,
         candidate,
         exact_model_title=exact_model_title,
+        same_source_names=same_source_names,
     ):
         rejection_reason = (
             "The marketplace title names a different "
@@ -929,6 +937,22 @@ class ProductMatchingService:
             )
         )
 
+        # What this same marketplace already calls each candidate. Only
+        # against its own spelling does a "5G" in its model name mean a
+        # different phone.
+        own_names = (
+            self.repository.platform_model_names(
+                database_session,
+                platform_code=payload.platform_code,
+                product_ids={
+                    candidate.canonical_product_id
+                    for candidate in candidates
+                },
+            )
+            if payload.exact_model_title
+            else {}
+        )
+
         scored_candidates: list[_ScoredCandidate] = [
             _score_candidate(
                 candidate,
@@ -939,6 +963,9 @@ class ProductMatchingService:
                 requested_storage=requested_storage,
                 requested_color=requested_color,
                 exact_model_title=payload.exact_model_title,
+                same_source_names=frozenset(
+                    own_names.get(candidate.canonical_product_id, ())
+                ),
             )
             for candidate in candidates
         ]

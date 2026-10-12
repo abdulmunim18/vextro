@@ -38,6 +38,18 @@ export async function getProductListings(productId) {
 
   return response.data;
 }
+// Asks VEXTRO to re-read this product's marketplace pages when its offers
+// have not been confirmed recently. Returns at once; `refreshing` says
+// whether a refresh is under way and `retry_after_seconds` when to read
+// the offers again.
+export async function refreshProductOffers(productId) {
+  const response = await apiClient.post(
+    `/products/${productId}/refresh`,
+  );
+
+  return response.data;
+}
+
 export async function getProductPriceHistory(
   productId,
   params = {},
@@ -97,6 +109,15 @@ export async function getProductReviews(productId, params = {}) {
   const response = await apiClient.get(
     `/products/${productId}/reviews`,
     { params },
+  );
+  return response.data;
+}
+
+// Ratings and visitor posts from guide sites (WhatMobile), each post
+// already sorted by VEXTRO into an opinion, a question or a sale advert.
+export async function getProductCommunityOpinions(productId) {
+  const response = await apiClient.get(
+    `/products/${productId}/community-opinions`,
   );
   return response.data;
 }

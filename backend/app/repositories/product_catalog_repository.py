@@ -172,6 +172,27 @@ def list_products(
         .correlate(CanonicalProduct)
         .scalar_subquery()
     )
+    # A phone nobody sells right now is still worth finding, but not ahead
+    # of one that can be bought. This matters only when the caller has not
+    # already asked for one availability or the other.
+    sellable = exists(
+        select(ProductListing.id)
+        .join(
+            ProductVariant,
+            ProductVariant.id
+            == ProductListing.product_variant_id,
+        )
+        .where(
+            ProductVariant.canonical_product_id
+            == CanonicalProduct.id,
+            ProductListing.is_available.is_(True),
+        )
+        .correlate(CanonicalProduct)
+    )
+    availability_order = (
+        (sellable.desc(),) if is_available is None else ()
+    )
+
     order_map = {
         "name_asc": (CanonicalProduct.name.asc(),),
         "name_desc": (CanonicalProduct.name.desc(),),
@@ -184,7 +205,11 @@ def list_products(
         database_session.scalars(
             products_query
             .where(*filters)
-            .order_by(*order_map[sort_by], CanonicalProduct.id.asc())
+            .order_by(
+                *availability_order,
+                *order_map[sort_by],
+                CanonicalProduct.id.asc(),
+            )
             .offset(offset)
             .limit(page_size)
         ).all()

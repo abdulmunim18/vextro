@@ -33,7 +33,8 @@ def clear_scheduler_environment(
 
 
 def test_defaults_match_the_documented_behaviour():
-    """Enabled, crawl on startup, then every twelve hours, both platforms."""
+    """Enabled, crawl on startup, then every twelve hours: all three
+    marketplaces, then the guide site that looks up what they listed."""
 
     assert scheduler._environment_flag("SCRAPER_ENABLED", default=True) is True
     assert (
@@ -44,6 +45,8 @@ def test_defaults_match_the_documented_behaviour():
     assert scheduler._configured_spiders() == (
         "priceoye_smartphones",
         "daraz_smartphones",
+        "shophive_smartphones",
+        "whatmobile_opinions",
     )
 
 

@@ -402,11 +402,11 @@ const canUseSmeWorkspace = hasRole("sme");
               </span>
 
               <strong className="mt-3 block text-2xl font-black text-vextro-ink">
-                2
+                3
               </strong>
 
               <p className="mt-1 text-[11px] text-vextro-muted">
-                Daraz and PriceOye
+                Daraz, PriceOye and Shophive
               </p>
             </article>
 
@@ -577,7 +577,7 @@ const canUseSmeWorkspace = hasRole("sme");
                     title:
                       "Marketplace Product Discovery",
                     description:
-                      "Search the normalized Daraz and PriceOye catalog.",
+                      "Search the normalized Daraz, PriceOye and Shophive catalog.",
                     status: "Available",
                   },
                   {

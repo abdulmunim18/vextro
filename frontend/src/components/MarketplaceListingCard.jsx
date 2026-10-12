@@ -1,6 +1,7 @@
 import {
   formatDate,
   formatPrice,
+  formatWarranty,
   toFiniteNumber,
 } from "../utils/productDisplay";
 import { getMarketplaceDestination } from "../utils/marketplaceDestination";
@@ -32,8 +33,8 @@ function MarketplaceListingCard({
         )
       : null;
 
-  // A marketplace that sells the phone itself (PriceOye) names no separate
-  // seller; the marketplace is the seller.
+  // A marketplace that sells the phone itself (PriceOye, Shophive) names
+  // no separate seller; the marketplace is the seller.
   const sellerName =
     listing.seller?.name || platformName || "Marketplace seller";
 
@@ -190,7 +191,9 @@ function MarketplaceListingCard({
               </span>
             ) : null}
 
-            {rating !== null ? (
+            {/* Stars run from 1 to 5, so a zero means nobody has rated
+                the offer yet, not that it was rated badly. */}
+            {rating !== null && rating > 0 ? (
               <span>
                 <strong className="text-amber-500">
                   ★
@@ -236,7 +239,7 @@ function MarketplaceListingCard({
                 <span>
                   Warranty:{" "}
                   <strong className="text-vextro-ink">
-                    {listing.warranty || "Not listed"}
+                    {formatWarranty(listing)}
                   </strong>
                 </span>
 

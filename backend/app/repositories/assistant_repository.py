@@ -3,7 +3,7 @@
 import re
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.assistant_conversation import AssistantConversation
@@ -495,6 +495,20 @@ class AssistantRepository:
                 CanonicalProduct.is_active.is_(True),
                 CanonicalProduct.id != product.id,
                 CanonicalProduct.category_id == product.category_id,
+                # An alternative the shopper cannot buy is not one.
+                exists(
+                    select(ProductListing.id)
+                    .join(
+                        ProductVariant,
+                        ProductVariant.id
+                        == ProductListing.product_variant_id,
+                    )
+                    .where(
+                        ProductVariant.canonical_product_id
+                        == CanonicalProduct.id,
+                        ProductListing.is_available.is_(True),
+                    )
+                ),
             )
             .order_by(
                 (

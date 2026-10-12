@@ -1,12 +1,16 @@
 import scrapy
 import json
+import random
 import re
 from scrapy.exceptions import IgnoreRequest
 from math import ceil
 from datetime import datetime, timezone
-from urllib.parse import urljoin
+from urllib.parse import quote_plus, urljoin
+
+import requests
 from vextro_scraper.items import ReviewBatchItem, SmartphoneItem
 from vextro_scraper.normalizers import (
+    warranty_from_text,
     optional_text,
     parse_count,
     parse_daraz_specification_sheet,
@@ -27,6 +31,20 @@ class DarazReviewParserError(ValueError):
 
     error_type = "review_parse_error"
     error_stage = "parse"
+
+
+class DarazLookupBlockedError(RuntimeError):
+    """Daraz served its anti-bot page instead of a name lookup's results.
+
+    Daraz tolerates a limited number of searches from one address and then
+    answers every further one with a challenge page for a while. A crawl
+    that kept asking recorded one parse failure per phone - 413 in one run -
+    and prolonged the block. The lookups stop at the first such answer and
+    resume on a later crawl.
+    """
+
+    error_type = "catalog_lookup_blocked"
+    error_stage = "fetch"
 
 
 class DarazReviewBlockedError(RuntimeError):
@@ -65,7 +83,7 @@ class DarazReviewFetchError(RuntimeError):
 class DarazSpider(scrapy.Spider):
     name = "daraz_smartphones"
     platform_code = "daraz"
-    parser_version = "daraz-v3-brand-catalogues"
+    parser_version = "daraz-v4-catalogue-search"
     allowed_domains = ["daraz.pk"]
 
     # We use the internal AJAX API for reliable scraping. It is the same
@@ -96,13 +114,164 @@ class DarazSpider(scrapy.Spider):
     # After this many pages in a row with nothing new, a listing is done.
     MAX_STALE_CATALOG_PAGES = 2
 
-    def __init__(self, *args, **kwargs):
+    SEARCH_TERM_SEPARATOR = "|"
+
+    def __init__(self, search_terms=None, *args, **kwargs):
+        """Crawl Daraz's phone listings, or only look up the phones named.
+
+        ``-a search_terms="<name>[|<name>...]"`` searches the smartphone
+        category for just those phones, which is how the backend refreshes
+        one product when a shopper opens it.
+        """
+
         super().__init__(*args, **kwargs)
         self.review_listings_requested = 0
         self.blocked_review_responses = 0
         self.reviews_blocked = False
         self.seen_item_ids = set()
+        self.walk_item_ids = set()
+        self.pending_lookups = []
         self.requested_brand_paths = set()
+        self.targeted_terms = [
+            term
+            for term in (
+                part.strip()
+                for part in str(search_terms or '').split(
+                    self.SEARCH_TERM_SEPARATOR
+                )
+            )
+            if len(term) >= 3
+        ]
+
+    async def start(self):
+        if self.targeted_terms:
+            self.queue_lookups(self.targeted_terms)
+        else:
+            async for request in super().start():
+                yield request
+
+            # The category and brand listings show Daraz's best sellers,
+            # not everything it sells: a phone VEXTRO lists from another
+            # marketplace can be on Daraz and never appear in them. Asking
+            # Daraz for some of those phones by name, each crawl, is what
+            # finds them.
+            self.queue_lookups(self.catalog_phone_names())
+
+        first_lookup = self.next_lookup_request()
+        if first_lookup is not None:
+            yield first_lookup
+
+    def queue_lookups(self, terms):
+        """Remember the phone names to look up, one after another."""
+
+        self.pending_lookups = [
+            term
+            for term in dict.fromkeys(
+                ' '.join(str(term).split()) for term in terms
+            )
+            if len(term) >= 3
+        ]
+
+    def next_lookup_request(self):
+        """Return the next name lookup, or ``None`` when none is left.
+
+        Lookups are chained rather than queued all at once, so the first
+        blocked answer can stop the rest from being sent.
+        """
+
+        if not self.pending_lookups:
+            return None
+
+        term = self.pending_lookups.pop(0)
+
+        return scrapy.Request(
+            url=self.search_url(term),
+            callback=self.parse,
+            cb_kwargs={'search_term': term},
+        )
+
+    @classmethod
+    def search_url(cls, term):
+        """Return the smartphone-category search URL for one phone name."""
+
+        return (
+            f"https://www.daraz.pk{cls.CATALOG_PATH}"
+            f"?ajax=true&q={quote_plus(term)}"
+        )
+
+    def catalog_phone_names(self):
+        """Return the names of the phones VEXTRO already lists.
+
+        Read from VEXTRO's own public catalogue. A crawl that cannot reach
+        it simply skips the lookups; the listing walk has already run.
+        """
+
+        crawler = getattr(self, 'crawler', None)
+        settings = crawler.settings if crawler is not None else {}
+
+        if crawler is None or not settings.getbool(
+            'DARAZ_CATALOG_SEARCH_ENABLED', True,
+        ):
+            return []
+
+        base_url = str(
+            settings.get('VEXTRO_API_URL', 'http://127.0.0.1:8000')
+        ).rstrip('/')
+        # Daraz starts challenging an address after roughly 150 searches,
+        # so one crawl asks about a share of the catalogue and the next
+        # crawl about another.
+        limit = settings.getint('DARAZ_CATALOG_SEARCH_LIMIT', 80)
+        names = []
+        page = 1
+
+        try:
+            while True:
+                response = requests.get(
+                    f'{base_url}/api/v1/products',
+                    params={
+                        'page': page,
+                        'page_size': 100,
+                        'is_available': 'true',
+                    },
+                    timeout=settings.getfloat('VEXTRO_API_TIMEOUT', 20),
+                )
+                response.raise_for_status()
+                body = response.json()
+                items = body.get('items') or []
+                names.extend(
+                    (
+                        item['name'],
+                        'daraz' in (item.get('platform_codes') or []),
+                    )
+                    for item in items
+                    if item.get('name')
+                )
+
+                if not items or page >= int(body.get('total_pages') or 0):
+                    break
+
+                page += 1
+        except (requests.RequestException, ValueError, KeyError) as error:
+            self.logger.warning(
+                'Daraz catalogue lookups skipped: VEXTRO catalogue could '
+                'not be read (%s).',
+                type(error).__name__,
+            )
+            return []
+
+        # Phones with no Daraz listing yet come first; within each group
+        # the order is random, so successive crawls cover different phones.
+        random.shuffle(names)
+        names.sort(key=lambda entry: entry[1])
+        chosen = [name for name, _ in names[:limit]]
+
+        self.logger.info(
+            'Looking up %s of %s catalogue phones on Daraz by name.',
+            len(chosen),
+            len(names),
+        )
+
+        return chosen
 
     @staticmethod
     def catalog_url(path, page_number=1):
@@ -325,8 +494,22 @@ class DarazSpider(scrapy.Spider):
             ),
         )
 
-    def parse(self, response, catalog_path=None, stale_pages=0):
+    def parse(
+        self,
+        response,
+        catalog_path=None,
+        stale_pages=0,
+        search_term=None,
+    ):
         catalog_path = catalog_path or self.CATALOG_PATH
+
+        if search_term is not None and self._is_blocked_response(response):
+            skipped = len(self.pending_lookups)
+            self.pending_lookups = []
+            raise DarazLookupBlockedError(
+                'Daraz answered a name lookup with its anti-bot page; '
+                f'{skipped} further lookups were left for a later crawl.'
+            )
 
         try:
             data = json.loads(response.text)
@@ -349,14 +532,25 @@ class DarazSpider(scrapy.Spider):
             # Get the external ID (itemId)
             external_id = str(item_data.get('itemId') or '').strip()
 
-            # Daraz repeats items across pages and across brand listings;
-            # one capture per crawl is enough.
+            # Whether a listing walk has run dry is judged only against
+            # what the walks themselves returned. A name lookup may have
+            # captured this item already, and that must not end a walk
+            # early.
+            if (
+                search_term is None
+                and external_id
+                and external_id not in self.walk_item_ids
+            ):
+                self.walk_item_ids.add(external_id)
+                new_item_count += 1
+
+            # Daraz repeats items across pages, brand listings and
+            # lookups; one capture per crawl is enough.
             if external_id:
                 if external_id in self.seen_item_ids:
                     continue
                 self.seen_item_ids.add(external_id)
 
-            new_item_count += 1
             item['external_id'] = external_id
 
             # Clean URL
@@ -425,7 +619,12 @@ class DarazSpider(scrapy.Spider):
             # here used to push "Standard"/"N/A" into the catalog.
             item['variant'] = None
             item['color'] = None
-            item['warranty'] = None
+            # Daraz publishes no warranty field in its listing; sellers
+            # write it into the title, and only that is recorded.
+            item['warranty'] = warranty_from_text(
+                item_data.get('name'),
+                *(item_data.get('description') or []),
+            )
 
             item['scrape_timestamp'] = datetime.now(timezone.utc).isoformat()
 
@@ -446,6 +645,14 @@ class DarazSpider(scrapy.Spider):
             1,
             ceil(int(main_info.get('totalResults', 0)) / page_size),
         )
+
+        if search_term is not None:
+            # A lookup for one phone: its first page of results is the
+            # answer, and it starts no listing walk - only the next lookup.
+            next_lookup = self.next_lookup_request()
+            if next_lookup is not None:
+                yield next_lookup
+            return
 
         if catalog_path == self.CATALOG_PATH and page == 1:
             yield from self.brand_catalog_requests(mods)

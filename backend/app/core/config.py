@@ -48,6 +48,18 @@ class Settings(BaseSettings):
     scraper_autostart_with_api: bool = False
     scraper_lock_path: str | None = None
 
+    # On-demand refresh: when a product page is opened and a marketplace's
+    # offers were last confirmed longer ago than ``max_age_minutes``, that
+    # product alone is re-read. One product is refreshed at most once per
+    # cooldown, and only a few refreshes run at a time.
+    on_demand_refresh_enabled: bool = True
+    on_demand_refresh_max_age_minutes: int = 60
+    on_demand_refresh_cooldown_seconds: int = 120
+    on_demand_refresh_max_parallel: int = 2
+    on_demand_refresh_expected_seconds: int = 10
+    # Where the refresh delivers what it reads; defaults to this API.
+    on_demand_refresh_api_url: str | None = None
+
     cors_origins: str = (
         "http://localhost:5173,http://127.0.0.1:5173"
     )

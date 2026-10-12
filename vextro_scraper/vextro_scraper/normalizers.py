@@ -653,3 +653,65 @@ def is_accessory_title(title):
             return True
 
     return False
+
+
+_WARRANTY_NUMBERS = {'one': '1', 'two': '2', 'three': '3'}
+
+_WARRANTY_PHRASE = re.compile(
+    r'(?:\b(?P<number>\d{1,2}|one|two|three)\s*-?\s*'
+    r'(?P<unit>years?|yrs?|months?)\s+)?'
+    r'(?P<kinds>(?:(?:official|brand|seller|local|shop|company)\s+){0,3})'
+    r'warranty\b',
+    re.I,
+)
+
+
+def warranty_from_text(*texts):
+    """Return the warranty a seller states in free text, or ``None``.
+
+    Reads "PTA Approved 1 Year Official Brand Warranty" as "1 Year Brand
+    Warranty". Only what the text says is reported: a title that mentions
+    no warranty yields nothing rather than a guess.
+    """
+
+    for text in texts:
+        source = ' '.join(str(text or '').split())
+
+        if not source:
+            continue
+
+        if re.search(r'\b(?:no|without)\s+warranty\b', source, re.I):
+            return 'No Warranty'
+
+        best = None
+        for match in _WARRANTY_PHRASE.finditer(source):
+            kinds = match.group('kinds').lower()
+            parts = []
+
+            if match.group('number'):
+                number = _WARRANTY_NUMBERS.get(
+                    match.group('number').lower(),
+                    match.group('number'),
+                )
+                unit = 'Month' if match.group('unit').lower().startswith(
+                    'month'
+                ) else 'Year'
+                parts.append(f'{number} {unit}' + ('' if number == '1' else 's'))
+
+            if 'brand' in kinds or 'official' in kinds or 'company' in kinds:
+                parts.append('Brand')
+            elif 'seller' in kinds or 'shop' in kinds:
+                parts.append('Seller')
+            elif 'local' in kinds:
+                parts.append('Local')
+
+            phrase = ' '.join(parts + ['Warranty'])
+
+            # Prefer the most specific statement in the text.
+            if best is None or len(parts) > best[0]:
+                best = (len(parts), phrase)
+
+        if best is not None:
+            return best[1]
+
+    return None
