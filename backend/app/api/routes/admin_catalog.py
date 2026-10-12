@@ -131,7 +131,7 @@ def update_admin_product_status(
     response_model=AdminListingListResponse,
     summary="List Admin Marketplace Listings",
     description=(
-        "Monitor Daraz and PriceOye marketplace "
+        "Monitor Daraz, PriceOye and Shophive marketplace "
         "listings, sellers, prices and availability."
     ),
 )

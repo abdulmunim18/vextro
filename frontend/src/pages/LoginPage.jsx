@@ -103,7 +103,7 @@ function LoginPage() {
                   <span className="grid size-7 shrink-0 place-items-center rounded-full bg-emerald-400/20 text-emerald-200">
                     ✓
                   </span>
-                  Compare Daraz and PriceOye listings
+                  Compare Daraz, PriceOye and Shophive listings
                 </div>
 
                 <div className="flex items-center gap-3">

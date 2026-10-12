@@ -1144,7 +1144,7 @@ def test_review_ingestion_rejects_an_unknown_listing(
 def test_every_platform_is_registered_for_acquisition(
     database_session: Session,
 ) -> None:
-    """Both in-scope marketplaces exist and are active."""
+    """Every in-scope marketplace exists and is active."""
 
     codes = set(
         database_session.scalars(
@@ -1152,7 +1152,7 @@ def test_every_platform_is_registered_for_acquisition(
         )
     )
 
-    assert {"daraz", "priceoye"} <= codes
+    assert {"daraz", "priceoye", "shophive"} <= codes
 
 # --------------------------------------------------------------------------
 # Part 10 - the model-code veto, against real catalog data
