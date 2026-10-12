@@ -43,7 +43,8 @@ REPOSITORY_ROOT = SCRAPER_PROJECT_ROOT.parent
 DEFAULT_SPIDERS = (
     "priceoye_smartphones",
     "daraz_smartphones",
-    # Last: it looks up the phones the two marketplace crawls just listed.
+    "shophive_smartphones",
+    # Last: it looks up the phones the three marketplace crawls just listed.
     "whatmobile_opinions",
 )
 JOB_ID = "vextro-marketplace-refresh"

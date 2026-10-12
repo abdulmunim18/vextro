@@ -21,7 +21,7 @@ router = APIRouter(prefix="/warehouse", tags=["Data Warehouse & Monitoring"])
 # --- Schemas ---
 
 class ScrapeRunStartPayload(BaseModel):
-    platform: str = Field(..., description="Marketplace name, e.g. PriceOye or Daraz")
+    platform: str = Field(..., description="Marketplace name: Daraz, PriceOye or Shophive")
     triggered_by: str = Field(default="MANUAL", description="SCHEDULED, MANUAL, or PIPELINE")
 
 
@@ -95,15 +95,18 @@ def start_scrape_run(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Register the start of a scraper execution run."""
-    normalized_platform = payload.platform.strip().lower()
-    if normalized_platform.startswith("priceoye"):
-        normalized_platform = "priceoye"
-    elif normalized_platform.startswith("daraz"):
-        normalized_platform = "daraz"
-    else:
+    normalized_platform = next(
+        (
+            code
+            for code in ("priceoye", "daraz", "shophive")
+            if payload.platform.strip().lower().startswith(code)
+        ),
+        None,
+    )
+    if normalized_platform is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Platform must be Daraz or PriceOye.",
+            detail="Platform must be Daraz, PriceOye or Shophive.",
         )
 
     trigger_type = payload.triggered_by.strip().lower()

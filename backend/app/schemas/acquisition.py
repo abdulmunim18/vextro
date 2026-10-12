@@ -16,6 +16,7 @@ from pydantic import (
 PlatformCode = Literal[
     "daraz",
     "priceoye",
+    "shophive",
 ]
 
 IngestionStatus = Literal[

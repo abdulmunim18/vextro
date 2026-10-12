@@ -274,4 +274,5 @@ def test_each_marketplace_says_how_its_spider_takes_one_product() -> None:
     assert TARGETED_SPIDERS == {
         "priceoye": TargetedSpider("priceoye_smartphones", "product_urls"),
         "daraz": TargetedSpider("daraz_smartphones", "search_terms", "|"),
+        "shophive": TargetedSpider("shophive_smartphones", "product_urls"),
     }

@@ -39,6 +39,13 @@ export function getMarketplaceDestination(
     };
   }
 
+  if (normalizedPlatform.includes("shophive")) {
+    return {
+      url: `https://www.shophive.com/catalogsearch/result/?q=${searchQuery}`,
+      isSearchFallback: true,
+    };
+  }
+
   return {
     url: productUrl || "#",
     isSearchFallback: !productUrl,

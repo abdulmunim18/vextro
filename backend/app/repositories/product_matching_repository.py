@@ -14,6 +14,10 @@ from app.models.product_listing import ProductListing
 from app.models.product_variant import ProductVariant
 
 
+# Key in a variant's attributes holding, per marketplace, the model name
+# under which that marketplace's own listing resolved to it.
+NAMED_BY = "named_by"
+
 CANDIDATE_COLUMNS = (
     CanonicalProduct.id,
     ProductVariant.id,
@@ -394,6 +398,109 @@ class ProductMatchingRepository:
         ).all()
 
         return [_build_candidate(row) for row in rows]
+
+    def platform_model_names(
+        self,
+        database_session: Session,
+        *,
+        platform_code: str | None,
+        product_ids: set[int],
+    ) -> dict[int, set[str]]:
+        """Return the model names a marketplace itself uses for products.
+
+        Only products the marketplace carries appear in the result. The
+        name is the one ``note_named_by`` recorded when the marketplace's
+        own model name resolved there. A product it carries from before
+        names were recorded is taken to go by its catalogue name.
+        """
+
+        if not platform_code or not product_ids:
+            return {}
+
+        names: dict[int, set[str]] = {}
+        unnamed: dict[int, str] = {}
+
+        for product_id, attributes, catalog_name in database_session.execute(
+            select(
+                ProductVariant.canonical_product_id,
+                ProductVariant.variant_attributes,
+                CanonicalProduct.name,
+            )
+            .join(
+                CanonicalProduct,
+                CanonicalProduct.id == ProductVariant.canonical_product_id,
+            )
+            .where(ProductVariant.canonical_product_id.in_(product_ids))
+        ):
+            attributes = attributes if isinstance(attributes, dict) else {}
+            recorded = attributes.get(NAMED_BY)
+            name = (
+                recorded.get(platform_code)
+                if isinstance(recorded, dict)
+                else None
+            )
+
+            if name:
+                names.setdefault(product_id, set()).add(str(name))
+            elif attributes.get("source_platform") == platform_code:
+                unnamed[product_id] = catalog_name
+
+        for product_id, catalog_name in database_session.execute(
+            select(ProductVariant.canonical_product_id, CanonicalProduct.name)
+            .join(
+                ProductListing,
+                ProductListing.product_variant_id == ProductVariant.id,
+            )
+            .join(Platform, Platform.id == ProductListing.platform_id)
+            .join(
+                CanonicalProduct,
+                CanonicalProduct.id == ProductVariant.canonical_product_id,
+            )
+            .where(
+                Platform.code == platform_code,
+                ProductVariant.canonical_product_id.in_(product_ids),
+            )
+            .distinct()
+        ):
+            unnamed[product_id] = catalog_name
+
+        for product_id, catalog_name in unnamed.items():
+            names.setdefault(product_id, {catalog_name})
+
+        return names
+
+    def note_named_by(
+        self,
+        database_session: Session,
+        *,
+        variant_id: int,
+        platform_code: str,
+        model_name: str,
+    ) -> None:
+        """Record the model name under which a marketplace resolved here.
+
+        Written when the phone is resolved, not when its listing arrives:
+        a crawl delivers listings in batches, and the next phone of the
+        same batch has to see it.
+        """
+
+        variant = database_session.get(ProductVariant, variant_id)
+
+        if variant is None:
+            return
+
+        attributes = dict(variant.variant_attributes or {})
+        recorded = attributes.get(NAMED_BY)
+        recorded = dict(recorded) if isinstance(recorded, dict) else {}
+        model_name = " ".join(model_name.split())[:255]
+
+        if recorded.get(platform_code) == model_name:
+            return
+
+        recorded[platform_code] = model_name
+        attributes[NAMED_BY] = recorded
+        variant.variant_attributes = attributes
+        database_session.flush()
 
     def get_manual_match(
         self,

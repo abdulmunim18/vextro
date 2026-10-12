@@ -81,6 +81,12 @@ def _slugify(value: str, *, fallback: str) -> str:
     return slug[:200] or fallback
 
 
+# Marketplaces that publish exact model names, in the order their spelling
+# is preferred when more than one lists the same phone. PriceOye catalogues
+# the most phones, so its names are the catalogue's default.
+MODEL_NAME_AUTHORITIES = ("priceoye", "shophive")
+
+
 class ProductResolutionService:
     """Attach scraped listings to the catalog, creating records when safe."""
 
@@ -115,6 +121,21 @@ class ProductResolutionService:
 
             response = self._resolve(database_session, payload)
             self._adopt_marketplace_name(database_session, payload, response)
+
+            if (
+                payload.exact_model_title
+                and payload.platform_code
+                and response.matched
+                and response.product_variant_id
+            ):
+                # Noted now, not when the listing arrives: the next phone
+                # in the same crawl batch has to see it.
+                self.repository.note_named_by(
+                    database_session,
+                    variant_id=response.product_variant_id,
+                    platform_code=payload.platform_code,
+                    model_name=payload.title,
+                )
             database_session.commit()
         except Exception:
             database_session.rollback()
@@ -207,6 +228,13 @@ class ProductResolutionService:
         if product is None:
             return
 
+        if self._named_by_another_marketplace(
+            database_session,
+            payload.platform_code,
+            product.id,
+        ):
+            return
+
         brand_name = response.brand_name
         name = clean_model_name(payload.title, brand_name)
 
@@ -223,6 +251,37 @@ class ProductResolutionService:
         database_session.flush()
         response.product_name = product.name
         response.model = product.model
+
+    def _named_by_another_marketplace(
+        self,
+        database_session: Session,
+        platform_code: str | None,
+        product_id: int,
+    ) -> bool:
+        """Report whether a marketplace ranked above this one names the phone.
+
+        Two marketplaces that both publish exact model names still spell
+        some phones differently ("Reno 15F" and "Reno 15F 5G"). Letting
+        each rename the product would flip its name at every crawl, so the
+        first marketplace in ``MODEL_NAME_AUTHORITIES`` that lists a phone
+        is the one that names it.
+        """
+
+        if platform_code not in MODEL_NAME_AUTHORITIES:
+            return False
+
+        for other in MODEL_NAME_AUTHORITIES:
+            if other == platform_code:
+                return False
+
+            if self.repository.platform_model_names(
+                database_session,
+                platform_code=other,
+                product_ids={product_id},
+            ):
+                return True
+
+        return False
 
     def _place_on_stated_colour(
         self,
@@ -559,13 +618,17 @@ class ProductResolutionService:
                 brand_name=brand_name,
             )
 
-        if (
-            existing is not None
-            and exact_model_title
-            and names_differ_on_5g(display_name, existing.name)
+        if existing is not None and exact_model_title and any(
+            names_differ_on_5g(display_name, own_name)
+            for own_name in self.repository.platform_model_names(
+                database_session,
+                platform_code=platform_code,
+                product_ids={existing.id},
+            ).get(existing.id, ())
         ):
-            # The shared identity key ignores "5G"; the marketplace's own
-            # model name does not.
+            # The shared identity key ignores "5G"; a marketplace's own
+            # model name does not, where it already uses the other
+            # spelling for this phone and so sells both.
             existing = None
 
         if existing is not None:

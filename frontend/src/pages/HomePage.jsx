@@ -76,7 +76,7 @@ function HomePage() {
             </h1>
 
             <p className="mt-5 max-w-2xl text-base leading-7 text-vextro-muted sm:text-lg sm:leading-8">
-              Search products across Daraz and PriceOye, spot the lowest
+              Search products across Daraz, PriceOye and Shophive, spot the lowest
               price and track the deals that matter to you.
             </p>
 
@@ -185,6 +185,7 @@ function HomePage() {
               <div className="mt-4 grid gap-2.5">
                 {[
                   { store: "PriceOye", price: "PKR 49,999", best: true },
+                  { store: "Shophive", price: "PKR 51,499" },
                   { store: "Daraz", price: "PKR 52,490" },
                 ].map((offer) => (
                   <div
@@ -227,7 +228,7 @@ function HomePage() {
       <section className="border-b border-vextro-border bg-vextro-canvas py-7">
         <div className="mx-auto grid max-w-7xl grid-cols-2 gap-5 px-4 sm:px-6 md:grid-cols-4 lg:px-8">
           {[
-            ["2", "Daraz + PriceOye"],
+            ["3", "Daraz, PriceOye, Shophive"],
             ["One", "Normalized catalog"],
             ["24/7", "Price-drop monitoring"],
             ["PKR", "Local price intelligence"],

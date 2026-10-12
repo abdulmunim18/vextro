@@ -14,7 +14,7 @@ def test_list_platforms(
 
     items = response.json()["items"]
 
-    assert len(items) == 2
+    assert len(items) == 3
 
     assert [
         platform["code"]
@@ -22,6 +22,7 @@ def test_list_platforms(
     ] == [
         "daraz",
         "priceoye",
+        "shophive",
     ]
 
     assert all(
