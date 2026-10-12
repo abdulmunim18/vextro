@@ -36,6 +36,10 @@ from app.schemas.scrape_monitoring import (
     ScrapeRunResponse,
     ScrapeRunStartInput,
 )
+from app.schemas.community_opinions import (
+    CommunityOpinionsIngestResponse,
+    CommunityOpinionsInput,
+)
 from app.schemas.reviews import ReviewBatchInput, ReviewBatchResponse
 from app.services.acquisition_service import (
     AcquisitionService,
@@ -48,6 +52,7 @@ from app.services.product_resolution_service import (
 )
 from app.services.pending_product_match_service import PendingProductMatchService
 from app.services.scrape_monitoring_service import ScrapeMonitoringService
+from app.services.community_opinion_service import community_opinion_service
 from app.services.review_service import ReviewService
 
 
@@ -302,3 +307,21 @@ def record_pending_product_match(
     """Persist or refresh one unresolved marketplace product mapping."""
 
     return pending_product_match_service.record(database_session, payload)
+
+
+@router.post(
+    "/community-opinions",
+    response_model=CommunityOpinionsIngestResponse,
+    status_code=status.HTTP_200_OK,
+)
+def ingest_community_opinions(
+    payload: CommunityOpinionsInput,
+    database_session: Session = Depends(get_db),
+) -> CommunityOpinionsIngestResponse:
+    """Store one phone's rating and visitor opinions from a guide site.
+
+    The page is tied to a phone VEXTRO already lists. ``matched`` is false,
+    and nothing is stored, when no such phone exists.
+    """
+
+    return community_opinion_service.ingest(database_session, payload)

@@ -113,6 +113,15 @@ export async function getProductReviews(productId, params = {}) {
   return response.data;
 }
 
+// Ratings and visitor posts from guide sites (WhatMobile), each post
+// already sorted by VEXTRO into an opinion, a question or a sale advert.
+export async function getProductCommunityOpinions(productId) {
+  const response = await apiClient.get(
+    `/products/${productId}/community-opinions`,
+  );
+  return response.data;
+}
+
 export async function getProductReviewAnalysis(
   productId,
   params = {},

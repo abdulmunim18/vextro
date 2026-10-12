@@ -28,7 +28,7 @@ class ScrapeRun(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "platform IN ('daraz', 'priceoye')",
+            "platform IN ('daraz', 'priceoye', 'whatmobile')",
             name="ck_scrape_runs_platform_valid",
         ),
         CheckConstraint(

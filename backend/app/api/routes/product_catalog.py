@@ -21,6 +21,7 @@ from app.schemas.product_catalog import (
     ProductListResponse,
     ProductListingsResponse,
 )
+from app.schemas.community_opinions import ProductCommunityOpinionsResponse
 from app.schemas.listing_refresh import ProductRefreshResponse
 from app.schemas.reviews import ProductReviewsResponse
 from app.schemas.review_analysis import ProductReviewAnalysisResponse, ReviewAnalysisResponse
@@ -33,6 +34,7 @@ from app.services.product_catalog_service import (
 from app.services.product_comparison_service import (
     get_product_comparison_response,
 )
+from app.services.community_opinion_service import community_opinion_service
 from app.services.listing_refresh_service import listing_refresh_service
 from app.services.review_service import ReviewService
 from app.services.review_analysis_service import ReviewAnalysisService
@@ -241,6 +243,27 @@ def read_product_listings(
         )
 
     return result
+
+
+@router.get(
+    "/{product_id}/community-opinions",
+    response_model=ProductCommunityOpinionsResponse,
+    status_code=status.HTTP_200_OK,
+)
+def read_product_community_opinions(
+    product_id: int = Path(..., ge=1),
+    database_session: Session = Depends(get_db),
+) -> ProductCommunityOpinionsResponse:
+    """Return what guide sites and their visitors say about this phone.
+
+    Public, like reviews. These are not buyer reviews: the sources sell
+    nothing and anyone can post an opinion.
+    """
+
+    return community_opinion_service.product_opinions(
+        database_session,
+        product_id,
+    )
 
 
 @router.post(
