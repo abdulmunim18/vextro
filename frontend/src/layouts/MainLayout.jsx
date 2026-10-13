@@ -43,8 +43,6 @@ const headerCategories = [
   { label: "Laptops", to: "/products?category=laptops" },
   { label: "Wearables", to: "/products?category=wearables" },
   { label: "Audio", to: "/products?category=audio" },
-  { label: "Home", to: "/products?category=home-appliances" },
-  { label: "Beauty", to: "/products?category=health-beauty" },
 ];
 
 function getDesktopNavClass({ isActive }) {

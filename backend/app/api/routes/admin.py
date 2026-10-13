@@ -5,6 +5,8 @@ from fastapi import (
     Depends,
     Path,
     Query,
+    Response,
+    status,
 )
 from sqlalchemy.orm import Session
 
@@ -129,3 +131,25 @@ def update_admin_user_status(
         user_id=user_id,
         payload=payload,
     )
+
+
+@router.delete(
+    "/users/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete Admin User",
+    description=(
+        "Permanently delete one VEXTRO user and their dependent account data. "
+        "An administrator cannot delete their own account."
+    ),
+)
+def delete_admin_user(
+    user_id: int = Path(ge=1, description="User ID."),
+    database_session: Session = Depends(get_db),
+    current_admin: User = Depends(admin_only),
+) -> Response:
+    AdminService.delete_user(
+        database_session,
+        current_admin=current_admin,
+        user_id=user_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

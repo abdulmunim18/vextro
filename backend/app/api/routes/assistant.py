@@ -1,6 +1,6 @@
 """Authenticated routes for the grounded shopping assistant."""
 
-from fastapi import APIRouter, Depends, Path, status
+from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.roles import consumer_or_admin
@@ -48,6 +48,8 @@ def create_conversation_endpoint(
     response_model=ConversationListResponse,
 )
 def list_conversations_endpoint(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
     current_user: User = Depends(consumer_or_admin),
     database_session: Session = Depends(get_db),
 ) -> ConversationListResponse:
@@ -56,6 +58,8 @@ def list_conversations_endpoint(
     return assistant_service.list_conversations(
         database_session,
         user_id=current_user.id,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -65,6 +69,8 @@ def list_conversations_endpoint(
 )
 def read_conversation_endpoint(
     conversation_id: int = Path(ge=1),
+    message_limit: int = Query(default=100, ge=1, le=200),
+    before_message_id: int | None = Query(default=None, ge=1),
     current_user: User = Depends(consumer_or_admin),
     database_session: Session = Depends(get_db),
 ) -> ConversationDetailResponse:
@@ -74,6 +80,8 @@ def read_conversation_endpoint(
         database_session,
         conversation_id=conversation_id,
         user_id=current_user.id,
+        message_limit=message_limit,
+        before_message_id=before_message_id,
     )
 
 

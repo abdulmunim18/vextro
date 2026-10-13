@@ -10,6 +10,7 @@ import WarehouseMonitoring from "../components/WarehouseMonitoring";
 import AdminPendingProductMatches from "../components/AdminPendingProductMatches";
 import { useAuth } from "../context/useAuth";
 import {
+  deleteAdminUser,
   getAdminDashboard,
   getAdminListings,
   getAdminProducts,
@@ -197,6 +198,39 @@ function Pagination({
   onChange,
   label,
 }) {
+  const safeTotalPages = Math.max(Number(totalPages) || 1, 1);
+  const pageInputId = `${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-page-jump`;
+  const [pageInput, setPageInput] = useState(String(page));
+  const [pageError, setPageError] = useState("");
+
+  function goToPage(nextPage) {
+    setPageInput(String(nextPage));
+    setPageError("");
+    onChange(nextPage);
+  }
+
+  function handlePageJump(event) {
+    event.preventDefault();
+    const requestedPage = Number(pageInput);
+
+    if (!Number.isInteger(requestedPage) || requestedPage < 1) {
+      setPageError("Enter a whole page number starting from 1.");
+      return;
+    }
+
+    if (requestedPage > safeTotalPages) {
+      setPageError(
+        `Page ${requestedPage} does not exist. Last page is ${safeTotalPages}.`,
+      );
+      return;
+    }
+
+    setPageError("");
+    if (requestedPage !== page) {
+      goToPage(requestedPage);
+    }
+  }
+
   return (
     <nav
       className="flex flex-col items-center justify-between gap-4 border-t border-vextro-border px-6 py-5 sm:flex-row sm:px-8"
@@ -213,15 +247,52 @@ function Pagination({
         </strong>
       </p>
 
-      <div className="flex gap-3">
+      <div className="flex flex-wrap items-start justify-end gap-3">
         <button
           className="min-h-10 rounded-xl border border-vextro-border bg-white px-4 text-xs font-black text-vextro-ink transition hover:border-blue-200 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40"
           type="button"
           disabled={page <= 1}
-          onClick={() => onChange(page - 1)}
+          onClick={() => goToPage(page - 1)}
         >
           ← Previous
         </button>
+
+        <form className="flex flex-col gap-1" onSubmit={handlePageJump}>
+          <div className="flex gap-2">
+            <label className="sr-only" htmlFor={pageInputId}>
+              Go to page
+            </label>
+            <input
+              id={pageInputId}
+              className="h-10 w-24 rounded-xl border border-vextro-border bg-white px-3 text-center text-xs font-black text-vextro-ink outline-none focus:border-vextro-primary focus:ring-4 focus:ring-blue-100"
+              type="number"
+              min="1"
+              max={safeTotalPages}
+              step="1"
+              inputMode="numeric"
+              value={pageInput}
+              onChange={(event) => {
+                setPageInput(event.target.value);
+                setPageError("");
+              }}
+              aria-invalid={Boolean(pageError)}
+            />
+            <button
+              className="h-10 rounded-xl bg-vextro-primary px-4 text-xs font-black text-white transition hover:bg-blue-700"
+              type="submit"
+            >
+              Go
+            </button>
+          </div>
+          {pageError ? (
+            <span
+              className="max-w-64 text-[10px] font-bold text-red-600"
+              role="alert"
+            >
+              {pageError}
+            </span>
+          ) : null}
+        </form>
 
         <button
           className="min-h-10 rounded-xl border border-vextro-border bg-white px-4 text-xs font-black text-vextro-ink transition hover:border-blue-200 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40"
@@ -230,7 +301,7 @@ function Pagination({
             totalPages === 0 ||
             page >= totalPages
           }
-          onClick={() => onChange(page + 1)}
+          onClick={() => goToPage(page + 1)}
         >
           Next →
         </button>
@@ -1000,6 +1071,43 @@ function AdminPage() {
     }
   }
 
+  async function handleDeleteUser(targetUser) {
+    if (targetUser.id === currentUser?.id) {
+      setUsersError("You cannot delete your own administrator account.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Permanently delete ${targetUser.full_name}? This will also remove their dependent account data and cannot be undone.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setProcessingUserId(targetUser.id);
+    setUsersError("");
+    setSuccessMessage("");
+
+    try {
+      await deleteAdminUser(targetUser.id);
+      setSuccessMessage(`${targetUser.full_name} was permanently deleted.`);
+      await loadDashboard();
+
+      if (users.length === 1 && userPage > 1) {
+        setUserPage((currentPage) => currentPage - 1);
+      } else {
+        await loadUsers();
+      }
+    } catch (error) {
+      setUsersError(
+        getApiErrorMessage(error, "Unable to delete this user."),
+      );
+    } finally {
+      setProcessingUserId(null);
+    }
+  }
+
   async function handleProductStatusChange(
     targetProduct,
   ) {
@@ -1579,7 +1687,8 @@ function AdminPage() {
                               )}
                             </td>
 
-                            <td className="px-6 py-5 text-right sm:px-8">
+                            <td className="px-6 py-5 sm:px-8">
+                              <div className="flex justify-end gap-2">
                               <button
                                 className={`min-h-10 min-w-24 rounded-xl px-4 text-xs font-black transition disabled:cursor-not-allowed disabled:opacity-50 ${
                                   registeredUser.is_active
@@ -1609,6 +1718,20 @@ function AdminPage() {
                                     ? "Deactivate"
                                     : "Activate"}
                               </button>
+                              <button
+                                className="min-h-10 rounded-xl border border-red-300 bg-white px-4 text-xs font-black text-red-700 transition hover:bg-red-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                                type="button"
+                                disabled={isProcessing || isCurrentAdmin}
+                                title={
+                                  isCurrentAdmin
+                                    ? "You cannot delete your own account."
+                                    : "Permanently delete this user"
+                                }
+                                onClick={() => handleDeleteUser(registeredUser)}
+                              >
+                                {isProcessing ? "Working..." : "Delete"}
+                              </button>
+                              </div>
                             </td>
                           </tr>
                         );

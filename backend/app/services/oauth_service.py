@@ -24,9 +24,6 @@ from app.repositories.user_repository import (
 )
 
 
-SUPPORTED_PROVIDERS = {"google", "facebook"}
-
-
 class UnsupportedOAuthProviderError(Exception):
     pass
 
@@ -63,9 +60,6 @@ def _provider_credentials(provider: str) -> tuple[str, str]:
     if provider == "google":
         client_id = settings.google_oauth_client_id
         client_secret = settings.google_oauth_client_secret
-    elif provider == "facebook":
-        client_id = settings.facebook_oauth_client_id
-        client_secret = settings.facebook_oauth_client_secret
     else:
         raise UnsupportedOAuthProviderError
 
@@ -108,25 +102,15 @@ def build_oauth_authorization_url(
         },
     )
 
-    if provider == "google":
-        base_url = "https://accounts.google.com/o/oauth2/v2/auth"
-        query = {
-            "client_id": client_id,
-            "redirect_uri": oauth_callback_url(provider),
-            "response_type": "code",
-            "scope": "openid email profile",
-            "state": state,
-            "prompt": "select_account",
-        }
-    else:
-        base_url = "https://www.facebook.com/dialog/oauth"
-        query = {
-            "client_id": client_id,
-            "redirect_uri": oauth_callback_url(provider),
-            "response_type": "code",
-            "scope": "email,public_profile",
-            "state": state,
-        }
+    base_url = "https://accounts.google.com/o/oauth2/v2/auth"
+    query = {
+        "client_id": client_id,
+        "redirect_uri": oauth_callback_url(provider),
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "prompt": "select_account",
+    }
     return f"{base_url}?{urlencode(query)}"
 
 
@@ -160,43 +144,6 @@ def _fetch_google_identity(code: str) -> OAuthIdentity:
     return OAuthIdentity(
         provider="google",
         subject=str(profile["sub"]),
-        email=str(profile["email"]).strip().lower(),
-        full_name=str(profile.get("name") or profile["email"].split("@")[0]),
-    )
-
-
-def _fetch_facebook_identity(code: str) -> OAuthIdentity:
-    client_id, client_secret = _provider_credentials("facebook")
-    with httpx.Client(timeout=15.0) as client:
-        token_response = client.get(
-            "https://graph.facebook.com/oauth/access_token",
-            params={
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "redirect_uri": oauth_callback_url("facebook"),
-                "code": code,
-            },
-        )
-        token_response.raise_for_status()
-        access_token = token_response.json().get("access_token")
-        if not access_token:
-            raise OAuthProviderError
-
-        profile_response = client.get(
-            "https://graph.facebook.com/me",
-            params={
-                "fields": "id,name,email",
-                "access_token": access_token,
-            },
-        )
-        profile_response.raise_for_status()
-        profile = profile_response.json()
-
-    if not profile.get("email"):
-        raise OAuthEmailUnavailableError
-    return OAuthIdentity(
-        provider="facebook",
-        subject=str(profile["id"]),
         email=str(profile["email"]).strip().lower(),
         full_name=str(profile.get("name") or profile["email"].split("@")[0]),
     )
@@ -272,13 +219,7 @@ def complete_oauth_callback(
         raise InvalidOAuthStateError
 
     try:
-        identity = (
-            _fetch_google_identity(code)
-            if provider == "google"
-            else _fetch_facebook_identity(code)
-            if provider == "facebook"
-            else None
-        )
+        identity = _fetch_google_identity(code) if provider == "google" else None
     except (httpx.HTTPError, ValueError, KeyError) as error:
         raise OAuthProviderError from error
     if identity is None:

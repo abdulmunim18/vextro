@@ -16,13 +16,6 @@ from app.schemas.pricing_advisor import (
 MONEY = Decimal("0.01")
 PERCENT = Decimal("0.01")
 UNIT = Decimal("0.01")
-SCENARIO_CHANGES = (
-    Decimal("-5"),
-    Decimal("0"),
-    Decimal("5"),
-)
-
-
 def _money(value: Decimal) -> Decimal:
     return value.quantize(MONEY, rounding=ROUND_HALF_UP)
 
@@ -45,6 +38,7 @@ def calculate_pricing_scenarios(
     competitor_price: Decimal,
     baseline_units: Decimal,
     demand_sensitivity: Decimal,
+    scenario_range_percentage: Decimal = Decimal("5"),
     business_product_id: int | None = None,
     product_name: str | None = None,
     currency: str = "PKR",
@@ -58,7 +52,13 @@ def calculate_pricing_scenarios(
 
     scenarios: list[PricingScenarioResult] = []
 
-    for change in SCENARIO_CHANGES:
+    scenario_changes = (
+        -scenario_range_percentage,
+        Decimal("0"),
+        scenario_range_percentage,
+    )
+
+    for change in scenario_changes:
         proposed_price = _money(
             current_price
             * (Decimal("1") + change / Decimal("100"))
@@ -273,6 +273,9 @@ class PricingAdvisorService:
                 competitor_price=Decimal(competitor_price),
                 baseline_units=payload.baseline_units,
                 demand_sensitivity=payload.demand_sensitivity,
+                scenario_range_percentage=(
+                    payload.scenario_range_percentage
+                ),
                 business_product_id=payload.business_product_id,
                 product_name=product_name,
                 currency=currency,

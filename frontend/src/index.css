@@ -45,9 +45,7 @@
     background: var(--color-vextro-canvas);
     color: var(--color-vextro-ink);
     font-family: var(--font-sans);
-      background: var(--color-vextro-canvas);
-  color: var(--color-vextro-ink);
-  font-family: var(--font-sans);
+    overflow-x: hidden;
   }
 
   body,

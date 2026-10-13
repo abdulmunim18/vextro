@@ -81,7 +81,7 @@ def _serialize_scrape_run(run: ScrapeRun) -> dict[str, Any]:
         "triggered_by": run.trigger_type.upper(),
         "items_scraped": run.items_discovered,
         "items_failed": run.items_failed,
-        "error_message": None,
+        "error_message": run.error_summary,
         "started_at": run.started_at,
         "finished_at": run.finished_at,
     }
@@ -239,11 +239,18 @@ def get_warehouse_metrics(
         ) or 0
 
         # Last scrape run for platform
+        platform_code = (p.code or p.name).strip().lower()
         last_run = db.scalar(
             select(ScrapeRun)
-            .where(ScrapeRun.platform.ilike(p.name))
+            .where(func.lower(ScrapeRun.platform) == platform_code)
             .order_by(ScrapeRun.started_at.desc())
             .limit(1)
+        )
+
+        serialized_run = (
+            _serialize_scrape_run(last_run)
+            if last_run is not None
+            else None
         )
 
         platform_summary.append({
@@ -253,8 +260,11 @@ def get_warehouse_metrics(
             "domain": p.base_url,
             "listings_count": p_listings_count,
             "last_scrape_at": last_run.started_at.isoformat() if last_run else None,
-            "last_scrape_status": last_run.status if last_run else "NO_RUNS",
+            "last_scrape_status": (
+                serialized_run["status"] if serialized_run else "NO_RUNS"
+            ),
             "last_scrape_items": last_run.items_discovered if last_run else 0,
+            "last_scrape_error": last_run.error_summary if last_run else None,
         })
 
     # Data health metrics

@@ -153,3 +153,40 @@ class AdminService:
         return cls._serialize_user(
             updated_user
         )
+
+    @staticmethod
+    def delete_user(
+        database_session: Session,
+        *,
+        current_admin: User,
+        user_id: int,
+    ) -> None:
+        target_user = AdminRepository.get_user_by_id(
+            database_session,
+            user_id,
+        )
+
+        if target_user is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": "USER_NOT_FOUND",
+                    "message": "The requested user does not exist.",
+                },
+            )
+
+        if target_user.id == current_admin.id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "CANNOT_DELETE_SELF",
+                    "message": (
+                        "An administrator cannot delete their own account."
+                    ),
+                },
+            )
+
+        AdminRepository.delete_user(
+            database_session,
+            user_id=target_user.id,
+        )

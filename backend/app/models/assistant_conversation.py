@@ -59,5 +59,8 @@ class AssistantConversation(Base):
         back_populates="conversation",
         cascade="all, delete-orphan",
         passive_deletes=True,
-        order_by="AssistantMessage.created_at",
+        # User and assistant rows are written in the same transaction and can
+        # receive identical database timestamps. Identity order preserves the
+        # actual turn sequence deterministically after a page reload.
+        order_by="AssistantMessage.id",
     )

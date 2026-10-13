@@ -642,9 +642,8 @@ function SMESalesImport({
           </h3>
 
           <p className="mt-3 text-sm leading-7 text-slate-600">
-            Har sales row ka SKU pehle Business Products
-            section mein maujood active SKU se match hona
-            chahiye.
+            Every sales-row SKU must match an active SKU in
+            the Business Products section.
           </p>
 
           <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200">
@@ -808,8 +807,8 @@ function SMESalesImport({
             </h4>
 
             <p className="mt-3 text-sm leading-7 text-slate-600">
-              Apni pehli CSV upload karne ke baad import
-              history yahan show hogi.
+              Upload your first CSV to start building the
+              import history shown here.
             </p>
           </div>
         ) : null}
@@ -956,8 +955,7 @@ function SMESalesImport({
           records.length === 0 ? (
             <div className="mt-6 rounded-2xl border border-dashed border-slate-300 p-8 text-center">
               <p className="text-sm font-bold text-slate-600">
-                Is import mein koi accepted sales record
-                available nahi hai.
+                This import does not contain any accepted sales records.
               </p>
             </div>
           ) : null}

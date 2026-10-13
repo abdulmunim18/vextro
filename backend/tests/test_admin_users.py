@@ -333,6 +333,43 @@ def test_admin_cannot_deactivate_self(
     )
 
 
+def test_admin_can_permanently_delete_another_user(
+    client: TestClient,
+    database_session: Session,
+) -> None:
+    _, headers = admin_headers(client, database_session)
+    consumer = register_user(
+        client,
+        full_name="Delete Consumer",
+        account_type="consumer",
+    )
+    user_id = int(consumer["id"])
+
+    response = client.delete(
+        f"/api/v1/admin/users/{user_id}",
+        headers=headers,
+    )
+
+    assert response.status_code == 204
+    database_session.expire_all()
+    assert database_session.get(User, user_id) is None
+
+
+def test_admin_cannot_delete_self(
+    client: TestClient,
+    database_session: Session,
+) -> None:
+    admin_user, headers = admin_headers(client, database_session)
+
+    response = client.delete(
+        f"/api/v1/admin/users/{admin_user.id}",
+        headers=headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "CANNOT_DELETE_SELF"
+
+
 def test_status_update_rejects_missing_user(
     client: TestClient,
     database_session: Session,

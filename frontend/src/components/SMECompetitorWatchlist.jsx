@@ -921,9 +921,9 @@ function SMECompetitorWatchlist({
           !selectedBusinessProduct
             .canonical_product_id ? (
             <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold leading-6 text-amber-800">
-              Is business product ka VEXTRO catalog mein
-              reliable match nahi mila. Is liye Daraz ya
-              PriceOye listing recommend nahi ki jayegi.
+              No reliable VEXTRO catalog match was found for
+              this business product, so Daraz and PriceOye
+              listings cannot be recommended.
             </div>
           ) : null}
 
@@ -931,17 +931,16 @@ function SMECompetitorWatchlist({
             ?.canonical_product_id &&
           selectedProductListings.length === 0 ? (
             <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold leading-6 text-blue-800">
-              Is catalog product ke liye abhi koi
-              Daraz ya PriceOye listing available
-              nahi hai.
+              No Daraz or PriceOye listing is currently
+              available for this catalog product.
             </div>
           ) : null}
 
           {selectedProductListings.length > 0 &&
           availableListings.length === 0 ? (
             <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold leading-6 text-emerald-800">
-              Is product ki tamam available
-              listings already watchlist mein hain.
+              All available listings for this product are
+              already in the watchlist.
             </div>
           ) : null}
 
@@ -1037,9 +1036,8 @@ function SMECompetitorWatchlist({
             </h4>
 
             <p className="mt-3 text-sm leading-7 text-slate-600">
-              Upar se business product aur
-              marketplace listing select karke apna
-              pehla competitor add karo.
+              Select a business product and marketplace
+              listing above to add your first competitor.
             </p>
           </div>
         ) : null}

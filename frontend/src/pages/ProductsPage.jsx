@@ -67,6 +67,8 @@ const [brands, setBrands] = useState([]);
 const [platforms, setPlatforms] = useState([]);
 
   const [page, setPage] = useState(1);
+  const [pageInput, setPageInput] = useState("1");
+  const [pageInputError, setPageInputError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const [totalItems, setTotalItems] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -250,12 +252,14 @@ useEffect(() => {
     }));
   }
 
- function handleSearch(event) {
+function handleSearch(event) {
   event.preventDefault();
 
   setIsLoadingProducts(true);
   setErrorMessage("");
   setPage(1);
+  setPageInput("1");
+  setPageInputError("");
 
   setAppliedFilters({
     ...draftFilters,
@@ -269,6 +273,8 @@ function handleReset() {
   setDraftFilters(initialFilters);
   setAppliedFilters(initialFilters);
   setPage(1);
+  setPageInput("1");
+  setPageInputError("");
 }
 
 function handleRetry() {
@@ -281,12 +287,37 @@ function changePage(nextPage) {
   setIsLoadingProducts(true);
   setErrorMessage("");
   setPage(nextPage);
+  setPageInput(String(nextPage));
+  setPageInputError("");
 
   window.scrollTo({
     top: 0,
     behavior: "smooth",
   });
 }
+
+function handlePageJump(event) {
+  event.preventDefault();
+  const requestedPage = Number(pageInput);
+
+  if (!Number.isInteger(requestedPage) || requestedPage < 1) {
+    setPageInputError("Enter a whole page number starting from 1.");
+    return;
+  }
+
+  if (requestedPage > totalPages) {
+    setPageInputError(
+      `Page ${requestedPage} does not exist. Last page is ${totalPages}.`,
+    );
+    return;
+  }
+
+  setPageInputError("");
+  if (requestedPage !== page) {
+    changePage(requestedPage);
+  }
+}
+
 function handleToggleCompare(product) {
   setSelectedProducts((currentProducts) => {
     const isAlreadySelected =
@@ -722,6 +753,43 @@ const comparisonUrl =
                 {totalPages}
               </strong>
             </span>
+
+            <form className="flex flex-col gap-1" onSubmit={handlePageJump}>
+              <div className="flex gap-2">
+                <label className="sr-only" htmlFor="product-page-jump">
+                  Go to page
+                </label>
+                <input
+                  id="product-page-jump"
+                  className="h-11 w-24 rounded-xl border border-vextro-border bg-white px-3 text-center text-sm font-black text-vextro-ink outline-none focus:border-vextro-primary focus:ring-4 focus:ring-blue-100"
+                  type="number"
+                  min="1"
+                  max={totalPages}
+                  step="1"
+                  inputMode="numeric"
+                  value={pageInput}
+                  onChange={(event) => {
+                    setPageInput(event.target.value);
+                    setPageInputError("");
+                  }}
+                  aria-invalid={Boolean(pageInputError)}
+                />
+                <button
+                  className="h-11 rounded-xl bg-vextro-primary px-5 text-sm font-black text-white transition hover:bg-blue-700"
+                  type="submit"
+                >
+                  Go
+                </button>
+              </div>
+              {pageInputError ? (
+                <span
+                  className="max-w-72 text-xs font-bold text-red-600"
+                  role="alert"
+                >
+                  {pageInputError}
+                </span>
+              ) : null}
+            </form>
 
             <button
               className="min-h-11 rounded-xl border border-vextro-border bg-white px-5 text-sm font-black text-vextro-ink transition hover:border-blue-200 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40"

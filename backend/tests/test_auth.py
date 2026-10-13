@@ -455,14 +455,13 @@ def test_password_reset_link_is_single_use(
     ).status_code == 400
 
 
-@pytest.mark.parametrize("provider", ["google", "facebook"])
 def test_social_login_creates_verified_user_and_code_is_single_use(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
-    provider: str,
 ) -> None:
-    monkeypatch.setattr(settings, f"{provider}_oauth_client_id", "test-client")
-    monkeypatch.setattr(settings, f"{provider}_oauth_client_secret", "test-secret")
+    provider = "google"
+    monkeypatch.setattr(settings, "google_oauth_client_id", "test-client")
+    monkeypatch.setattr(settings, "google_oauth_client_secret", "test-secret")
     email = unique_email(provider)
     identity = OAuthIdentity(
         provider=provider,
@@ -471,7 +470,7 @@ def test_social_login_creates_verified_user_and_code_is_single_use(
         full_name=f"{provider.title()} User",
     )
     monkeypatch.setattr(
-        f"app.services.oauth_service._fetch_{provider}_identity",
+        "app.services.oauth_service._fetch_google_identity",
         lambda _code: identity,
     )
 
@@ -504,3 +503,13 @@ def test_social_login_creates_verified_user_and_code_is_single_use(
         "/api/v1/auth/oauth/exchange",
         json={"code": login_code},
     ).status_code == 401
+
+
+def test_facebook_oauth_is_not_supported(client: TestClient) -> None:
+    response = client.get(
+        "/api/v1/auth/oauth/facebook/authorize",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "OAUTH_PROVIDER_UNSUPPORTED"

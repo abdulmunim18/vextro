@@ -66,6 +66,8 @@ class ConversationDetailResponse(ConversationResponse):
     messages: list[AssistantMessageResponse] = Field(
         default_factory=list,
     )
+    message_total: int = Field(default=0, ge=0)
+    has_more_messages: bool = False
 
 
 class ConversationListResponse(BaseModel):
@@ -73,6 +75,8 @@ class ConversationListResponse(BaseModel):
 
     total: int = Field(ge=0)
     items: list[ConversationResponse] = Field(default_factory=list)
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=50, ge=1, le=100)
 
 
 class AssistantTurnResponse(BaseModel):

@@ -328,9 +328,8 @@ function RegisterPage() {
               <span className="h-px flex-1 bg-vextro-border" /> or sign up with <span className="h-px flex-1 bg-vextro-border" />
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3">
               <button className="min-h-12 rounded-xl border border-vextro-border bg-white px-4 text-sm font-black text-vextro-ink transition hover:border-blue-300 hover:bg-blue-50" type="button" onClick={() => startOAuthLogin("google", formData.account_type)}>Google</button>
-              <button className="min-h-12 rounded-xl border border-vextro-border bg-white px-4 text-sm font-black text-vextro-ink transition hover:border-blue-300 hover:bg-blue-50" type="button" onClick={() => startOAuthLogin("facebook", formData.account_type)}>Facebook</button>
             </div>
 
             <p className="mt-7 text-center text-sm text-vextro-muted">

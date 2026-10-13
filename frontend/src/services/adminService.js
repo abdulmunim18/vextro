@@ -37,6 +37,11 @@ export async function updateAdminUserStatus(
 }
 
 
+export async function deleteAdminUser(userId) {
+  await apiClient.delete(`/admin/users/${userId}`);
+}
+
+
 export async function getAdminProducts(params = {}) {
   const response = await apiClient.get(
     "/admin/products",
