@@ -3,7 +3,7 @@
 import re
 from decimal import Decimal
 
-from sqlalchemy import exists, func, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.assistant_conversation import AssistantConversation
@@ -19,6 +19,7 @@ STOP_WORDS = {
     "a",
     "an",
     "and",
+    "aur",
     "buy",
     "compare",
     "for",
@@ -26,6 +27,7 @@ STOP_WORDS = {
     "is",
     "me",
     "of",
+    "or",
     "price",
     "product",
     "show",
@@ -59,11 +61,180 @@ STOP_WORDS = {
     "koi",
     "konsa",
     "konsi",
+    "ko",
+    "kro",
+    "karo",
     "mujhe",
     "se",
     "wala",
     "wale",
 }
+
+
+def _normalized_tokens(value: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", value.lower())
+
+
+def product_search_terms(message: str, *, limit: int = 8) -> list[str]:
+    """Return bounded high-signal terms for the product candidate query."""
+
+    terms = [
+        token
+        for token in _normalized_tokens(message)
+        if len(token) >= 2 and token not in STOP_WORDS
+    ]
+    distinctive = [
+        token for token in terms if any(character.isdigit() for character in token)
+    ]
+    selected = distinctive or terms
+    return list(dict.fromkeys(selected))[:limit]
+
+
+def _phrase_positions(
+    message_tokens: list[str],
+    phrase_tokens: list[str],
+) -> list[int]:
+    phrase_length = len(phrase_tokens)
+    if not phrase_length or phrase_length > len(message_tokens):
+        return []
+    return [
+        index
+        for index in range(len(message_tokens) - phrase_length + 1)
+        if message_tokens[index:index + phrase_length] == phrase_tokens
+    ]
+
+
+def rank_product_entity_matches(
+    message: str,
+    products: list[CanonicalProduct],
+    *,
+    limit: int = 5,
+) -> list[CanonicalProduct]:
+    """Resolve explicitly named products without adding longer variants.
+
+    Exact contiguous aliases win over fuzzy token overlap. For example,
+    ``Vivo V70`` matches V70 but not V70 FE, while ``iPhone 17 Pro`` matches
+    the Pro model without also returning Pro Max or Air. Multiple products
+    are returned in the order in which the user named them.
+    """
+
+    message_tokens = _normalized_tokens(message)
+    if not message_tokens:
+        return []
+
+    exact_matches: list[tuple[int, int, CanonicalProduct]] = []
+    for product in products:
+        aliases: list[list[str]] = []
+        for source in (product.name, product.model or ""):
+            tokens = _normalized_tokens(source)
+            if tokens and tokens not in aliases:
+                aliases.append(tokens)
+            # Catalog names commonly start with a brand omitted by users:
+            # "Apple iPhone 17 Pro" -> "iPhone 17 Pro".
+            if len(tokens) >= 3 and tokens[1:] not in aliases:
+                aliases.append(tokens[1:])
+            # In multi-product comparisons users commonly state the family
+            # once: "iPhone 18 Pro Max or 17 Pro Max".  A suffix beginning
+            # with a model number is still an exact, high-signal alias and
+            # must resolve the second product without fuzzy-matching an older
+            # iPhone or pulling a stale recommendation from conversation
+            # context.
+            numeric_index = next(
+                (
+                    index
+                    for index, token in enumerate(tokens)
+                    if any(character.isdigit() for character in token)
+                ),
+                None,
+            )
+            if (
+                numeric_index is not None
+                and len(tokens[numeric_index:]) >= 2
+                and tokens[numeric_index:] not in aliases
+            ):
+                aliases.append(tokens[numeric_index:])
+
+        candidate_matches: list[tuple[int, int]] = []
+        for alias in aliases:
+            if len(alias) < 2 and not any(char.isdigit() for char in alias[0]):
+                continue
+            for position in _phrase_positions(message_tokens, alias):
+                candidate_matches.append((position, len(alias)))
+        if candidate_matches:
+            for position, length in set(candidate_matches):
+                exact_matches.append((position, length, product))
+
+    if exact_matches:
+        # Drop any model mention wholly contained inside a longer matched
+        # model mention. This handles aliases whose brand was omitted at a
+        # later token, for example "Itel S26 Ultra" appearing inside
+        # "Itel Super S26 Ultra". A separately written second product is
+        # preserved because its span is outside the longer mention.
+        non_contained_matches = []
+        for position, length, product in exact_matches:
+            end = position + length
+            is_contained = any(
+                other_position <= position
+                and other_position + other_length >= end
+                and other_length > length
+                for other_position, other_length, _ in exact_matches
+            )
+            if not is_contained:
+                non_contained_matches.append((position, length, product))
+        ordered = sorted(
+            non_contained_matches,
+            key=lambda item: (item[0], -item[1], item[2].name.lower()),
+        )
+        results = []
+        seen_names = set()
+        for _, _, product in ordered:
+            normalized_name = " ".join(_normalized_tokens(product.name))
+            if normalized_name in seen_names:
+                continue
+            seen_names.add(normalized_name)
+            results.append(product)
+            if len(results) == limit:
+                break
+        return results
+
+    terms = [
+        term
+        for term in message_tokens
+        if len(term) >= 2 and term not in STOP_WORDS
+    ]
+    if not terms:
+        return []
+
+    message_terms = set(terms)
+    ranked: list[tuple[float, int, CanonicalProduct]] = []
+    for product in products:
+        searchable = f"{product.name} {product.model or ''}".lower()
+        product_terms = set(_normalized_tokens(searchable))
+        overlap = message_terms & product_terms
+        if not overlap:
+            continue
+
+        distinctive = {
+            term for term in overlap
+            if any(character.isdigit() for character in term)
+        }
+        if len(overlap) < 2 and not distinctive:
+            continue
+
+        coverage = len(overlap) / max(len(product_terms), 1)
+        score = len(overlap) * 10 + len(distinctive) * 4 + coverage
+        ranked.append((score, len(overlap), product))
+
+    ranked.sort(key=lambda item: (-item[0], -item[1], item[2].name))
+    if not ranked:
+        return []
+
+    best_score = ranked[0][0]
+    return [
+        product
+        for score, _, product in ranked
+        if score >= max(14, best_score * 0.45)
+    ][:limit]
 
 
 def extract_camera_evidence(
@@ -160,6 +331,39 @@ def extract_camera_evidence(
     return rear, front, " + ".join(evidence_parts)
 
 
+def extract_processor_evidence(
+    specifications: dict[str, object] | None,
+    listing_titles: str | None,
+) -> str | None:
+    """Return catalog-listed processor text without inventing performance.
+
+    Processor names are useful eligibility evidence, but VEXTRO does not
+    currently store normalized benchmark scores.  The assistant therefore
+    exposes the listed chipset and never pretends that its name alone proves
+    which phone is fastest.
+    """
+
+    for key, value in (specifications or {}).items():
+        normalized_key = str(key).strip().lower()
+        if not any(
+            term in normalized_key
+            for term in ("processor", "chipset", "cpu", "soc")
+        ):
+            continue
+        normalized_value = " ".join(str(value).split()).strip(" ,;|-")
+        if normalized_value:
+            return normalized_value[:180]
+
+    title = " ".join((listing_titles or "").split())
+    match = re.search(
+        r"\b(?:snapdragon|dimensity|helio|exynos|tensor|bionic|unisoc)"
+        r"(?:\s+[a-z0-9+.-]+){0,3}\b",
+        title,
+        flags=re.IGNORECASE,
+    )
+    return match.group(0)[:180] if match else None
+
+
 class AssistantRepository:
     """Persist conversations and find product entities."""
 
@@ -184,13 +388,22 @@ class AssistantRepository:
         database_session: Session,
         *,
         user_id: int,
-    ) -> list[AssistantConversation]:
+        offset: int = 0,
+        limit: int = 50,
+    ) -> tuple[int, list[AssistantConversation]]:
+        total = database_session.scalar(
+            select(func.count(AssistantConversation.id)).where(
+                AssistantConversation.user_id == user_id,
+            )
+        ) or 0
         statement = (
             select(AssistantConversation)
             .where(AssistantConversation.user_id == user_id)
             .order_by(AssistantConversation.updated_at.desc())
+            .offset(offset)
+            .limit(limit)
         )
-        return list(database_session.scalars(statement))
+        return int(total), list(database_session.scalars(statement))
 
     @staticmethod
     def get_conversation(
@@ -199,6 +412,7 @@ class AssistantRepository:
         conversation_id: int,
         user_id: int,
         with_messages: bool = False,
+        for_update: bool = False,
     ) -> AssistantConversation | None:
         statement = select(AssistantConversation).where(
             AssistantConversation.id == conversation_id,
@@ -209,6 +423,8 @@ class AssistantRepository:
             statement = statement.options(
                 selectinload(AssistantConversation.messages),
             )
+        if for_update:
+            statement = statement.with_for_update()
 
         return database_session.scalar(statement)
 
@@ -238,6 +454,40 @@ class AssistantRepository:
         return message
 
     @staticmethod
+    def list_messages(
+        database_session: Session,
+        *,
+        conversation_id: int,
+        limit: int = 100,
+        before_message_id: int | None = None,
+    ) -> list[AssistantMessage]:
+        statement = select(AssistantMessage).where(
+            AssistantMessage.conversation_id == conversation_id,
+        )
+        if before_message_id is not None:
+            statement = statement.where(
+                AssistantMessage.id < before_message_id,
+            )
+        statement = statement.order_by(AssistantMessage.id.desc()).limit(limit)
+        return list(reversed(list(database_session.scalars(statement))))
+
+    @staticmethod
+    def count_messages(
+        database_session: Session,
+        *,
+        conversation_id: int,
+        before_message_id: int | None = None,
+    ) -> int:
+        statement = select(func.count(AssistantMessage.id)).where(
+            AssistantMessage.conversation_id == conversation_id,
+        )
+        if before_message_id is not None:
+            statement = statement.where(
+                AssistantMessage.id < before_message_id,
+            )
+        return int(database_session.scalar(statement) or 0)
+
+    @staticmethod
     def find_product_entities(
         database_session: Session,
         message: str,
@@ -252,64 +502,30 @@ class AssistantRepository:
         much better multi-product extraction without an external AI service.
         """
 
-        terms = [
-            term
-            for term in re.findall(r"[a-zA-Z0-9]+", message.lower())
-            if len(term) >= 2 and term not in STOP_WORDS
-        ]
-
-        if not terms:
+        search_terms = product_search_terms(message)
+        if not search_terms:
             return []
-
+        candidate_filters = []
+        for term in search_terms:
+            pattern = f"%{term}%"
+            candidate_filters.extend(
+                (
+                    CanonicalProduct.name.ilike(pattern),
+                    CanonicalProduct.model.ilike(pattern),
+                )
+            )
+        candidate_limit = max(limit * 40, 80)
         statement = (
             select(CanonicalProduct)
-            .where(CanonicalProduct.is_active.is_(True))
+            .where(
+                CanonicalProduct.is_active.is_(True),
+                or_(*candidate_filters),
+            )
             .options(selectinload(CanonicalProduct.variants))
+            .limit(candidate_limit)
         )
         products = list(database_session.scalars(statement))
-        message_terms = set(terms)
-        ranked: list[tuple[float, int, CanonicalProduct]] = []
-
-        for product in products:
-            searchable = f"{product.name} {product.model or ''}".lower()
-            product_terms = set(re.findall(r"[a-z0-9]+", searchable))
-            overlap = message_terms & product_terms
-
-            if not overlap:
-                continue
-
-            model_terms = set(
-                re.findall(r"[a-z0-9]+", (product.model or "").lower())
-            )
-            distinctive = {
-                term for term in overlap
-                if any(character.isdigit() for character in term)
-                or term in model_terms
-            }
-            # One brand/family word alone is ambiguous. A model token, two
-            # matching words, or the complete name is treated as explicit.
-            if len(overlap) < 2 and not distinctive:
-                continue
-
-            coverage = len(overlap) / max(len(product_terms), 1)
-            score = len(overlap) * 10 + len(distinctive) * 4 + coverage
-            if product.name.lower() in message.lower():
-                score += 30
-            ranked.append((score, len(overlap), product))
-
-        ranked.sort(key=lambda item: (-item[0], -item[1], item[2].name))
-        if not ranked:
-            return []
-
-        # Keep products reasonably close to the strongest explicit match. This
-        # retains two named products for comparisons without returning every
-        # phone that happens to share "Galaxy" or "iPhone".
-        best_score = ranked[0][0]
-        return [
-            product
-            for score, _, product in ranked
-            if score >= max(14, best_score * 0.45)
-        ][:limit]
+        return rank_product_entity_matches(message, products, limit=limit)
 
     @staticmethod
     def get_products_by_ids(
@@ -342,6 +558,7 @@ class AssistantRepository:
         ram_gb: int | None = None,
         storage_gb: int | None = None,
         preference: str | None = None,
+        requested_fields: list[str] | None = None,
         exclude_ids: list[int] | None = None,
         limit: int = 4,
     ) -> list[dict[str, object]]:
@@ -349,6 +566,7 @@ class AssistantRepository:
 
         lowest_price = func.min(ProductListing.current_price)
         best_rating = func.max(ProductListing.rating)
+        latest_seen_at = func.max(ProductListing.last_seen_at)
         listing_titles = func.string_agg(ProductListing.title, " || ")
         statement = (
             select(
@@ -357,6 +575,7 @@ class AssistantRepository:
                 Category.name.label("category_name"),
                 lowest_price.label("lowest_price"),
                 best_rating.label("best_rating"),
+                latest_seen_at.label("latest_seen_at"),
                 listing_titles.label("listing_titles"),
             )
             .join(Category, Category.id == CanonicalProduct.category_id)
@@ -420,7 +639,14 @@ class AssistantRepository:
                 lowest_price.desc(),
                 CanonicalProduct.name.asc(),
             )
-        query_limit = 500 if preference == "camera" else max(limit * 5, 20)
+        quality_fields = set(requested_fields or [])
+        needs_camera = preference == "camera" or "camera" in quality_fields
+        needs_processor = "processor" in quality_fields
+        query_limit = (
+            500
+            if needs_camera or needs_processor
+            else max(limit * 5, 20)
+        )
         statement = statement.order_by(*ordering).limit(query_limit)
 
         rows = database_session.execute(statement).all()
@@ -433,23 +659,45 @@ class AssistantRepository:
                 "category": category_name,
                 "lowest_price": str(price),
                 "rating": str(rating) if rating is not None else None,
+                "last_seen_at": seen_at.isoformat() if seen_at else None,
                 "_specifications": product.specifications or {},
                 "_listing_titles": titles,
             }
-            for product, brand_name, category_name, price, rating, titles in rows
+            for (
+                product,
+                brand_name,
+                category_name,
+                price,
+                rating,
+                seen_at,
+                titles,
+            ) in rows
         ]
 
-        if preference == "camera":
+        if needs_camera or needs_processor:
             ranked = []
             for index, item in enumerate(results):
-                evidence = extract_camera_evidence(
-                    item.pop("_specifications"),
-                    item.pop("_listing_titles"),
+                specifications = item.pop("_specifications")
+                titles = item.pop("_listing_titles")
+                camera_evidence = extract_camera_evidence(
+                    specifications,
+                    titles,
                 )
-                if evidence is None:
+                processor_evidence = extract_processor_evidence(
+                    specifications,
+                    titles,
+                )
+                if needs_camera and camera_evidence is None:
                     continue
-                rear_score, front_score, description = evidence
-                item["preference_evidence"] = description
+                if needs_processor and processor_evidence is None:
+                    continue
+                rear_score, front_score, description = (
+                    camera_evidence or (0.0, 0.0, "")
+                )
+                if camera_evidence is not None:
+                    item["preference_evidence"] = description
+                if processor_evidence is not None:
+                    item["processor_evidence"] = processor_evidence
                 ranked.append((rear_score, front_score, -index, item))
 
             ranked.sort(key=lambda row: (-row[0], -row[1], -row[2]))

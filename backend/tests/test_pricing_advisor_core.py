@@ -45,3 +45,21 @@ def test_pricing_advisor_flags_below_cost_scenario() -> None:
 
     assert discounted.risk_level == "high"
     assert discounted.gross_profit < 0
+
+
+def test_pricing_advisor_uses_user_selected_scenario_range() -> None:
+    result = calculate_pricing_scenarios(
+        current_price=Decimal("1000"),
+        cost_price=Decimal("600"),
+        competitor_price=Decimal("950"),
+        baseline_units=Decimal("100"),
+        demand_sensitivity=Decimal("1"),
+        scenario_range_percentage=Decimal("12.5"),
+    )
+
+    assert [
+        scenario.price_change_percentage
+        for scenario in result.scenarios
+    ] == [Decimal("-12.5"), Decimal("0"), Decimal("12.5")]
+    assert result.scenarios[0].proposed_price == Decimal("875.00")
+    assert result.scenarios[2].proposed_price == Decimal("1125.00")

@@ -24,6 +24,8 @@ const initialProductForm = {
   reorder_level: "0",
 };
 
+const INITIAL_VISIBLE_PRODUCT_COUNT = 8;
+
 function extractProducts(responseData) {
   if (Array.isArray(responseData)) {
     return responseData;
@@ -263,8 +265,8 @@ function ProductFields({
         />
 
         <p className="mt-2 text-xs leading-5 text-slate-500">
-          Stock is level tak pohanchne par reorder
-          recommendation show hogi.
+          A reorder recommendation appears when stock reaches
+          this level.
         </p>
       </div>
     </div>
@@ -496,6 +498,8 @@ function SMEBusinessProducts({
   onProductsChanged,
 }) {
   const [products, setProducts] = useState([]);
+  const [showAllProducts, setShowAllProducts] =
+    useState(false);
   const [productForm, setProductForm] = useState(
     initialProductForm,
   );
@@ -535,16 +539,23 @@ function SMEBusinessProducts({
     setLoadError("");
 
     try {
-      const responseData =
-        await getBusinessProducts(
-          organizationId,
-          {
-            page: 1,
-            page_size: 100,
-          },
-        );
+      const firstPage = await getBusinessProducts(
+        organizationId,
+        { page: 1, page_size: 100 },
+      );
+      const allProducts = extractProducts(firstPage);
+      const totalPages = Number(firstPage?.total_pages || 1);
 
-      setProducts(extractProducts(responseData));
+      for (let page = 2; page <= totalPages; page += 1) {
+        const nextPage = await getBusinessProducts(
+          organizationId,
+          { page, page_size: 100 },
+        );
+        allProducts.push(...extractProducts(nextPage));
+      }
+
+      setProducts(allProducts);
+      setShowAllProducts(false);
     } catch (error) {
       setLoadError(
         getApiErrorMessage(
@@ -908,10 +919,10 @@ function SMEBusinessProducts({
           Import products from CSV or Excel
         </h3>
         <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-          Multiple shop products ek saath add karein. VEXTRO
+          Add multiple shop products at once. VEXTRO matches the
           <strong className="text-slate-900"> catalog_product_name </strong>
-          ya product name ko catalog se match karke relevant Daraz aur
-          PriceOye listings connect karega.
+          or product name with the catalog and connects relevant Daraz
+          and PriceOye listings.
         </p>
 
         <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50 p-5">
@@ -922,8 +933,8 @@ function SMEBusinessProducts({
             name,sku,catalog_product_name,cost_price,selling_price,currency,stock_level,reorder_level
           </code>
           <p className="mt-3 text-xs leading-6 text-slate-500">
-            Required columns sirf name aur sku hain. File .csv ya .xlsx,
-            maximum 2 MB aur 5,000 rows ho sakti hai.
+            Only name and sku are required. The file may be .csv or
+            .xlsx, up to 2 MB and 5,000 rows.
           </p>
           <a
             href="/templates/sme-products-template.csv"
@@ -969,7 +980,7 @@ function SMEBusinessProducts({
                 {importResult.created_rows} products created; {importResult.rejected_rows} rejected.
               </p>
               <p className="mt-2">
-                {importResult.catalog_matched_rows} catalog matched; {importResult.unmatched_rows} marketplace par unavailable.
+                {importResult.catalog_matched_rows} catalog matched; {importResult.unmatched_rows} unavailable on the marketplace.
               </p>
               {importResult.errors?.length ? (
                 <ul className="mt-3 list-disc space-y-1 pl-5 text-red-700">
@@ -1053,8 +1064,7 @@ function SMEBusinessProducts({
             </h4>
 
             <p className="mt-3 text-sm leading-7 text-slate-600">
-              Upar wala form use karke apna pehla
-              product add karo.
+              Use the form above to add your first product.
             </p>
           </div>
         ) : null}
@@ -1063,7 +1073,13 @@ function SMEBusinessProducts({
         !loadError &&
         products.length > 0 ? (
           <div className="mt-6 grid gap-5">
-            {products.map((product) => (
+            {(showAllProducts
+              ? products
+              : products.slice(
+                  0,
+                  INITIAL_VISIBLE_PRODUCT_COUNT,
+                )
+            ).map((product) => (
               <ProductCard
                 key={product.id}
                 product={product}
@@ -1093,6 +1109,21 @@ function SMEBusinessProducts({
                 }
               />
             ))}
+            {products.length >
+            INITIAL_VISIBLE_PRODUCT_COUNT ? (
+              <button
+                type="button"
+                onClick={() =>
+                  setShowAllProducts((current) => !current)
+                }
+                className="mt-1 inline-flex min-h-12 w-full items-center justify-center rounded-2xl border border-blue-200 bg-blue-50 px-5 text-sm font-black text-blue-700 transition hover:border-blue-300 hover:bg-blue-100"
+                aria-expanded={showAllProducts}
+              >
+                {showAllProducts
+                  ? "Show fewer products"
+                  : `Show more (${products.length - INITIAL_VISIBLE_PRODUCT_COUNT} remaining)`}
+              </button>
+            ) : null}
           </div>
         ) : null}
       </section>

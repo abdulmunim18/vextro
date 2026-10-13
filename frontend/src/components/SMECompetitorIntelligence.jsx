@@ -105,6 +105,52 @@ function SMECompetitorIntelligence({
           </div>
           <p className="mt-4 text-xs leading-6 text-slate-500">{summary.estimation_note}</p>
 
+          <section className="mt-7 rounded-2xl border border-violet-100 bg-violet-50/50 p-5 sm:p-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.16em] text-violet-600">Market-share estimation</p>
+                <h3 className="mt-2 text-xl font-black text-slate-950">Product-level market position</h3>
+              </div>
+              <p className="text-sm font-bold text-slate-600">
+                Coverage: {summary.market_share_products_estimated}/{summary.tracked_products} products ({summary.market_share_coverage_percentage}%)
+              </p>
+            </div>
+
+            {data.market_share_estimates?.length ? (
+              <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                {data.market_share_estimates.map((estimate) => {
+                  const share = estimate.estimated_own_market_share_percentage;
+                  const width = share == null ? 0 : Math.max(0, Math.min(100, Number(share)));
+                  return (
+                    <article key={estimate.business_product_id} className="rounded-2xl border border-violet-100 bg-white p-5">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <h4 className="font-black text-slate-950">{estimate.product_name}</h4>
+                          <p className="mt-1 text-xs text-slate-500">{estimate.available_competitor_count} of {estimate.competitor_count} competitors currently available</p>
+                        </div>
+                        <span className="rounded-full bg-violet-100 px-3 py-1 text-[10px] font-black uppercase text-violet-700">{estimate.confidence} confidence</span>
+                      </div>
+                      <div className="mt-4 flex items-end justify-between gap-4">
+                        <span className="text-xs font-bold text-slate-500">Estimated own share</span>
+                        <strong className="text-2xl font-black text-violet-700">{share == null ? "N/A" : `${share}%`}</strong>
+                      </div>
+                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100" role="progressbar" aria-label={`${estimate.product_name} estimated own share`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={share == null ? undefined : width}>
+                        <div className="h-full rounded-full bg-violet-600" style={{ width: `${width}%` }} />
+                      </div>
+                      <dl className="mt-4 grid grid-cols-2 gap-3 text-xs">
+                        <div><dt className="text-slate-500">Your price</dt><dd className="mt-1 font-black text-slate-800">{formatPrice(estimate.own_price, "PKR")}</dd></div>
+                        <div><dt className="text-slate-500">Lowest competitor</dt><dd className="mt-1 font-black text-slate-800">{formatPrice(estimate.lowest_competitor_price, "PKR")}</dd></div>
+                      </dl>
+                      {share == null ? <p className="mt-3 text-xs font-semibold text-amber-700">Add a selling price and at least one available monitored competitor to calculate this estimate.</p> : null}
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="mt-5 text-sm text-slate-600">Add active competitor listings to calculate product-level estimates.</p>
+            )}
+          </section>
+
           {data.items.length === 0 ? (
             <div className="mt-7 rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-600">
               Add active competitor listings to generate intelligence.

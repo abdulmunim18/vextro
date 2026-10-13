@@ -27,6 +27,8 @@ const EMPTY_SUMMARY = {
   products_sold: 0,
 };
 
+const INITIAL_VISIBLE_PRODUCT_COUNT = 8;
+
 
 const formatMoney = (
   value,
@@ -123,6 +125,8 @@ function SMESalesAnalytics({
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showAllProductPerformance, setShowAllProductPerformance] =
+    useState(false);
 
 
   const loadAnalytics = useCallback(
@@ -154,6 +158,7 @@ function SMESalesAnalytics({
         );
 
         setAnalytics(data);
+        setShowAllProductPerformance(false);
       } catch (requestError) {
         setError(
           getApiErrorMessage(
@@ -925,6 +930,8 @@ const totalProductRevenue =
 
       {productPerformance.length > 0 ? (
 
+        <>
+
         <div className="overflow-x-auto">
 
           <table className="min-w-[950px] w-full">
@@ -968,7 +975,13 @@ const totalProductRevenue =
 
             <tbody className="divide-y divide-slate-100">
 
-              {productPerformance.map(
+              {(showAllProductPerformance
+                ? productPerformance
+                : productPerformance.slice(
+                    0,
+                    INITIAL_VISIBLE_PRODUCT_COUNT,
+                  )
+              ).map(
                 (
                   product,
                   index,
@@ -1135,6 +1148,28 @@ const totalProductRevenue =
           </table>
 
         </div>
+
+        {productPerformance.length >
+        INITIAL_VISIBLE_PRODUCT_COUNT ? (
+          <div className="border-t border-slate-200 bg-slate-50/70 p-4 sm:p-5">
+            <button
+              type="button"
+              onClick={() =>
+                setShowAllProductPerformance(
+                  (current) => !current,
+                )
+              }
+              aria-expanded={showAllProductPerformance}
+              className="inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-violet-200 bg-white px-5 text-sm font-bold text-violet-700 transition hover:border-violet-300 hover:bg-violet-50"
+            >
+              {showAllProductPerformance
+                ? "Show fewer products"
+                : `Show more (${productPerformance.length - INITIAL_VISIBLE_PRODUCT_COUNT} remaining)`}
+            </button>
+          </div>
+        ) : null}
+
+        </>
 
       ) : (
 

@@ -14,6 +14,7 @@ function SMEPricingAdvisor({
   const [productId, setProductId] = useState("");
   const [baselineUnits, setBaselineUnits] = useState("100");
   const [sensitivity, setSensitivity] = useState("1");
+  const [scenarioRange, setScenarioRange] = useState("5");
   const [result, setResult] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -54,6 +55,7 @@ function SMEPricingAdvisor({
         business_product_id: Number(productId),
         baseline_units: Number(baselineUnits),
         demand_sensitivity: Number(sensitivity),
+        scenario_range_percentage: Number(scenarioRange),
       }));
     } catch (requestError) {
       setResult(null);
@@ -69,7 +71,7 @@ function SMEPricingAdvisor({
         <div className="p-7 sm:p-9">
           <p className="text-xs font-black uppercase tracking-[0.18em] text-blue-300">Dynamic pricing advisor</p>
           <h2 className="mt-3 text-3xl font-black tracking-tight">Simulate before changing price</h2>
-          <p className="mt-4 text-sm leading-7 text-slate-300">Compare -5%, unchanged and +5% scenarios using cost, monitored competitor price and an explicit demand-sensitivity assumption.</p>
+          <p className="mt-4 text-sm leading-7 text-slate-300">Choose any adjustment from 0.1% to 99.99%, then compare an equal price decrease, no change and increase using cost, monitored competitor price and demand sensitivity.</p>
 
           <form className="mt-7 space-y-5" onSubmit={handleSubmit}>
             <div>
@@ -82,11 +84,18 @@ function SMEPricingAdvisor({
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="mb-2 block text-sm font-bold" htmlFor="baseline-units">Expected units</label>
-                <input id="baseline-units" type="number" min="1" step="1" value={baselineUnits} onChange={(event) => setBaselineUnits(event.target.value)} className="min-h-12 w-full rounded-xl border border-white/15 px-4 text-sm text-slate-950" />
+                <input id="baseline-units" type="number" min="1" step="1" value={baselineUnits} onChange={(event) => setBaselineUnits(event.target.value)} className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-950 caret-slate-950 [color-scheme:light]" />
               </div>
               <div>
                 <label className="mb-2 block text-sm font-bold" htmlFor="demand-sensitivity">Sensitivity</label>
-                <input id="demand-sensitivity" type="number" min="0" max="5" step="0.1" value={sensitivity} onChange={(event) => setSensitivity(event.target.value)} className="min-h-12 w-full rounded-xl border border-white/15 px-4 text-sm text-slate-950" />
+                <input id="demand-sensitivity" type="number" min="0" max="5" step="0.1" value={sensitivity} onChange={(event) => setSensitivity(event.target.value)} className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-950 caret-slate-950 [color-scheme:light]" />
+              </div>
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-bold" htmlFor="scenario-range">Price adjustment percentage</label>
+              <div className="relative">
+                <input id="scenario-range" type="number" min="0.1" max="99.99" step="0.1" required value={scenarioRange} onChange={(event) => setScenarioRange(event.target.value)} className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 pr-10 text-sm font-semibold text-slate-950 caret-slate-950 [color-scheme:light]" />
+                <span className="pointer-events-none absolute inset-y-0 right-4 grid place-items-center text-sm font-black text-slate-500">%</span>
               </div>
             </div>
             {error ? <div className="rounded-xl border border-red-300/30 bg-red-500/10 p-4 text-sm font-semibold text-red-200" role="alert">{error}</div> : null}

@@ -15,7 +15,7 @@ from app.core.database import Base
 
 
 class OAuthAccount(Base):
-    """A Google or Facebook identity linked to a VEXTRO user."""
+    """An external OAuth identity linked to a VEXTRO user."""
 
     __tablename__ = "oauth_accounts"
     __table_args__ = (

@@ -1,10 +1,12 @@
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.canonical_product import CanonicalProduct
+from app.models.organization import Organization
 from app.models.price_alert import PriceAlert
 from app.models.product_listing import ProductListing
 from app.models.role import Role
+from app.models.sales_import import SalesImport
 from app.models.user import User
 
 
@@ -269,3 +271,33 @@ class AdminRepository:
             )
 
         return refreshed_user
+
+    @staticmethod
+    def delete_user(
+        database_session: Session,
+        *,
+        user_id: int,
+    ) -> None:
+        """Permanently remove a user and dependent SME-owned records."""
+
+        try:
+            # These two ownership links intentionally use RESTRICT in the
+            # schema. Remove their dependent roots first; their child tables
+            # use cascading foreign keys.
+            database_session.execute(
+                delete(SalesImport).where(
+                    SalesImport.uploaded_by_user_id == user_id,
+                )
+            )
+            database_session.execute(
+                delete(Organization).where(
+                    Organization.owner_user_id == user_id,
+                )
+            )
+            database_session.execute(
+                delete(User).where(User.id == user_id)
+            )
+            database_session.commit()
+        except Exception:
+            database_session.rollback()
+            raise

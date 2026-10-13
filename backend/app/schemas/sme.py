@@ -457,8 +457,27 @@ class CompetitorIntelligenceSummary(BaseModel):
     average_price_gap: Decimal | None
     products_at_risk: int = Field(ge=0)
     estimated_average_market_share_percentage: Decimal | None
+    market_share_products_estimated: int = Field(default=0, ge=0)
+    market_share_coverage_percentage: Decimal = Field(
+        default=Decimal("0.00"),
+        ge=0,
+        le=100,
+    )
     risk_threshold_percentage: Decimal
     estimation_note: str
+
+
+class ProductMarketShareEstimate(BaseModel):
+    """Price-based market-share proxy for one business product."""
+
+    business_product_id: int
+    product_name: str
+    own_price: Decimal | None
+    competitor_count: int = Field(ge=0)
+    available_competitor_count: int = Field(ge=0)
+    lowest_competitor_price: Decimal | None
+    estimated_own_market_share_percentage: Decimal | None
+    confidence: str
 
 
 class CompetitorIntelligenceResponse(BaseModel):
@@ -467,6 +486,9 @@ class CompetitorIntelligenceResponse(BaseModel):
     organization_id: int
     generated_at: datetime
     summary: CompetitorIntelligenceSummary
+    market_share_estimates: list[ProductMarketShareEstimate] = Field(
+        default_factory=list,
+    )
     items: list[CompetitorInsightResponse] = Field(
         default_factory=list,
     )

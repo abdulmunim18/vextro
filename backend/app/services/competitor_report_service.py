@@ -46,6 +46,14 @@ def build_competitor_xlsx(
             "Estimated average market share (%)",
             summary.estimated_average_market_share_percentage,
         ),
+        (
+            "Market-share products estimated",
+            summary.market_share_products_estimated,
+        ),
+        (
+            "Market-share coverage (%)",
+            summary.market_share_coverage_percentage,
+        ),
         ("Estimation note", summary.estimation_note),
     ]
 
@@ -138,6 +146,51 @@ def build_competitor_xlsx(
 
     detail_sheet.freeze_panes = "A2"
     detail_sheet.auto_filter.ref = detail_sheet.dimensions
+
+    market_share_sheet = workbook.create_sheet("Market Share Estimates")
+    market_share_headers = [
+        "Product",
+        "Own Price",
+        "Tracked Competitors",
+        "Available Competitors",
+        "Lowest Competitor Price",
+        "Estimated Own Share %",
+        "Confidence",
+    ]
+    market_share_sheet.append(market_share_headers)
+
+    for estimate in intelligence.market_share_estimates:
+        market_share_sheet.append(
+            [
+                _safe_spreadsheet_text(estimate.product_name),
+                estimate.own_price,
+                estimate.competitor_count,
+                estimate.available_competitor_count,
+                estimate.lowest_competitor_price,
+                estimate.estimated_own_market_share_percentage,
+                estimate.confidence,
+            ]
+        )
+
+    for cell in market_share_sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = header_fill
+        cell.alignment = Alignment(
+            horizontal="center",
+            vertical="center",
+            wrap_text=True,
+        )
+
+    for index, width in enumerate(
+        [32, 16, 20, 22, 24, 24, 16],
+        start=1,
+    ):
+        market_share_sheet.column_dimensions[
+            market_share_sheet.cell(row=1, column=index).column_letter
+        ].width = width
+
+    market_share_sheet.freeze_panes = "A2"
+    market_share_sheet.auto_filter.ref = market_share_sheet.dimensions
     stream = BytesIO()
     workbook.save(stream)
     return stream.getvalue()
@@ -187,17 +240,18 @@ def build_competitor_pdf(
     ]
     summary = intelligence.summary
     summary_data = [
-        ["Tracked competitors", "Tracked products", "At risk", "Avg gap"],
+        ["Tracked competitors", "Tracked products", "At risk", "Est. share", "Coverage"],
         [
             str(summary.tracked_competitors),
             str(summary.tracked_products),
             str(summary.products_at_risk),
-            str(summary.average_price_gap or "N/A"),
+            str(summary.estimated_average_market_share_percentage or "N/A"),
+            f"{summary.market_share_coverage_percentage}%",
         ],
     ]
     summary_table = Table(
         summary_data,
-        colWidths=[62 * mm] * 4,
+        colWidths=[50 * mm] * 5,
     )
     summary_table.setStyle(
         TableStyle(
@@ -212,6 +266,60 @@ def build_competitor_pdf(
         )
     )
     story.extend([summary_table, Spacer(1, 6 * mm)])
+
+    if intelligence.market_share_estimates:
+        market_share_data = [
+            [
+                "Product",
+                "Own price",
+                "Available / tracked",
+                "Lowest competitor",
+                "Est. own share %",
+                "Confidence",
+            ]
+        ]
+        for estimate in intelligence.market_share_estimates:
+            market_share_data.append(
+                [
+                    Paragraph(estimate.product_name, styles["BodyText"]),
+                    str(estimate.own_price or "N/A"),
+                    (
+                        f"{estimate.available_competitor_count} / "
+                        f"{estimate.competitor_count}"
+                    ),
+                    str(estimate.lowest_competitor_price or "N/A"),
+                    str(
+                        estimate.estimated_own_market_share_percentage
+                        or "N/A"
+                    ),
+                    estimate.confidence.upper(),
+                ]
+            )
+        market_share_table = Table(
+            market_share_data,
+            repeatRows=1,
+            colWidths=[60 * mm, 34 * mm, 36 * mm, 40 * mm, 38 * mm, 32 * mm],
+        )
+        market_share_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#6D28D9")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("ALIGN", (1, 1), (-1, -1), "CENTER"),
+                    ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CBD5E1")),
+                    ("PADDING", (0, 0), (-1, -1), 5),
+                ]
+            )
+        )
+        story.extend(
+            [
+                Paragraph("Market Share Estimates", styles["Heading2"]),
+                market_share_table,
+                Spacer(1, 6 * mm),
+            ]
+        )
     detail_data = [
         [
             "Product",

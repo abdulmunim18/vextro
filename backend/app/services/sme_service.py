@@ -29,6 +29,7 @@ from app.schemas.sme import (
     CompetitorInsightResponse,
     CompetitorIntelligenceResponse,
     CompetitorIntelligenceSummary,
+    ProductMarketShareEstimate,
     CompetitorTimelinePoint,
     OrganizationCreate,
     OrganizationListResponse,
@@ -1185,31 +1186,68 @@ class SMEService:
             ).append(record)
 
         market_share_by_product: dict[int, Decimal | None] = {}
+        market_share_estimates: list[ProductMarketShareEstimate] = []
 
         for product_id, product_records in records_by_product.items():
-            own_price = product_records[0].business_product.selling_price
+            business_product = product_records[0].business_product
+            own_price = business_product.selling_price
+            available_prices = [
+                record.listing.current_price
+                for record in product_records
+                if record.listing.is_available
+                and record.listing.current_price > 0
+            ]
 
-            if own_price is None or own_price <= 0:
+            if (
+                own_price is None
+                or own_price <= 0
+                or not available_prices
+            ):
                 market_share_by_product[product_id] = None
-                continue
+            else:
+                own_weight = Decimal("1") / own_price
+                competitor_weights = sum(
+                    (
+                        Decimal("1") / competitor_price
+                        for competitor_price in available_prices
+                    ),
+                    Decimal("0"),
+                )
+                total_weight = own_weight + competitor_weights
+                market_share_by_product[product_id] = (
+                    own_weight
+                    / total_weight
+                    * Decimal("100")
+                ).quantize(
+                    Decimal("0.01"),
+                    rounding=ROUND_HALF_UP,
+                )
 
-            own_weight = Decimal("1") / own_price
-            competitor_weights = sum(
-                (
-                    Decimal("1") / record.listing.current_price
-                    for record in product_records
-                    if record.listing.current_price > 0
-                ),
-                Decimal("0"),
+            available_count = len(available_prices)
+            confidence = (
+                "unavailable"
+                if market_share_by_product[product_id] is None
+                else (
+                    "high"
+                    if available_count >= 3
+                    else "medium" if available_count == 2 else "low"
+                )
             )
-            total_weight = own_weight + competitor_weights
-            market_share_by_product[product_id] = (
-                own_weight
-                / total_weight
-                * Decimal("100")
-            ).quantize(
-                Decimal("0.01"),
-                rounding=ROUND_HALF_UP,
+            market_share_estimates.append(
+                ProductMarketShareEstimate(
+                    business_product_id=product_id,
+                    product_name=business_product.name,
+                    own_price=own_price,
+                    competitor_count=len(product_records),
+                    available_competitor_count=available_count,
+                    lowest_competitor_price=(
+                        min(available_prices) if available_prices else None
+                    ),
+                    estimated_own_market_share_percentage=(
+                        market_share_by_product[product_id]
+                    ),
+                    confidence=confidence,
+                )
             )
 
         items: list[CompetitorInsightResponse] = []
@@ -1331,6 +1369,15 @@ class SMEService:
             if market_shares
             else None
         )
+        market_share_coverage = (
+            (
+                Decimal(len(market_shares))
+                / Decimal(len(records_by_product))
+                * Decimal("100")
+            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            if records_by_product
+            else Decimal("0.00")
+        )
 
         return CompetitorIntelligenceResponse(
             organization_id=organization_id,
@@ -1343,12 +1390,16 @@ class SMEService:
                 estimated_average_market_share_percentage=(
                     average_market_share
                 ),
+                market_share_products_estimated=len(market_shares),
+                market_share_coverage_percentage=market_share_coverage,
                 risk_threshold_percentage=risk_threshold_percentage,
                 estimation_note=(
-                    "Market share is a transparent price-competitiveness "
-                    "estimate based on inverse prices, not marketplace "
-                    "sales-volume data."
+                    "Estimated own share uses inverse-price weighting "
+                    "across your product and its currently available "
+                    "monitored competitors. It is a price-competitiveness "
+                    "proxy, not actual marketplace sales-volume share."
                 ),
             ),
+            market_share_estimates=market_share_estimates,
             items=items,
         )

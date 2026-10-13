@@ -95,7 +95,7 @@ function OrganizationForm({
     <form
       className={
         compact
-          ? "space-y-5"
+          ? "grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)_auto] lg:items-start"
           : "mx-auto mt-8 max-w-2xl space-y-6"
       }
       onSubmit={onSubmit}
@@ -122,7 +122,7 @@ function OrganizationForm({
         />
 
         <p className="mt-2 text-xs leading-5 text-slate-500">
-          Ye naam SME dashboard aur business reports mein show hoga.
+          This name appears on the SME dashboard and business reports.
         </p>
       </div>
 
@@ -149,24 +149,24 @@ function OrganizationForm({
         />
       </div>
 
-      {submitError ? (
-        <div
-          className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold leading-6 text-red-700"
-          role="alert"
-        >
-          {submitError}
-        </div>
-      ) : null}
-
       <button
         type="submit"
         disabled={isSubmitting}
-        className="inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-blue-600 px-5 text-sm font-black text-white shadow-lg shadow-blue-600/20 transition hover:-translate-y-0.5 hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+        className={`inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-blue-600 px-6 text-sm font-black text-white shadow-lg shadow-blue-600/20 transition hover:-translate-y-0.5 hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 ${compact ? "lg:mt-7 lg:min-w-60" : ""}`}
       >
         {isSubmitting
           ? "Creating organization..."
           : "Create business organization"}
       </button>
+
+      {submitError ? (
+        <div
+          className={`rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold leading-6 text-red-700 ${compact ? "lg:col-span-3" : ""}`}
+          role="alert"
+        >
+          {submitError}
+        </div>
+      ) : null}
     </form>
   );
 }
@@ -191,10 +191,9 @@ function EmptyOrganizationState({
           </h2>
 
           <p className="mt-5 max-w-xl text-sm leading-7 text-slate-300 sm:text-base">
-            Apni organization create karne ke baad tum business
-            products add kar sako ge, competitor marketplace listings
-            monitor kar sako ge aur pricing intelligence dashboard use
-            kar sako ge.
+            Create an organization to add business products, monitor
+            competitor marketplace listings and use the pricing
+            intelligence dashboard.
           </p>
 
           <div className="mt-9 space-y-4">
@@ -229,8 +228,8 @@ function EmptyOrganizationState({
           </h3>
 
           <p className="mt-3 text-sm leading-7 text-slate-500">
-            Abhi sirf basic information required hai. Products aur
-            competitors aglay steps mein add honge.
+            Only basic information is required now. Products and
+            competitors can be added in the next steps.
           </p>
 
           <OrganizationForm
@@ -527,6 +526,33 @@ function SMEPage() {
               </div>
             ) : null}
           </div>
+
+          {!isLoading && !loadError && organizations.length > 0 ? (
+            <section className="mt-9 rounded-3xl border border-blue-100 bg-gradient-to-r from-blue-50 via-white to-violet-50 p-6 shadow-sm sm:p-7 lg:p-8">
+              <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between lg:mb-7">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-blue-600">
+                    Add another business
+                  </p>
+                  <h2 className="mt-2 text-xl font-black tracking-[-0.03em] text-slate-950">
+                    Create a new shop workspace
+                  </h2>
+                </div>
+                <p className="max-w-xl text-sm leading-6 text-slate-600 sm:text-right">
+                  Keep each shop&apos;s products, inventory and competitor watchlist separate.
+                </p>
+              </div>
+
+              <OrganizationForm
+                form={organizationForm}
+                setForm={setOrganizationForm}
+                onSubmit={handleCreateOrganization}
+                isSubmitting={isSubmitting}
+                submitError={submitError}
+                compact
+              />
+            </section>
+          ) : null}
         </div>
       </section>
 
@@ -643,32 +669,6 @@ function SMEPage() {
   </>
 ) : null}
 
-            <section className="mt-8 grid gap-7 rounded-3xl border border-slate-200 bg-white p-7 shadow-sm lg:grid-cols-[0.8fr_1.2fr] lg:p-9">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.18em] text-blue-600">
-                  Additional business
-                </p>
-
-                <h2 className="mt-3 text-2xl font-black tracking-[-0.03em] text-slate-950">
-                  Create another organization
-                </h2>
-
-                <p className="mt-4 text-sm leading-7 text-slate-600">
-                  Multiple businesses ko separate products, inventory
-                  aur competitor watchlists ke saath manage kiya ja
-                  sakta hai.
-                </p>
-              </div>
-
-              <OrganizationForm
-                form={organizationForm}
-                setForm={setOrganizationForm}
-                onSubmit={handleCreateOrganization}
-                isSubmitting={isSubmitting}
-                submitError={submitError}
-                compact
-              />
-            </section>
           </>
         ) : null}
       </div>

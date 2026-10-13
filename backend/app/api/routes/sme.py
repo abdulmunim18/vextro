@@ -745,7 +745,7 @@ def simulate_pricing_scenarios_endpoint(
     current_user: User = Depends(sme_or_admin),
     database_session: Session = Depends(get_db),
 ) -> PricingAdvisorResponse:
-    """Compare -5%, unchanged and +5% advisory scenarios."""
+    """Compare a user-selected decrease, no change and increase."""
 
     return pricing_advisor_service.simulate(
         database_session,

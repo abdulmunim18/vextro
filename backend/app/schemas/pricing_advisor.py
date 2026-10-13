@@ -48,6 +48,17 @@ class PricingScenarioInput(BaseModel):
             "price change."
         ),
     )
+    scenario_range_percentage: Decimal = Field(
+        default=Decimal("5.00"),
+        gt=0,
+        lt=100,
+        max_digits=5,
+        decimal_places=2,
+        description=(
+            "User-selected percentage used to compare an equal price "
+            "decrease and increase against the current price."
+        ),
+    )
 
     @model_validator(mode="after")
     def require_manual_or_product_prices(self) -> "PricingScenarioInput":

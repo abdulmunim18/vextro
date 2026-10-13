@@ -887,6 +887,11 @@ def test_sme_can_manage_competitor_watchlist(
     assert intelligence_response.status_code == 200
     intelligence = intelligence_response.json()
     assert intelligence["summary"]["tracked_competitors"] == 1
+    assert intelligence["summary"]["market_share_products_estimated"] == 1
+    assert intelligence["summary"]["market_share_coverage_percentage"] == "100.00"
+    assert len(intelligence["market_share_estimates"]) == 1
+    assert intelligence["market_share_estimates"][0]["available_competitor_count"] == 1
+    assert intelligence["market_share_estimates"][0]["estimated_own_market_share_percentage"] is not None
     assert len(intelligence["items"]) == 1
     assert intelligence["items"][0]["price_gap"] == "-2999.00"
 
@@ -900,11 +905,16 @@ def test_sme_can_manage_competitor_watchlist(
             "business_product_id": business_product_id,
             "baseline_units": 100,
             "demand_sensitivity": 1,
+            "scenario_range_percentage": 12.5,
         },
     )
 
     assert pricing_response.status_code == 200
     assert len(pricing_response.json()["scenarios"]) == 3
+    assert [
+        Decimal(scenario["price_change_percentage"])
+        for scenario in pricing_response.json()["scenarios"]
+    ] == [Decimal("-12.5"), Decimal("0"), Decimal("12.5")]
 
     for report_format, content_type in (
         ("pdf", "application/pdf"),

@@ -15,21 +15,29 @@ const quickPrompts = [
   "80k ke andar best phone recommend karo",
 ];
 
+const activeConversationStorageKey = "vextro_assistant_active_conversation";
+
 function AssistantPage() {
   const [conversations, setConversations] = useState([]);
   const [activeConversation, setActiveConversation] = useState(null);
   const [draft, setDraft] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState("");
-  const endRef = useRef(null);
+  const messagesRef = useRef(null);
+  const sendLockRef = useRef(false);
+  const skipAutoScrollRef = useRef(false);
 
   const loadConversation = useCallback(async (conversationId) => {
     setError("");
 
     try {
-      setActiveConversation(
-        await getAssistantConversation(conversationId),
+      const conversation = await getAssistantConversation(conversationId);
+      setActiveConversation(conversation);
+      window.localStorage.setItem(
+        activeConversationStorageKey,
+        String(conversation.id),
       );
     } catch (requestError) {
       setError(getApiErrorMessage(requestError));
@@ -46,7 +54,15 @@ function AssistantPage() {
       setConversations(items);
 
       if (items[0]) {
-        await loadConversation(items[0].id);
+        const storedConversationId = Number(
+          window.localStorage.getItem(activeConversationStorageKey),
+        );
+        const preferredConversation = items.find(
+          (conversation) => conversation.id === storedConversationId,
+        );
+        await loadConversation(preferredConversation?.id || items[0].id);
+      } else {
+        window.localStorage.removeItem(activeConversationStorageKey);
       }
     } catch (requestError) {
       setError(getApiErrorMessage(requestError));
@@ -61,23 +77,70 @@ function AssistantPage() {
   }, [loadWorkspace]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    const messagesElement = messagesRef.current;
+    if (!messagesElement) {
+      return;
+    }
+    if (skipAutoScrollRef.current) {
+      skipAutoScrollRef.current = false;
+      return;
+    }
+    messagesElement.scrollTo({
+      top: messagesElement.scrollHeight,
+      behavior: "smooth",
+    });
   }, [activeConversation?.messages]);
 
   async function handleNewConversation() {
+    window.localStorage.removeItem(activeConversationStorageKey);
     setActiveConversation(null);
     setDraft("");
     setError("");
+  }
+
+  async function handleLoadOlderMessages() {
+    const currentMessages = activeConversation?.messages || [];
+    const oldestMessageId = currentMessages[0]?.id;
+    if (!activeConversation?.id || !oldestMessageId || isLoadingOlder) {
+      return;
+    }
+
+    const messagesElement = messagesRef.current;
+    const previousHeight = messagesElement?.scrollHeight || 0;
+    setIsLoadingOlder(true);
+    setError("");
+    try {
+      const olderPage = await getAssistantConversation(
+        activeConversation.id,
+        { beforeMessageId: oldestMessageId },
+      );
+      skipAutoScrollRef.current = true;
+      setActiveConversation((current) => ({
+        ...current,
+        ...olderPage,
+        messages: [...(olderPage.messages || []), ...(current?.messages || [])],
+      }));
+      window.requestAnimationFrame(() => {
+        if (messagesElement) {
+          messagesElement.scrollTop = messagesElement.scrollHeight - previousHeight;
+        }
+      });
+    } catch (requestError) {
+      setError(getApiErrorMessage(requestError));
+    } finally {
+      setIsLoadingOlder(false);
+    }
   }
 
   async function handleSend(event) {
     event?.preventDefault();
     const content = draft.trim();
 
-    if (!content || isSending) {
+    if (!content || isSending || sendLockRef.current) {
       return;
     }
 
+    sendLockRef.current = true;
     setIsSending(true);
     setError("");
 
@@ -97,11 +160,16 @@ function AssistantPage() {
         getAssistantConversations(),
       ]);
       setActiveConversation(detail);
+      window.localStorage.setItem(
+        activeConversationStorageKey,
+        String(detail.id),
+      );
       setConversations(listData.items || []);
     } catch (requestError) {
       setDraft(content);
       setError(getApiErrorMessage(requestError));
     } finally {
+      sendLockRef.current = false;
       setIsSending(false);
     }
   }
@@ -113,7 +181,7 @@ function AssistantPage() {
   const messages = activeConversation?.messages || [];
 
   return (
-    <section className="min-h-[calc(100vh-145px)] bg-slate-50 py-10">
+    <section className="min-h-[calc(100vh-145px)] overflow-x-hidden bg-slate-50 py-10">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="mb-8">
           <p className="text-xs font-black uppercase tracking-[0.18em] text-blue-600">Grounded shopping assistant</p>
@@ -121,8 +189,8 @@ function AssistantPage() {
           <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">Responses use VEXTRO catalog, marketplace offers and price history. The assistant will clarify missing products instead of inventing prices.</p>
         </div>
 
-        <div className="grid min-h-[680px] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-xl lg:grid-cols-[300px_1fr]">
-          <aside className="border-b border-slate-200 bg-slate-950 p-5 text-white lg:border-b-0 lg:border-r">
+        <div className="grid min-h-[680px] min-w-0 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-xl lg:h-[calc(100vh-12rem)] lg:max-h-[900px] lg:grid-cols-[300px_minmax(0,1fr)]">
+          <aside className="border-b border-slate-200 bg-slate-950 p-5 text-white lg:overflow-y-auto lg:border-b-0 lg:border-r">
             <button type="button" onClick={handleNewConversation} className="min-h-12 w-full rounded-xl bg-blue-600 px-4 text-sm font-black">+ New conversation</button>
             <p className="mt-6 text-xs font-black uppercase tracking-wide text-slate-400">Conversation history</p>
             <div className="mt-3 grid gap-2">
@@ -135,8 +203,8 @@ function AssistantPage() {
             </div>
           </aside>
 
-          <div className="flex min-h-[680px] flex-col">
-            <div className="flex-1 overflow-y-auto p-5 sm:p-8">
+          <div className="flex min-h-[680px] min-w-0 flex-col lg:min-h-0">
+            <div ref={messagesRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5 sm:p-8">
               {isLoading ? <div className="h-36 animate-pulse rounded-2xl bg-slate-100" /> : null}
               {!isLoading && messages.length === 0 ? (
                 <div className="mx-auto max-w-3xl py-10 text-center">
@@ -148,10 +216,18 @@ function AssistantPage() {
                 </div>
               ) : null}
 
+              {activeConversation?.has_more_messages ? (
+                <div className="mb-5 text-center">
+                  <button type="button" onClick={handleLoadOlderMessages} disabled={isLoadingOlder} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-black text-slate-700 transition hover:border-blue-400 hover:text-blue-700 disabled:opacity-50">
+                    {isLoadingOlder ? "Loading..." : "Load older messages"}
+                  </button>
+                </div>
+              ) : null}
+
               <div className="space-y-5">
                 {messages.map((message) => (
                   <article key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                    <div className={`max-w-[85%] rounded-2xl px-5 py-4 text-sm leading-7 ${message.role === "user" ? "bg-blue-600 text-white" : "border border-slate-200 bg-slate-50 text-slate-800"}`}>
+                    <div className={`max-w-[85%] break-words rounded-2xl px-5 py-4 text-sm leading-7 [overflow-wrap:anywhere] ${message.role === "user" ? "bg-blue-600 text-white" : "border border-slate-200 bg-slate-50 text-slate-800"}`}>
                       {message.role === "assistant" && message.intent ? <span className="mb-2 inline-flex rounded-full bg-blue-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-blue-700">{message.intent.replaceAll("_", " ")}</span> : null}
                       <p>{message.content}</p>
                       {message.role === "assistant" && Array.isArray(message.grounded_data?.recommendations) && message.grounded_data.recommendations.length > 0 ? (
@@ -201,11 +277,10 @@ function AssistantPage() {
                           </table>
                         </div>
                       ) : null}
-                      {message.role === "assistant" && message.data_timestamp ? <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Data checked {new Date(message.data_timestamp).toLocaleString("en-PK")}</p> : null}
+                      {message.role === "assistant" && message.data_timestamp ? <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Latest source data {new Date(message.data_timestamp).toLocaleString("en-PK")}</p> : null}
                     </div>
                   </article>
                 ))}
-                <div ref={endRef} />
               </div>
             </div>
 

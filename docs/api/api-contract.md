@@ -1315,9 +1315,9 @@ When no active alert exists, the endpoint returns `is_personalized: false`, pres
 
 ## SME competitor intelligence and pricing
 
-- `GET /api/v1/sme/organizations/{organization_id}/competitor-intelligence` returns monitored prices, own-price gaps, threshold risks, price timelines and a clearly labelled price-competitiveness market-share estimate.
-- `GET /api/v1/sme/organizations/{organization_id}/competitor-intelligence/report?format=pdf|xlsx` exports the authorized organization's report.
-- `POST /api/v1/sme/organizations/{organization_id}/pricing/scenarios` simulates -5%, unchanged and +5% prices. It never updates a marketplace price.
+- `GET /api/v1/sme/organizations/{organization_id}/competitor-intelligence` returns monitored prices, own-price gaps, threshold risks, price timelines and product-level price-competitiveness market-share estimates. The response includes estimate coverage, available/tracked competitor counts, confidence labels and the lowest available competitor price. Only currently available monitored listings contribute to the inverse-price estimate; it is explicitly not actual sales-volume share.
+- `GET /api/v1/sme/organizations/{organization_id}/competitor-intelligence/report?format=pdf|xlsx` exports the authorized organization's report, including a product-level market-share section.
+- `POST /api/v1/sme/organizations/{organization_id}/pricing/scenarios` uses `scenario_range_percentage` to simulate an equal decrease, no change and increase. The value must be greater than `0` and less than `100`; it defaults to `5` for backwards compatibility. It never updates a marketplace price.
 
 Pricing example:
 
@@ -1325,7 +1325,8 @@ Pricing example:
 {
   "business_product_id": 12,
   "baseline_units": 100,
-  "demand_sensitivity": 1.0
+  "demand_sensitivity": 1.0,
+  "scenario_range_percentage": 12.5
 }
 ```
 

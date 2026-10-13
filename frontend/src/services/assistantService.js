@@ -15,9 +15,18 @@ export async function getAssistantConversations() {
   return response.data;
 }
 
-export async function getAssistantConversation(conversationId) {
+export async function getAssistantConversation(
+  conversationId,
+  { beforeMessageId, messageLimit = 100 } = {},
+) {
   const response = await apiClient.get(
     `/assistant/conversations/${conversationId}`,
+    {
+      params: {
+        message_limit: messageLimit,
+        ...(beforeMessageId ? { before_message_id: beforeMessageId } : {}),
+      },
+    },
   );
   return response.data;
 }
