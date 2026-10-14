@@ -7,6 +7,8 @@ import {
 } from "../services/catalogService";
 import { formatDate } from "../utils/productDisplay";
 import CommunitySourceBox from "./CommunitySourceBox";
+import DarazRatingBox from "./DarazRatingBox";
+import { summariseDarazRatings } from "../utils/darazRatings";
 
 // The reviews API only paginates in one direction, so we pull a generous
 // first page and split it client-side by platform. 100 is the server's
@@ -711,6 +713,23 @@ function ReviewsPanel({ productId, listings = [], platformNames }) {
     });
   }, [reviewsResponse, analysis, listings, platformNames]);
 
+  // Daraz gets its own box built from its published ratings; it has no
+  // review text VEXTRO may collect. Shown whenever Daraz lists the phone.
+  const darazSummary = useMemo(() => {
+    const darazListings = listings.filter(
+      (listing) =>
+        String(platformNames?.get(listing.platform_id) ?? "").toLowerCase() ===
+        "daraz",
+    );
+
+    return darazListings.length > 0
+      ? summariseDarazRatings(darazListings)
+      : null;
+  }, [listings, platformNames]);
+
+  const boxCount =
+    platformGroups.length + communitySources.length + (darazSummary ? 1 : 0);
+
   const comparesMarketplaces = platformGroups.length > 1;
   // Counted from the boxes on screen, so a marketplace without a box
   // does not inflate the figure.
@@ -718,11 +737,12 @@ function ReviewsPanel({ productId, listings = [], platformNames }) {
     (sum, group) => sum + group.total,
     0,
   );
-  const marketplaceTotal = platformGroups.reduce(
-    (sum, group) =>
-      sum + Math.max(group.marketplace?.count ?? 0, group.total),
-    0,
-  );
+  const marketplaceTotal =
+    platformGroups.reduce(
+      (sum, group) =>
+        sum + Math.max(group.marketplace?.count ?? 0, group.total),
+      0,
+    ) + (darazSummary?.count ?? 0);
 
   if (isLoading && reviewsResponse === null) {
     return (
@@ -783,9 +803,11 @@ function ReviewsPanel({ productId, listings = [], platformNames }) {
 
       <div
         className={`mt-6 grid items-start gap-5 ${
-          platformGroups.length + communitySources.length > 1
-            ? "lg:grid-cols-2"
-            : ""
+          boxCount > 2
+            ? "lg:grid-cols-2 xl:grid-cols-3"
+            : boxCount > 1
+              ? "lg:grid-cols-2"
+              : ""
         }`}
       >
         {platformGroups.map((group) =>
@@ -804,6 +826,7 @@ function ReviewsPanel({ productId, listings = [], platformNames }) {
             />
           ),
         )}
+        {darazSummary ? <DarazRatingBox summary={darazSummary} /> : null}
         {communitySources.map((source) => (
           <CommunitySourceBox key={source.source} source={source} />
         ))}
