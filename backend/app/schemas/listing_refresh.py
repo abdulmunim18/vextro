@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 # busy           too many refreshes are running; the scheduled crawl covers it
 # disabled       on-demand refresh is switched off
 # failed         the refresh could not be started
+# backoff        a recent targeted crawl failed; wait before retrying it
 RefreshStatus = Literal[
     "started",
     "in_progress",
@@ -21,6 +22,7 @@ RefreshStatus = Literal[
     "busy",
     "disabled",
     "failed",
+    "backoff",
 ]
 
 

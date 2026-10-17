@@ -10,6 +10,7 @@ import RouteLoadingState from "../components/RouteLoadingState";
 import { getProductById } from "../services/catalogService";
 import {
   deactivatePriceAlert,
+  deletePriceAlert,
   getPriceAlerts,
   updatePriceAlert,
 } from "../services/priceAlertService";
@@ -140,7 +141,7 @@ function PriceAlertsPage() {
 
   const statistics = useMemo(() => {
     const active = alerts.filter(
-      (alert) => alert.is_active,
+      (alert) => alert.is_active && !alert.is_triggered,
     ).length;
 
     const paused = alerts.filter(
@@ -309,6 +310,49 @@ function PriceAlertsPage() {
     }
   }
 
+  async function handleDelete(alert) {
+    const confirmed = window.confirm(
+      "Permanently delete this price alert? This action cannot be undone.",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setProcessingAlertId(alert.id);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      await deletePriceAlert(alert.id);
+
+      setAlerts((currentAlerts) =>
+        currentAlerts.filter(
+          (currentAlert) => currentAlert.id !== alert.id,
+        ),
+      );
+
+      setDraftPrices((currentPrices) => {
+        const nextPrices = { ...currentPrices };
+        delete nextPrices[alert.id];
+        return nextPrices;
+      });
+
+      setSuccessMessage(
+        "Price alert deleted permanently.",
+      );
+    } catch (error) {
+      setErrorMessage(
+        getApiErrorMessage(
+          error,
+          "Unable to delete this alert.",
+        ),
+      );
+    } finally {
+      setProcessingAlertId(null);
+    }
+  }
+
   if (isLoading) {
     return (
       <RouteLoadingState message="Loading your price alerts..." />
@@ -331,8 +375,8 @@ function PriceAlertsPage() {
             </h1>
 
             <p className="mt-5 max-w-2xl text-sm leading-7 text-vextro-muted sm:text-base">
-              Review target prices, pause alerts and reactivate
-              them whenever you are ready to continue tracking.
+              Review target prices, pause, reactivate or permanently
+              delete alerts whenever you need to.
             </p>
           </div>
 
@@ -437,14 +481,18 @@ function PriceAlertsPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <span
                           className={`rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-wide ${
-                            alert.is_active
-                              ? "bg-emerald-50 text-emerald-700"
+                            alert.is_triggered
+                              ? "bg-violet-100 text-violet-700"
+                              : alert.is_active
+                                ? "bg-emerald-50 text-emerald-700"
                               : "bg-slate-100 text-slate-600"
                           }`}
                         >
-                          {alert.is_active
-                            ? "Active"
-                            : "Paused"}
+                          {alert.is_triggered
+                            ? "Completed"
+                            : alert.is_active
+                              ? "Active"
+                              : "Paused"}
                         </span>
 
                         {alert.is_triggered ? (
@@ -588,6 +636,15 @@ function PriceAlertsPage() {
                           Reactivate Alert
                         </button>
                       )}
+
+                      <button
+                        className="mt-3 min-h-11 w-full rounded-xl border border-red-200 bg-red-50 px-4 text-sm font-black text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        type="button"
+                        disabled={isProcessing}
+                        onClick={() => handleDelete(alert)}
+                      >
+                        Delete Alert
+                      </button>
                     </div>
                   </div>
                 </article>

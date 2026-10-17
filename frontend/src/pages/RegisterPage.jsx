@@ -10,7 +10,6 @@ function RegisterPage() {
   const { register } = useAuth();
 
   const [formData, setFormData] = useState({
-    full_name: "",
     email: "",
     account_type: "consumer",
     password: "",
@@ -19,6 +18,7 @@ function RegisterPage() {
 
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showPasswords, setShowPasswords] = useState(false);
 
   function handleChange(event) {
     const { name, value } = event.target;
@@ -52,7 +52,6 @@ function RegisterPage() {
 
     try {
       const pendingRegistration = await register({
-        full_name: formData.full_name.trim(),
         email: formData.email.trim().toLowerCase(),
         password: formData.password,
         account_type: formData.account_type,
@@ -168,8 +167,9 @@ function RegisterPage() {
               </h2>
 
               <p className="mt-4 text-sm leading-7 text-vextro-muted">
-                Enter your information and select the account
-                type that matches your needs.
+                Enter your email and select the account type that
+                matches your needs. Your display name is created
+                automatically from your email.
               </p>
             </div>
 
@@ -186,29 +186,6 @@ function RegisterPage() {
               className="grid gap-5"
               onSubmit={handleSubmit}
             >
-              <div className="grid gap-2">
-                <label
-                  className="text-sm font-bold text-vextro-ink"
-                  htmlFor="register-name"
-                >
-                  Full name
-                </label>
-
-                <input
-                  id="register-name"
-                  className="min-h-13 w-full rounded-xl border border-vextro-border bg-white px-4 text-sm text-vextro-ink outline-none transition placeholder:text-slate-400 focus:border-vextro-primary focus:ring-4 focus:ring-blue-100"
-                  name="full_name"
-                  type="text"
-                  value={formData.full_name}
-                  onChange={handleChange}
-                  placeholder="Enter your full name"
-                  autoComplete="name"
-                  minLength={2}
-                  maxLength={120}
-                  required
-                />
-              </div>
-
               <div className="grid gap-2">
                 <label
                   className="text-sm font-bold text-vextro-ink"
@@ -273,7 +250,7 @@ function RegisterPage() {
                     id="register-password"
                     className="min-h-13 w-full rounded-xl border border-vextro-border bg-white px-4 text-sm text-vextro-ink outline-none transition placeholder:text-slate-400 focus:border-vextro-primary focus:ring-4 focus:ring-blue-100"
                     name="password"
-                    type="password"
+                    type={showPasswords ? "text" : "password"}
                     value={formData.password}
                     onChange={handleChange}
                     placeholder="Minimum 8 characters"
@@ -296,7 +273,7 @@ function RegisterPage() {
                     id="confirm-password"
                     className="min-h-13 w-full rounded-xl border border-vextro-border bg-white px-4 text-sm text-vextro-ink outline-none transition placeholder:text-slate-400 focus:border-vextro-primary focus:ring-4 focus:ring-blue-100"
                     name="confirm_password"
-                    type="password"
+                    type={showPasswords ? "text" : "password"}
                     value={formData.confirm_password}
                     onChange={handleChange}
                     placeholder="Repeat password"
@@ -307,6 +284,18 @@ function RegisterPage() {
                   />
                 </div>
               </div>
+
+              <label className="inline-flex w-fit cursor-pointer items-center gap-2 text-xs font-semibold text-vextro-muted">
+                <input
+                  className="size-4 rounded border-vextro-border accent-vextro-primary"
+                  type="checkbox"
+                  checked={showPasswords}
+                  onChange={(event) =>
+                    setShowPasswords(event.target.checked)
+                  }
+                />
+                Show passwords
+              </label>
 
               <div className="flex items-start gap-3 rounded-xl bg-blue-50 px-4 py-3 text-xs leading-5 text-blue-700">
                 <span className="mt-0.5">ⓘ</span>

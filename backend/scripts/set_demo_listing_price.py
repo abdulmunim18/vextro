@@ -20,6 +20,7 @@ from sqlalchemy import func, select
 
 from app.core.database import SessionLocal
 from app.models.canonical_product import CanonicalProduct
+from app.models.notification import Notification
 from app.models.notification_event import NotificationEvent
 from app.models.platform import Platform
 from app.models.price_history import PriceHistory
@@ -164,9 +165,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         new_event_ids = list(
             database_session.scalars(
-                select(NotificationEvent.id).where(
+                select(NotificationEvent.id)
+                .join(
+                    Notification,
+                    Notification.id == NotificationEvent.notification_id,
+                )
+                .where(
                     NotificationEvent.id > previous_max_event_id,
-                    NotificationEvent.canonical_product_id == product.id,
+                    Notification.canonical_product_id == product.id,
                 )
             ).all()
         )

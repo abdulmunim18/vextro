@@ -22,6 +22,7 @@ from app.repositories.user_repository import (
     get_user_by_id,
     link_oauth_account,
 )
+from app.services.user_name_service import derive_full_name_from_email
 
 
 class UnsupportedOAuthProviderError(Exception):
@@ -107,7 +108,7 @@ def build_oauth_authorization_url(
         "client_id": client_id,
         "redirect_uri": oauth_callback_url(provider),
         "response_type": "code",
-        "scope": "openid email profile",
+        "scope": "openid email",
         "state": state,
         "prompt": "select_account",
     }
@@ -145,7 +146,7 @@ def _fetch_google_identity(code: str) -> OAuthIdentity:
         provider="google",
         subject=str(profile["sub"]),
         email=str(profile["email"]).strip().lower(),
-        full_name=str(profile.get("name") or profile["email"].split("@")[0]),
+        full_name=derive_full_name_from_email(str(profile["email"])),
     )
 
 

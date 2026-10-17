@@ -6,6 +6,31 @@ import {
 import { getApiErrorMessage } from "../utils/apiError";
 import { formatPrice } from "../utils/productDisplay";
 
+function formatPercentage(value) {
+  return new Intl.NumberFormat("en-PK", {
+    maximumFractionDigits: 2,
+  }).format(Math.abs(Number(value) || 0));
+}
+
+function describeCompetitorGap(value) {
+  const numericGap = Number(value) || 0;
+  const percentage = formatPercentage(numericGap);
+
+  if (Math.abs(numericGap) < 0.01) {
+    return "Matches competitor";
+  }
+
+  return numericGap < 0
+    ? `${percentage}% below competitor`
+    : `${percentage}% above competitor`;
+}
+
+function formatWholeUnits(value) {
+  return new Intl.NumberFormat("en-PK", {
+    maximumFractionDigits: 0,
+  }).format(Math.max(0, Math.round(Number(value) || 0)));
+}
+
 function SMEPricingAdvisor({
   organizationId,
   productsRevision = 0,
@@ -83,7 +108,7 @@ function SMEPricingAdvisor({
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="mb-2 block text-sm font-bold" htmlFor="baseline-units">Expected units</label>
+                <label className="mb-2 block text-sm font-bold" htmlFor="baseline-units">Expected units per period</label>
                 <input id="baseline-units" type="number" min="1" step="1" value={baselineUnits} onChange={(event) => setBaselineUnits(event.target.value)} className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-950 caret-slate-950 [color-scheme:light]" />
               </div>
               <div>
@@ -91,6 +116,9 @@ function SMEPricingAdvisor({
                 <input id="demand-sensitivity" type="number" min="0" max="5" step="0.1" value={sensitivity} onChange={(event) => setSensitivity(event.target.value)} className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-950 caret-slate-950 [color-scheme:light]" />
               </div>
             </div>
+            <p className="-mt-2 text-xs leading-5 text-slate-400">
+              Sensitivity 1 means a 1% price increase assumes a 1% decrease in demand for the same period. Expected sales are rounded to the nearest whole unit.
+            </p>
             <div>
               <label className="mb-2 block text-sm font-bold" htmlFor="scenario-range">Price adjustment percentage</label>
               <div className="relative">
@@ -111,19 +139,49 @@ function SMEPricingAdvisor({
               <p className="text-xs font-black uppercase tracking-[0.18em] text-blue-600">Recommendation</p>
               <h3 className="mt-3 text-2xl font-black">{result.product_name}</h3>
               <p className="mt-3 text-sm leading-7 text-slate-600">{result.recommendation}</p>
+              <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                  <span className="text-[10px] font-black uppercase tracking-wide text-slate-500">Current price</span>
+                  <strong className="mt-1 block text-sm font-black">{formatPrice(result.current_price, result.currency)}</strong>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                  <span className="text-[10px] font-black uppercase tracking-wide text-slate-500">Cost price</span>
+                  <strong className="mt-1 block text-sm font-black">{formatPrice(result.cost_price, result.currency)}</strong>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-4">
+                  <span className="text-[10px] font-black uppercase tracking-wide text-slate-500">Lowest competitor</span>
+                  <strong className="mt-1 block text-sm font-black">{formatPrice(result.competitor_price, result.currency)}</strong>
+                </div>
+              </div>
               <div className="mt-6 grid gap-4 xl:grid-cols-3">
-                {result.scenarios.map((scenario) => (
-                  <article key={scenario.price_change_percentage} className={`rounded-2xl border bg-white p-5 ${scenario.price_change_percentage === result.recommended_change_percentage ? "border-blue-500 ring-4 ring-blue-100" : "border-slate-200"}`}>
+                {result.scenarios.map((scenario) => {
+                  const isRecommended =
+                    result.recommended_change_percentage !== null
+                    && Number(scenario.price_change_percentage)
+                      === Number(result.recommended_change_percentage);
+
+                  return (
+                  <article key={scenario.price_change_percentage} className={`rounded-2xl border bg-white p-5 ${isRecommended ? "border-blue-500 ring-4 ring-blue-100" : "border-slate-200"}`}>
                     <span className="text-xs font-black uppercase text-slate-500">{Number(scenario.price_change_percentage) > 0 ? "+" : ""}{scenario.price_change_percentage}%</span>
                     <strong className="mt-2 block text-xl font-black">{formatPrice(scenario.proposed_price, result.currency)}</strong>
                     <dl className="mt-4 space-y-2 text-xs">
-                      <div className="flex justify-between gap-3"><dt className="text-slate-500">Units</dt><dd className="font-bold">{scenario.expected_units}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-slate-500">Units per period</dt><dd className="font-bold">{formatWholeUnits(scenario.expected_units)}</dd></div>
                       <div className="flex justify-between gap-3"><dt className="text-slate-500">Gross profit</dt><dd className="font-bold">{formatPrice(scenario.gross_profit, result.currency)}</dd></div>
-                      <div className="flex justify-between gap-3"><dt className="text-slate-500">Competitor gap</dt><dd className="font-bold">{scenario.competitor_gap_percentage}%</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-slate-500">Gross margin</dt><dd className="font-bold">{scenario.gross_margin_percentage}%</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-slate-500">Competitor position</dt><dd className="text-right font-bold">{describeCompetitorGap(scenario.competitor_gap_percentage)}</dd></div>
                     </dl>
                     <span className={`mt-4 inline-flex rounded-full px-3 py-1 text-[10px] font-black uppercase ${scenario.risk_level === "high" ? "bg-red-100 text-red-700" : scenario.risk_level === "medium" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{scenario.risk_level} risk</span>
+                    <ul className="mt-3 space-y-1.5 text-xs leading-5 text-slate-600">
+                      {(scenario.risk_reasons.length > 0
+                        ? scenario.risk_reasons
+                        : ["Meets the configured margin and competitor-price safety thresholds."]
+                      ).map((reason) => (
+                        <li key={reason}>• {reason}</li>
+                      ))}
+                    </ul>
                   </article>
-                ))}
+                  );
+                })}
               </div>
               <p className="mt-5 text-xs leading-6 text-slate-500">{result.disclaimer}</p>
             </>

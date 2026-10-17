@@ -22,6 +22,7 @@ from app.services.price_alert_service import (
     PriceAlertTargetNotFoundError,
     create_user_price_alert,
     deactivate_user_price_alert,
+    delete_user_price_alert,
     get_user_price_alert_detail,
     get_user_price_alerts,
     update_user_price_alert,
@@ -196,6 +197,32 @@ def deactivate_price_alert_endpoint(
 
     try:
         return deactivate_user_price_alert(
+            database_session,
+            user_id=current_user.id,
+            alert_id=alert_id,
+        )
+
+    except PriceAlertNotFoundError as error:
+        raise _alert_not_found_exception(error) from error
+
+
+@router.delete(
+    "/{alert_id}/permanent",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_price_alert_endpoint(
+    alert_id: int = Path(
+        ...,
+        ge=1,
+        description="Price alert ID.",
+    ),
+    current_user: User = Depends(consumer_or_admin),
+    database_session: Session = Depends(get_db),
+) -> None:
+    """Permanently delete an alert owned by the authenticated user."""
+
+    try:
+        delete_user_price_alert(
             database_session,
             user_id=current_user.id,
             alert_id=alert_id,

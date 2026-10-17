@@ -36,7 +36,7 @@ class ScrapeRun(Base):
             name="ck_scrape_runs_status_valid",
         ),
         CheckConstraint(
-            "trigger_type IN ('manual', 'scheduler', 'test')",
+            "trigger_type IN ('manual', 'on_demand', 'scheduler', 'test')",
             name="ck_scrape_runs_trigger_type_valid",
         ),
         CheckConstraint(

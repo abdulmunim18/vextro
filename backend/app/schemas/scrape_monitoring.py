@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # Marketplaces, plus guide sites that are crawled and monitored the same
 # way although they have no listings.
 PlatformCode = Literal["daraz", "priceoye", "shophive", "whatmobile"]
-TriggerType = Literal["manual", "scheduler", "test"]
+TriggerType = Literal["manual", "on_demand", "scheduler", "test"]
 RunStatus = Literal["running", "completed", "partial", "failed"]
 ErrorStage = Literal[
     "fetch",

@@ -11,7 +11,8 @@ if (-not $SkipStartupDelay) {
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $pythonPath = Join-Path $repositoryRoot "backend\.venv\Scripts\python.exe"
 $backendDirectory = Join-Path $repositoryRoot "backend"
-$scraperScheduler = Join-Path $repositoryRoot "vextro_scraper\vextro_scraper\scheduler.py"
+$scraperDirectory = Join-Path $repositoryRoot "vextro_scraper"
+$scraperScheduler = Join-Path $scraperDirectory "vextro_scraper\scheduler.py"
 $runtimeDirectory = Join-Path $repositoryRoot ".runtime"
 $schedulerLockPath = Join-Path $runtimeDirectory "scheduler.pid"
 
@@ -19,6 +20,10 @@ New-Item -ItemType Directory -Path $runtimeDirectory -Force | Out-Null
 
 if (-not (Test-Path -LiteralPath $pythonPath)) {
     throw "VEXTRO Python environment is missing: $pythonPath"
+}
+
+if (-not (Test-Path -LiteralPath $scraperScheduler)) {
+    throw "VEXTRO scraper scheduler is missing: $scraperScheduler"
 }
 
 if (Test-Path -LiteralPath $schedulerLockPath) {
@@ -112,8 +117,21 @@ try {
 
     $env:VEXTRO_SCRAPE_TRIGGER = "scheduler"
 
-    & $pythonPath -u $scraperScheduler `
-        *>> (Join-Path $runtimeDirectory "scheduler.log")
+    # Run the scheduler as a package module from the Scrapy project root.
+    # Running scheduler.py directly makes Python search from the inner package
+    # directory and can fail to resolve imports such as vextro_scraper.*.
+    Push-Location $scraperDirectory
+    try {
+        & $pythonPath -u -m vextro_scraper.scheduler `
+            *>> (Join-Path $runtimeDirectory "scheduler.log")
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "VEXTRO scraper scheduler exited with code $LASTEXITCODE. See .runtime\scheduler.log."
+        }
+    }
+    finally {
+        Pop-Location
+    }
 }
 finally {
     Remove-Item -LiteralPath $schedulerLockPath -Force -ErrorAction SilentlyContinue

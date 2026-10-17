@@ -153,7 +153,7 @@ def build_competitor_xlsx(
         "Own Price",
         "Tracked Competitors",
         "Available Competitors",
-        "Lowest Competitor Price",
+        "Lowest Monitored Price",
         "Estimated Own Share %",
         "Confidence",
     ]
@@ -273,7 +273,7 @@ def build_competitor_pdf(
                 "Product",
                 "Own price",
                 "Available / tracked",
-                "Lowest competitor",
+                "Lowest monitored",
                 "Est. own share %",
                 "Confidence",
             ]

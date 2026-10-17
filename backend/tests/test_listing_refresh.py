@@ -4,8 +4,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.scrape_run import ScrapeRun
 from app.services.listing_refresh_service import (
     TARGETED_SPIDERS,
     TargetedSpider,
@@ -170,6 +173,52 @@ def test_a_lookup_that_found_nothing_is_not_repeated_on_every_visit(
     assert twenty_minutes_later["refreshing"] is False
     assert status_of(over_an_hour_later, "daraz") == "started"
     assert len(launcher.for_spider("daraz_smartphones")) == 2
+
+
+def test_recent_failed_on_demand_run_uses_persistent_backoff(
+    client: TestClient,
+    database_session: Session,
+    sync_context: dict[str, object],
+    launcher: RecordingLauncher,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed targeted crawl is not relaunched on every page visit."""
+
+    monkeypatch.setattr(
+        settings,
+        "on_demand_refresh_failure_backoff_minutes",
+        60,
+    )
+    failed_run = ScrapeRun(
+        platform="priceoye",
+        spider_name="priceoye_smartphones",
+        status="failed",
+        trigger_type="on_demand",
+        parser_version="test",
+        started_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+        finished_at=datetime.now(timezone.utc) - timedelta(minutes=4),
+        error_summary="page_fetch_error=1",
+    )
+    database_session.add(failed_run)
+    database_session.commit()
+
+    try:
+        capture(
+            client,
+            sync_context,
+            platform_code="priceoye",
+            captured_at=FIRST_CAPTURE,
+        )
+
+        result = refresh(client, int(sync_context["product_id"]))
+
+        assert status_of(result, "priceoye") == "backoff"
+        assert launcher.for_spider("priceoye_smartphones") == []
+    finally:
+        database_session.execute(
+            delete(ScrapeRun).where(ScrapeRun.id == failed_run.id),
+        )
+        database_session.commit()
 
 
 def test_recently_confirmed_offers_are_left_alone(

@@ -42,3 +42,9 @@ export async function deactivatePriceAlert(alertId) {
 
   return response.data;
 }
+
+export async function deletePriceAlert(alertId) {
+  await apiClient.delete(
+    `/price-alerts/${alertId}/permanent`,
+  );
+}

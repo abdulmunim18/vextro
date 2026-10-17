@@ -9,11 +9,6 @@ from app.core.security import validate_password_strength
 class UserRegister(BaseModel):
     """Data required to register a Consumer or SME account."""
 
-    full_name: str = Field(
-        min_length=2,
-        max_length=120,
-    )
-
     email: EmailStr
 
     password: str = Field(
@@ -22,18 +17,6 @@ class UserRegister(BaseModel):
     )
 
     account_type: Literal["consumer", "sme"] = "consumer"
-
-    @field_validator("full_name")
-    @classmethod
-    def validate_full_name(cls, value: str) -> str:
-        cleaned_name = " ".join(value.split())
-
-        if len(cleaned_name) < 2:
-            raise ValueError(
-                "Full name must contain at least 2 characters."
-            )
-
-        return cleaned_name
 
     @field_validator("password")
     @classmethod

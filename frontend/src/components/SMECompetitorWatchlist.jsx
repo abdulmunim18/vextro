@@ -38,6 +38,26 @@ function getListingSellerName(listing) {
   );
 }
 
+function compactText(value, maximumLength = 42) {
+  const normalizedValue = String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (normalizedValue.length <= maximumLength) {
+    return normalizedValue;
+  }
+
+  return `${normalizedValue.slice(0, maximumLength - 1).trimEnd()}…`;
+}
+
+function getListingOptionLabel(listing, platformName) {
+  return [
+    platformName,
+    compactText(listing.title),
+    formatPrice(listing.current_price, listing.currency),
+  ].join(" — ");
+}
+
 function getPriceGapText(
   businessProduct,
   listing,
@@ -555,6 +575,16 @@ function SMECompetitorWatchlist({
     ],
   );
 
+  const selectedListing = useMemo(
+    () =>
+      availableListings.find(
+        (listing) =>
+          String(listing.id) ===
+          String(selectedListingId),
+      ) || null,
+    [availableListings, selectedListingId],
+  );
+
   const statistics = useMemo(() => {
     const activeEntries =
       watchlistEntries.filter(
@@ -819,8 +849,8 @@ function SMECompetitorWatchlist({
           className="mt-7"
           onSubmit={handleCreateEntry}
         >
-          <div className="grid gap-5 lg:grid-cols-2">
-            <div>
+          <div className="grid min-w-0 gap-5 lg:grid-cols-2">
+            <div className="min-w-0">
               <label
                 className="mb-2 block text-sm font-black text-slate-800"
                 htmlFor="competitor-business-product"
@@ -840,7 +870,7 @@ function SMECompetitorWatchlist({
                   isLoading ||
                   businessProducts.length === 0
                 }
-                className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-violet-500 focus:ring-4 focus:ring-violet-100 disabled:bg-slate-100"
+                className="block min-h-12 min-w-0 max-w-full w-full truncate rounded-xl border border-slate-300 bg-white px-4 pr-10 text-sm font-semibold text-slate-900 outline-none transition focus:border-violet-500 focus:ring-4 focus:ring-violet-100 disabled:bg-slate-100"
               >
                 {businessProducts.length === 0 ? (
                   <option value="">
@@ -854,7 +884,7 @@ function SMECompetitorWatchlist({
                       key={product.id}
                       value={product.id}
                     >
-                      {product.name}
+                      {compactText(product.name, 46)}
                       {product.sku
                         ? ` — ${product.sku}`
                         : ""}
@@ -864,7 +894,7 @@ function SMECompetitorWatchlist({
               </select>
             </div>
 
-            <div>
+            <div className="min-w-0">
               <label
                 className="mb-2 block text-sm font-black text-slate-800"
                 htmlFor="competitor-listing"
@@ -887,33 +917,46 @@ function SMECompetitorWatchlist({
                     ?.canonical_product_id ||
                   availableListings.length === 0
                 }
-                className="min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition focus:border-violet-500 focus:ring-4 focus:ring-violet-100 disabled:bg-slate-100"
+                className="block min-h-12 min-w-0 max-w-full w-full truncate rounded-xl border border-slate-300 bg-white px-4 pr-10 text-sm font-semibold text-slate-900 outline-none transition focus:border-violet-500 focus:ring-4 focus:ring-violet-100 disabled:bg-slate-100"
               >
                 <option value="">
                   Select competitor listing
                 </option>
 
                 {availableListings.map(
-                  (listing) => (
-                    <option
-                      key={listing.id}
-                      value={listing.id}
-                    >
-                      {platformNames[
+                  (listing) => {
+                    const platformName =
+                      platformNames[
                         listing.platform_id
                       ] ||
-                        `Platform ${listing.platform_id}`}
-                      {" — "}
-                      {listing.title}
-                      {" — "}
-                      {formatPrice(
-                        listing.current_price,
-                        listing.currency,
-                      )}
-                    </option>
-                  ),
+                      `Platform ${listing.platform_id}`;
+
+                    return (
+                      <option
+                        key={listing.id}
+                        value={listing.id}
+                        title={`${platformName} — ${listing.title}`}
+                      >
+                        {getListingOptionLabel(
+                          listing,
+                          platformName,
+                        )}
+                      </option>
+                    );
+                  },
                 )}
               </select>
+
+              {selectedListing ? (
+                <div className="mt-3 min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <p className="text-[10px] font-black uppercase tracking-[0.14em] text-violet-600">
+                    Selected listing
+                  </p>
+                  <p className="mt-1 break-words text-xs font-semibold leading-5 text-slate-700 [overflow-wrap:anywhere]">
+                    {selectedListing.title}
+                  </p>
+                </div>
+              ) : null}
             </div>
           </div>
 

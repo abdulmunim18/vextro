@@ -128,7 +128,14 @@ class PriceoyeSpider(scrapy.Spider):
         cause = getattr(failure, 'value', None)
         if cause is None:
             raise error
-        raise error from cause
+        response = getattr(cause, 'response', None)
+        status = getattr(response, 'status', None)
+        detail = (
+            f' (HTTP {status})'
+            if status is not None
+            else f' ({type(cause).__name__})'
+        )
+        raise PriceOyePageFetchError(f'{error}{detail}') from cause
 
     @staticmethod
     def extract_specifications(response):
