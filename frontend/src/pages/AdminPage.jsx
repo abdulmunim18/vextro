@@ -850,7 +850,7 @@ function AdminPage() {
         valueClass: "text-violet-600",
       },
       {
-        label: "Products",
+        label: "All Catalog Products",
         value:
           dashboard?.canonical_products ?? 0,
         description: `${
@@ -860,7 +860,7 @@ function AdminPage() {
         valueClass: "text-amber-600",
       },
       {
-        label: "Listings",
+        label: "Marketplace Listings",
         value:
           dashboard?.marketplace_listings ?? 0,
         description: `${

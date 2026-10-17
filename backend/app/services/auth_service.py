@@ -43,6 +43,7 @@ from app.services.auth_email_service import (
     send_password_reset_email,
     send_verification_otp_email,
 )
+from app.services.user_name_service import derive_full_name_from_email
 
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,7 @@ def start_registration(
     normalized_email = str(
         registration_data.email
     ).strip().lower()
+    full_name = derive_full_name_from_email(normalized_email)
 
     existing_user = get_user_by_email(
         database_session,
@@ -143,7 +145,7 @@ def start_registration(
         email=normalized_email,
         expires_at=expires_at,
         payload={
-            "full_name": registration_data.full_name,
+            "full_name": full_name,
             "password_hash": hash_password(registration_data.password),
             "account_type": selected_role.name,
         },
@@ -152,7 +154,7 @@ def start_registration(
     try:
         send_verification_otp_email(
             recipient=normalized_email,
-            full_name=registration_data.full_name,
+            full_name=full_name,
             otp=otp,
             expires_minutes=settings.email_otp_expire_minutes,
         )

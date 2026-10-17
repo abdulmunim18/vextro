@@ -236,3 +236,13 @@ def deactivate_price_alert(
     database_session.flush()
 
     return alert
+
+
+def delete_price_alert(
+    database_session: Session,
+    alert: PriceAlert,
+) -> None:
+    """Permanently remove a price alert owned by the caller."""
+
+    database_session.delete(alert)
+    database_session.flush()

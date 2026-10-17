@@ -145,7 +145,7 @@ const canUseSmeWorkspace = hasRole("sme");
 
   const statistics = useMemo(() => {
     const activeAlerts = alerts.filter(
-      (alert) => alert.is_active,
+      (alert) => alert.is_active && !alert.is_triggered,
     ).length;
 
     const pausedAlerts = alerts.filter(
@@ -466,14 +466,18 @@ const canUseSmeWorkspace = hasRole("sme");
                         <div className="flex flex-wrap items-center gap-2">
                           <span
                             className={`rounded-full px-3 py-1 text-[9px] font-black uppercase ${
-                              alert.is_active
-                                ? "bg-emerald-100 text-emerald-700"
+                              alert.is_triggered
+                                ? "bg-violet-100 text-violet-700"
+                                : alert.is_active
+                                  ? "bg-emerald-100 text-emerald-700"
                                 : "bg-slate-200 text-slate-600"
                             }`}
                           >
-                            {alert.is_active
-                              ? "Active"
-                              : "Paused"}
+                            {alert.is_triggered
+                              ? "Completed"
+                              : alert.is_active
+                                ? "Active"
+                                : "Paused"}
                           </span>
 
                           {alert.is_triggered ? (

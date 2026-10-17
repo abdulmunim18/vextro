@@ -2,15 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import {
   getWarehouseMetrics,
   getScrapeRuns,
-  triggerWarehouseAudit,
 } from "../services/warehouseService";
 
 export default function WarehouseMonitoring() {
   const [metrics, setMetrics] = useState(null);
   const [scrapeRuns, setScrapeRuns] = useState([]);
-  const [auditReport, setAuditReport] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [auditing, setAuditing] = useState(false);
   const [error, setError] = useState(null);
 
   const loadWarehouseData = useCallback(async () => {
@@ -35,19 +32,6 @@ export default function WarehouseMonitoring() {
     const timeoutId = window.setTimeout(loadWarehouseData, 0);
     return () => window.clearTimeout(timeoutId);
   }, [loadWarehouseData]);
-
-  const handleRunAudit = async () => {
-    setAuditing(true);
-    try {
-      const result = await triggerWarehouseAudit();
-      setAuditReport(result);
-      await loadWarehouseData();
-    } catch (err) {
-      console.error("Audit failed:", err);
-    } finally {
-      setAuditing(false);
-    }
-  };
 
   if (loading) {
     return (
@@ -77,82 +61,6 @@ export default function WarehouseMonitoring() {
 
   return (
     <div className="space-y-6">
-      {/* Top Header & Actions */}
-      <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-900/80 border border-slate-800 p-6 rounded-2xl backdrop-blur-md">
-        <div>
-          <h2 className="text-xl font-bold text-white tracking-wide">
-            Module 6.3: Centralized Data Warehouse & Monitoring
-          </h2>
-          <p className="text-xs text-slate-400 mt-1">
-            Real-time pipeline monitoring, PostgreSQL storage metrics & scrape run audit log
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={loadWarehouseData}
-            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700 transition"
-          >
-            Refresh Metrics
-          </button>
-          <button
-            onClick={handleRunAudit}
-            disabled={auditing}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 text-white text-xs font-semibold rounded-xl shadow-lg transition flex items-center gap-2"
-          >
-            {auditing ? "Auditing..." : "Run Integrity Audit"}
-          </button>
-        </div>
-      </div>
-
-      {/* Audit report banner. An audit that finds problems must not
-          report itself as passed in green: the warehouse once showed
-          "Audit Passed" beside a 25.4% health score. */}
-      {auditReport && (() => {
-        const auditHealthy =
-          auditReport.status !== "NEEDS_ATTENTION";
-        const tone = auditHealthy
-          ? {
-              box: "bg-emerald-950/40 border-emerald-500/40 text-emerald-200",
-              title: "text-emerald-400",
-              detail: "text-emerald-300/80",
-              stamp:
-                "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
-            }
-          : {
-              box: "bg-amber-950/40 border-amber-500/40 text-amber-100",
-              title: "text-amber-300",
-              detail: "text-amber-200/80",
-              stamp:
-                "bg-amber-500/20 text-amber-200 border-amber-500/30",
-            };
-
-        return (
-          <div
-            className={`p-5 border rounded-2xl flex items-center justify-between ${tone.box}`}
-          >
-            <div>
-              <div className={`font-bold text-sm ${tone.title}`}>
-                {auditHealthy
-                  ? "Data integrity audit passed"
-                  : "Data integrity audit found problems"}{" "}
-                — Health Score: {auditReport.health_score_percentage}% ({auditReport.status})
-              </div>
-              <div className={`text-xs mt-1 ${tone.detail}`}>
-                Checked {auditReport.total_canonical_products} canonical products & {auditReport.total_listings} active listings.
-                {auditHealthy
-                  ? null
-                  : ` ${auditReport.missing_image_listings_count} listings without images, ${auditReport.listings_without_price_history_count} without price history, ${auditReport.unlinked_listings_count} unlinked.`}
-              </div>
-            </div>
-            <span
-              className={`text-xs px-3 py-1 font-mono rounded-full border ${tone.stamp}`}
-            >
-              {new Date(auditReport.audit_timestamp).toLocaleTimeString()}
-            </span>
-          </div>
-        );
-      })()}
-
       {/* Stat KPI Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="p-5 bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 rounded-2xl">
@@ -169,13 +77,13 @@ export default function WarehouseMonitoring() {
 
         <div className="p-5 bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 rounded-2xl">
           <div className="text-xs uppercase tracking-wider text-slate-400 font-medium">
-            Active Listings
+            Marketplace Listings
           </div>
           <div className="text-3xl font-extrabold text-white mt-2">
             {metrics?.product_listings_count || 0}
           </div>
           <div className="text-xs text-blue-400 mt-1">
-            Across Daraz, PriceOye & Shophive
+            All stored offers across Daraz, PriceOye & Shophive
           </div>
         </div>
 
@@ -284,6 +192,7 @@ export default function WarehouseMonitoring() {
                   <th className="p-3.5">Status</th>
                   <th className="p-3.5">Items Scraped</th>
                   <th className="p-3.5">Items Failed</th>
+                  <th className="p-3.5">Result / Error</th>
                   <th className="p-3.5">Started At</th>
                 </tr>
               </thead>
@@ -308,6 +217,19 @@ export default function WarehouseMonitoring() {
                     </td>
                     <td className="p-3.5 text-white font-bold">{r.items_scraped}</td>
                     <td className="p-3.5 text-red-400">{r.items_failed}</td>
+                    <td className="max-w-sm p-3.5 font-sans text-slate-300">
+                      {r.error_message ? (
+                        <span className="block whitespace-normal break-words rounded-lg border border-red-500/20 bg-red-950/30 px-3 py-2 text-[11px] leading-5 text-red-300">
+                          {r.error_message}
+                        </span>
+                      ) : (
+                        <span className="text-slate-500">
+                          {r.status === "SUCCESS"
+                            ? "Completed without recorded errors."
+                            : "No error detail was recorded."}
+                        </span>
+                      )}
+                    </td>
                     <td className="p-3.5 text-slate-400">
                       {new Date(r.started_at).toLocaleString()}
                     </td>

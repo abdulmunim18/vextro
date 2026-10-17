@@ -21,6 +21,7 @@ function LoginPage() {
 
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const successMessage = location.state?.message || "";
   const oauthError = new URLSearchParams(location.search).get("oauth_error");
@@ -204,13 +205,25 @@ function LoginPage() {
                   id="login-password"
                   className="min-h-13 w-full rounded-xl border border-vextro-border bg-white px-4 text-sm text-vextro-ink outline-none transition placeholder:text-slate-400 focus:border-vextro-primary focus:ring-4 focus:ring-blue-100"
                   name="password"
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   value={formData.password}
                   onChange={handleChange}
                   placeholder="Enter your password"
                   autoComplete="current-password"
                   required
                 />
+
+                <label className="inline-flex w-fit cursor-pointer items-center gap-2 text-xs font-semibold text-vextro-muted">
+                  <input
+                    className="size-4 rounded border-vextro-border accent-vextro-primary"
+                    type="checkbox"
+                    checked={showPassword}
+                    onChange={(event) =>
+                      setShowPassword(event.target.checked)
+                    }
+                  />
+                  Show password
+                </label>
               </div>
 
               <button

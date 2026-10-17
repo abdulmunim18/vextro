@@ -149,7 +149,7 @@ function PriceAlertCard({
           }`}
         >
           {alert.is_triggered
-            ? "Target Reached"
+            ? "Completed"
             : alert.is_active
               ? "Active"
               : "Inactive"}

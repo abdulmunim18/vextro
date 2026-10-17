@@ -139,7 +139,7 @@ function SMECompetitorIntelligence({
                       </div>
                       <dl className="mt-4 grid grid-cols-2 gap-3 text-xs">
                         <div><dt className="text-slate-500">Your price</dt><dd className="mt-1 font-black text-slate-800">{formatPrice(estimate.own_price, "PKR")}</dd></div>
-                        <div><dt className="text-slate-500">Lowest competitor</dt><dd className="mt-1 font-black text-slate-800">{formatPrice(estimate.lowest_competitor_price, "PKR")}</dd></div>
+                        <div><dt className="text-slate-500">Lowest monitored price</dt><dd className="mt-1 font-black text-slate-800">{formatPrice(estimate.lowest_competitor_price, "PKR")}</dd></div>
                       </dl>
                       {share == null ? <p className="mt-3 text-xs font-semibold text-amber-700">Add a selling price and at least one available monitored competitor to calculate this estimate.</p> : null}
                     </article>

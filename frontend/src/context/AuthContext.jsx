@@ -13,6 +13,10 @@ import {
   logoutUser,
   registerUser,
 } from "../services/authService";
+import {
+  SESSION_CLEARED_EVENT,
+  SESSION_REFRESHED_EVENT,
+} from "../api/httpClient";
 
 const STORAGE_KEYS = {
   accessToken: "vextro_access_token",
@@ -113,6 +117,38 @@ export function AuthProvider({ children }) {
       isMounted = false;
     };
   }, [clearSession]);
+
+  useEffect(() => {
+    function handleSessionCleared() {
+      setUser(null);
+    }
+
+    function handleSessionRefreshed(event) {
+      if (event.detail) {
+        setUser(event.detail);
+      }
+    }
+
+    window.addEventListener(
+      SESSION_CLEARED_EVENT,
+      handleSessionCleared,
+    );
+    window.addEventListener(
+      SESSION_REFRESHED_EVENT,
+      handleSessionRefreshed,
+    );
+
+    return () => {
+      window.removeEventListener(
+        SESSION_CLEARED_EVENT,
+        handleSessionCleared,
+      );
+      window.removeEventListener(
+        SESSION_REFRESHED_EVENT,
+        handleSessionRefreshed,
+      );
+    };
+  }, []);
 
   const login = useCallback(async (credentials) => {
     const session = await loginUser(credentials);

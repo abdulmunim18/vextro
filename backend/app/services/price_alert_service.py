@@ -12,6 +12,7 @@ from app.services.notification_dispatcher import (
 from app.repositories.price_alert_repository import (
     create_price_alert,
     deactivate_price_alert,
+    delete_price_alert,
     find_active_duplicate_alert,
     get_active_product_target,
     update_price_alert,
@@ -408,3 +409,30 @@ def deactivate_user_price_alert(
     return PriceAlertResponse.model_validate(
         deactivated_alert
     )
+
+
+def delete_user_price_alert(
+    database_session: Session,
+    *,
+    user_id: int,
+    alert_id: int,
+) -> None:
+    """Permanently delete an alert belonging to the authenticated user."""
+
+    alert = get_user_price_alert(
+        database_session,
+        user_id=user_id,
+        alert_id=alert_id,
+    )
+
+    if alert is None:
+        raise PriceAlertNotFoundError(
+            "Price alert not found"
+        )
+
+    try:
+        delete_price_alert(database_session, alert)
+        database_session.commit()
+    except Exception:
+        database_session.rollback()
+        raise

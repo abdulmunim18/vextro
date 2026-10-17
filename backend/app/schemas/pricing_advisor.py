@@ -110,7 +110,7 @@ class PricingAdvisorResponse(BaseModel):
     competitor_price: Decimal
     baseline_units: Decimal
     demand_sensitivity: Decimal
-    recommended_change_percentage: Decimal
+    recommended_change_percentage: Decimal | None = None
     recommendation: str
     disclaimer: str
     scenarios: list[PricingScenarioResult]

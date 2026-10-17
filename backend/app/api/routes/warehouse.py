@@ -22,7 +22,7 @@ router = APIRouter(prefix="/warehouse", tags=["Data Warehouse & Monitoring"])
 
 class ScrapeRunStartPayload(BaseModel):
     platform: str = Field(..., description="Marketplace name: Daraz, PriceOye or Shophive")
-    triggered_by: str = Field(default="MANUAL", description="SCHEDULED, MANUAL, or PIPELINE")
+    triggered_by: str = Field(default="MANUAL", description="SCHEDULED, MANUAL, ON_DEMAND, or PIPELINE")
 
 
 class ScrapeRunFinishPayload(BaseModel):
@@ -115,10 +115,10 @@ def start_scrape_run(
         "pipeline": "scheduler",
     }
     trigger_type = trigger_aliases.get(trigger_type, trigger_type)
-    if trigger_type not in {"manual", "scheduler", "test"}:
+    if trigger_type not in {"manual", "on_demand", "scheduler", "test"}:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Trigger type must be manual, scheduler, or test.",
+            detail="Trigger type must be manual, on_demand, scheduler, or test.",
         )
 
     run = ScrapeRun(

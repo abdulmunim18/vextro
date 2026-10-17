@@ -33,7 +33,6 @@ def register_user(
     response = client.post(
         "/api/v1/auth/register",
         json={
-            "full_name": "Automated Test User",
             "email": email,
             "password": TEST_PASSWORD,
             "account_type": account_type,
@@ -96,6 +95,7 @@ def test_register_consumer_and_hash_password(
     assert response_data["roles"] == ["consumer"]
     assert response_data["is_active"] is True
     assert response_data["is_verified"] is True
+    assert response_data["full_name"].startswith("Consumer ")
 
     user = database_session.scalar(
         select(User).where(User.email == email)
@@ -479,6 +479,9 @@ def test_social_login_creates_verified_user_and_code_is_single_use(
         follow_redirects=False,
     )
     assert authorization.status_code == 307
+    assert parse_qs(
+        urlparse(authorization.headers["location"]).query
+    )["scope"] == ["openid email"]
     state = parse_qs(
         urlparse(authorization.headers["location"]).query
     )["state"][0]

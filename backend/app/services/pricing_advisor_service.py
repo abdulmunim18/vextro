@@ -15,7 +15,8 @@ from app.schemas.pricing_advisor import (
 
 MONEY = Decimal("0.01")
 PERCENT = Decimal("0.01")
-UNIT = Decimal("0.01")
+UNIT = Decimal("1")
+MINIMUM_SAFE_MARGIN_PERCENTAGE = Decimal("10")
 def _money(value: Decimal) -> Decimal:
     return value.quantize(MONEY, rounding=ROUND_HALF_UP)
 
@@ -25,6 +26,8 @@ def _percent(value: Decimal) -> Decimal:
 
 
 def _units(value: Decimal) -> Decimal:
+    """Return a non-negative whole-unit sales estimate."""
+
     return max(Decimal("0"), value).quantize(
         UNIT,
         rounding=ROUND_HALF_UP,
@@ -104,7 +107,7 @@ def calculate_pricing_scenarios(
                 "Price is more than 10% above the monitored competitor."
             )
 
-        if margin < Decimal("10"):
+        if margin < MINIMUM_SAFE_MARGIN_PERCENTAGE:
             risk_reasons.append(
                 "Gross margin is below the 10% safety threshold."
             )
@@ -144,20 +147,44 @@ def calculate_pricing_scenarios(
         if scenario.gross_profit >= 0
         and scenario.risk_level != "high"
     ]
-    recommendation_pool = viable_scenarios or scenarios
-    recommended = max(
-        recommendation_pool,
-        key=lambda scenario: scenario.gross_profit,
+    recommended = (
+        max(
+            viable_scenarios,
+            key=lambda scenario: scenario.gross_profit,
+        )
+        if viable_scenarios
+        else None
     )
 
-    change_label = (
-        "keep the current price"
-        if recommended.price_change_percentage == 0
-        else (
-            f"change price by "
-            f"{recommended.price_change_percentage}%"
+    if recommended is None:
+        minimum_safe_price = _money(
+            cost_price
+            / (
+                Decimal("1")
+                - MINIMUM_SAFE_MARGIN_PERCENTAGE / Decimal("100")
+            )
         )
-    )
+        recommendation = (
+            "No safe scenario is available within the selected "
+            f"{scenario_range_percentage}% range. Review the cost, competitor "
+            "price and demand assumptions before changing the price. "
+            f"A price of at least {currency} {minimum_safe_price:,.2f} "
+            "is required for a 10% gross margin."
+        )
+    else:
+        change_label = (
+            "keep the current price"
+            if recommended.price_change_percentage == 0
+            else (
+                f"change price by "
+                f"{recommended.price_change_percentage}%"
+            )
+        )
+        recommendation = (
+            f"Based on the supplied assumptions, {change_label}. "
+            f"This scenario estimates gross profit of {currency} "
+            f"{recommended.gross_profit}."
+        )
 
     return PricingAdvisorResponse(
         business_product_id=business_product_id,
@@ -170,12 +197,10 @@ def calculate_pricing_scenarios(
         demand_sensitivity=_percent(demand_sensitivity),
         recommended_change_percentage=(
             recommended.price_change_percentage
+            if recommended is not None
+            else None
         ),
-        recommendation=(
-            f"Based on the supplied assumptions, {change_label}. "
-            f"This scenario estimates gross profit of {currency} "
-            f"{recommended.gross_profit}."
-        ),
+        recommendation=recommendation,
         disclaimer=(
             "Advisory simulation only. VEXTRO does not automatically "
             "change marketplace prices, and actual demand may differ."

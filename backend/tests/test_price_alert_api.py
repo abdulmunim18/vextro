@@ -405,14 +405,21 @@ def test_user_cannot_access_or_modify_another_users_alert(
         headers=other_user_headers,
     )
 
+    permanent_delete_response = client.delete(
+        f"/api/v1/price-alerts/{alert_id}/permanent",
+        headers=other_user_headers,
+    )
+
     assert read_response.status_code == 404
     assert update_response.status_code == 404
     assert delete_response.status_code == 404
+    assert permanent_delete_response.status_code == 404
 
     for response in (
         read_response,
         update_response,
         delete_response,
+        permanent_delete_response,
     ):
         assert (
             response.json()["detail"]["code"]
@@ -485,3 +492,49 @@ def test_consumer_can_update_deactivate_and_reactivate_alert(
     assert reactivate_response.status_code == 200
     assert reactivate_response.json()["is_active"] is True
     assert reactivate_response.json()["is_triggered"] is False
+
+
+def test_consumer_can_permanently_delete_own_alert(
+    client: TestClient,
+    database_session: Session,
+) -> None:
+    """The owner can permanently remove an alert from their account."""
+
+    headers = register_and_login(client)
+    product, _listing = create_price_alert_target(
+        database_session
+    )
+
+    create_response = client.post(
+        "/api/v1/price-alerts",
+        headers=headers,
+        json={
+            "canonical_product_id": product.id,
+            "target_price": "110000.00",
+            "currency": "PKR",
+        },
+    )
+
+    assert create_response.status_code == 201
+    alert_id = create_response.json()["id"]
+
+    delete_response = client.delete(
+        f"/api/v1/price-alerts/{alert_id}/permanent",
+        headers=headers,
+    )
+
+    assert delete_response.status_code == 204
+    assert delete_response.content == b""
+
+    detail_response = client.get(
+        f"/api/v1/price-alerts/{alert_id}",
+        headers=headers,
+    )
+    assert detail_response.status_code == 404
+
+    list_response = client.get(
+        "/api/v1/price-alerts",
+        headers=headers,
+    )
+    assert list_response.status_code == 200
+    assert list_response.json()["items"] == []

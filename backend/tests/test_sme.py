@@ -338,6 +338,57 @@ def marketplace_context(
     database_session.commit()
 
 
+@pytest.fixture
+def unavailable_lower_price_listing(
+    database_session: Session,
+    marketplace_context: dict[str, object],
+) -> Generator[int, None, None]:
+    """Create a cheaper monitored listing that is currently unavailable."""
+
+    source_listing = database_session.get(
+        ProductListing,
+        int(marketplace_context["listing_id"]),
+    )
+    assert source_listing is not None
+
+    listing = ProductListing(
+        platform_id=source_listing.platform_id,
+        product_variant_id=source_listing.product_variant_id,
+        seller_id=source_listing.seller_id,
+        external_id=f"SME-UNAVAILABLE-{uuid4().hex[:10]}",
+        title="Cheaper unavailable SME test listing",
+        product_url=(
+            "https://www.daraz.pk/products/"
+            f"unavailable-{uuid4().hex[:10]}"
+        ),
+        current_price=Decimal("119999.00"),
+        original_price=Decimal("129999.00"),
+        currency="PKR",
+        is_available=False,
+        raw_payload={"test_record": True},
+        first_seen_at=datetime.now(timezone.utc),
+        last_seen_at=datetime.now(timezone.utc),
+    )
+    database_session.add(listing)
+    database_session.commit()
+    database_session.refresh(listing)
+
+    yield listing.id
+
+    database_session.rollback()
+    database_session.execute(
+        delete(CompetitorWatchlist).where(
+            CompetitorWatchlist.listing_id == listing.id,
+        ),
+    )
+    database_session.execute(
+        delete(ProductListing).where(
+            ProductListing.id == listing.id,
+        ),
+    )
+    database_session.commit()
+
+
 def test_sme_routes_require_authentication_and_role(
     client: TestClient,
 ) -> None:
@@ -981,3 +1032,66 @@ def test_sme_can_manage_competitor_watchlist(
 
     assert list_after_delete_response.status_code == 200
     assert list_after_delete_response.json()["total"] == 0
+
+
+def test_lowest_monitored_price_includes_unavailable_listings(
+    client: TestClient,
+    sme_context: dict[str, object],
+    marketplace_context: dict[str, object],
+    unavailable_lower_price_listing: int,
+) -> None:
+    """Show the lowest tracked price without changing availability-based share."""
+
+    headers = sme_context["headers"]
+    assert isinstance(headers, dict)
+    organization_id = int(sme_context["organization_id"])
+
+    product_response = client.post(
+        f"{ORGANIZATIONS_ENDPOINT}/{organization_id}/products",
+        headers=headers,
+        json={
+            "canonical_product_id": int(
+                marketplace_context["canonical_product_id"],
+            ),
+            "name": str(marketplace_context["canonical_product_name"]),
+            "sku": f"LOWEST-{uuid4().hex[:8]}",
+            "selling_price": 74999,
+            "currency": "PKR",
+            "stock_level": 10,
+            "reorder_level": 3,
+        },
+    )
+    assert product_response.status_code == 201
+    business_product_id = product_response.json()["id"]
+    competitors_endpoint = (
+        f"{ORGANIZATIONS_ENDPOINT}/{organization_id}/competitors"
+    )
+
+    for listing_id in (
+        int(marketplace_context["listing_id"]),
+        unavailable_lower_price_listing,
+    ):
+        response = client.post(
+            competitors_endpoint,
+            headers=headers,
+            json={
+                "business_product_id": business_product_id,
+                "listing_id": listing_id,
+            },
+        )
+        assert response.status_code == 201
+
+    intelligence_response = client.get(
+        (
+            f"{ORGANIZATIONS_ENDPOINT}/{organization_id}/"
+            "competitor-intelligence"
+        ),
+        headers=headers,
+    )
+    assert intelligence_response.status_code == 200
+
+    estimate = intelligence_response.json()["market_share_estimates"][0]
+    assert estimate["competitor_count"] == 2
+    assert estimate["available_competitor_count"] == 1
+    assert estimate["lowest_competitor_price"] == "119999.00"
+    assert estimate["estimated_own_market_share_percentage"] is not None

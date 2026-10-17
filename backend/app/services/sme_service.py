@@ -1191,6 +1191,11 @@ class SMEService:
         for product_id, product_records in records_by_product.items():
             business_product = product_records[0].business_product
             own_price = business_product.selling_price
+            monitored_prices = [
+                record.listing.current_price
+                for record in product_records
+                if record.listing.current_price > 0
+            ]
             available_prices = [
                 record.listing.current_price
                 for record in product_records
@@ -1241,7 +1246,7 @@ class SMEService:
                     competitor_count=len(product_records),
                     available_competitor_count=available_count,
                     lowest_competitor_price=(
-                        min(available_prices) if available_prices else None
+                        min(monitored_prices) if monitored_prices else None
                     ),
                     estimated_own_market_share_percentage=(
                         market_share_by_product[product_id]

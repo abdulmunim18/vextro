@@ -33,6 +33,7 @@ from app.models.canonical_product import CanonicalProduct
 from app.models.platform import Platform
 from app.models.product_listing import ProductListing
 from app.models.product_variant import ProductVariant
+from app.models.scrape_run import ScrapeRun
 from app.schemas.listing_refresh import (
     PlatformRefreshStatus,
     ProductRefreshResponse,
@@ -77,7 +78,7 @@ def launch_targeted_crawl(target: TargetedSpider, values: list[str]) -> object:
 
     environment = {
         **os.environ,
-        "VEXTRO_SCRAPE_TRIGGER": "manual",
+        "VEXTRO_SCRAPE_TRIGGER": "on_demand",
         "VEXTRO_API_URL": settings.on_demand_refresh_api_url
         or settings.api_public_base_url,
     }
@@ -208,6 +209,9 @@ class ListingRefreshService:
 
         now = datetime.now(UTC)
         max_age = timedelta(minutes=settings.on_demand_refresh_max_age_minutes)
+        failure_backoff = timedelta(
+            minutes=settings.on_demand_refresh_failure_backoff_minutes,
+        )
         statuses: list[PlatformRefreshStatus] = []
 
         for code in sorted(by_platform):
@@ -221,6 +225,16 @@ class ListingRefreshService:
                 if target.argument == "search_terms"
                 else entry["urls"]
             )
+            latest_targeted_failure = database_session.scalar(
+                select(ScrapeRun.started_at)
+                .where(
+                    ScrapeRun.platform == code,
+                    ScrapeRun.trigger_type == "on_demand",
+                    ScrapeRun.status == "failed",
+                )
+                .order_by(ScrapeRun.started_at.desc())
+                .limit(1)
+            )
 
             if not settings.on_demand_refresh_enabled:
                 status = "disabled"
@@ -228,6 +242,11 @@ class ListingRefreshService:
                 status = "scheduled_only"
             elif last_seen_at is not None and now - last_seen_at <= max_age:
                 status = "fresh"
+            elif (
+                latest_targeted_failure is not None
+                and now - latest_targeted_failure < failure_backoff
+            ):
+                status = "backoff"
             else:
                 status = self._start(
                     product_id,

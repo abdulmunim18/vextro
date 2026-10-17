@@ -418,7 +418,11 @@ const comparisonUrl =
 
           <div className="flex min-w-44 flex-col rounded-2xl border border-vextro-border bg-white p-5 shadow-sm">
             <span className="text-xs font-bold text-vextro-muted">
-              Catalog results
+              {appliedFilters.availability === "available"
+                ? "Products with available offers"
+                : appliedFilters.availability === "unavailable"
+                  ? "Products with unavailable offers"
+                  : "All active catalog products"}
             </span>
 
             <strong className="mt-1 text-3xl font-black tracking-tight text-vextro-primary">
@@ -426,7 +430,7 @@ const comparisonUrl =
             </strong>
 
             <small className="mt-1 text-xs text-vextro-muted">
-              matching products
+              matching current filters
             </small>
           </div>
         </div>

@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     on_demand_refresh_enabled: bool = True
     on_demand_refresh_max_age_minutes: int = 60
     on_demand_refresh_cooldown_seconds: int = 120
+    on_demand_refresh_failure_backoff_minutes: int = 60
     on_demand_refresh_max_parallel: int = 2
     on_demand_refresh_expected_seconds: int = 10
     # Where the refresh delivers what it reads; defaults to this API.
