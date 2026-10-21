@@ -122,6 +122,15 @@ export async function getProductCommunityOpinions(productId) {
   return response.data;
 }
 
+// Trust indicators for the seller behind one offer, derived from that
+// seller's analysed reviews. Read-only: nothing is recalculated here.
+export async function getListingSellerTrust(productId, listingId) {
+  const response = await apiClient.get(
+    `/products/${productId}/listings/${listingId}/seller-trust`,
+  );
+  return response.data;
+}
+
 export async function getProductReviewAnalysis(
   productId,
   params = {},

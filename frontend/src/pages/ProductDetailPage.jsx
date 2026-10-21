@@ -24,6 +24,7 @@ import {
   getPlatforms,
   getProducts,
   getProductById,
+  getListingSellerTrust,
   getProductListings,
   getProductPriceHistory,
   refreshProductOffers,
@@ -491,6 +492,49 @@ function ProductDetailPage() {
         : [],
     [listingResponse],
   );
+
+  // Seller trust, asked for once per seller rather than once per offer: a
+  // Daraz phone can have several offers from the same shop. Offers from a
+  // marketplace that is itself the seller have no seller_id and are skipped.
+  const [sellerTrust, setSellerTrust] = useState({});
+  const trustRequests = useMemo(() => {
+    const firstListingOfSeller = new Map();
+    listings.forEach((listing) => {
+      if (
+        listing.seller_id != null &&
+        !firstListingOfSeller.has(listing.seller_id)
+      ) {
+        firstListingOfSeller.set(listing.seller_id, listing.id);
+      }
+    });
+    return [...firstListingOfSeller.entries()];
+  }, [listings]);
+
+  useEffect(() => {
+    if (!product?.id || trustRequests.length === 0) {
+      return undefined;
+    }
+
+    let isMounted = true;
+    const productId = product.id;
+
+    Promise.all(
+      trustRequests.map(([sellerId, listingId]) =>
+        getListingSellerTrust(productId, listingId)
+          .then((trust) => [sellerId, trust])
+          // Trust is extra information; an offer still shows without it.
+          .catch(() => [sellerId, null]),
+      ),
+    ).then((entries) => {
+      if (isMounted) {
+        setSellerTrust(Object.fromEntries(entries));
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [product?.id, trustRequests]);
 
   const platformNames = useMemo(
     () =>
@@ -1101,6 +1145,11 @@ function ProductDetailPage() {
                     }
                     isLowest={
                       listing.id === lowestListing?.id
+                    }
+                    sellerTrust={
+                      listing.seller_id != null
+                        ? sellerTrust[listing.seller_id] ?? null
+                        : null
                     }
                   />
                 ))}

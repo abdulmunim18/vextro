@@ -6,10 +6,61 @@ import {
 } from "../utils/productDisplay";
 import { getMarketplaceDestination } from "../utils/marketplaceDestination";
 
+const TRUST_STYLES = {
+  high: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  moderate: "border-amber-200 bg-amber-50 text-amber-700",
+  low: "border-red-200 bg-red-50 text-red-700",
+};
+
+const TRUST_LABELS = { high: "High", moderate: "Moderate", low: "Low" };
+
+// A trust score exists only when VEXTRO has analysed enough of the seller's
+// reviews; otherwise the reason it is missing is shown on hover.
+function SellerTrustBadge({ trust }) {
+  if (!trust) {
+    return null;
+  }
+
+  if (trust.status !== "available" || trust.trust_score === null) {
+    const reason =
+      trust.reasons?.[0] || "Not enough analysed reviews for this seller yet.";
+    // The API also says when a score exists but is out of date, or was
+    // never calculated; that is not the same as too little evidence.
+    const notCalculated = /recalculate|has not been run/i.test(reason);
+
+    return (
+      <span
+        className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[10px] font-bold text-slate-500"
+        title={reason}
+      >
+        Seller trust:{" "}
+        {notCalculated ? "not calculated yet" : "not enough evidence"}
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className={`rounded-full border px-2.5 py-0.5 text-[10px] font-black ${
+        TRUST_STYLES[trust.trust_level] ?? TRUST_STYLES.moderate
+      }`}
+      title={[
+        `${trust.analyzed_reviews} of ${trust.total_reviews} reviews analysed`,
+        `confidence ${trust.confidence_level}`,
+        ...(trust.reasons ?? []).slice(0, 2),
+      ].join(" · ")}
+    >
+      Seller trust: {TRUST_LABELS[trust.trust_level] ?? trust.trust_level} ·{" "}
+      {trust.trust_score}/100
+    </span>
+  );
+}
+
 function MarketplaceListingCard({
   listing,
   productName,
   platformName,
+  sellerTrust = null,
   isLowest,
 }) {
   const currentPrice = toFiniteNumber(
@@ -190,6 +241,8 @@ function MarketplaceListingCard({
                 ✓ Verified seller
               </span>
             ) : null}
+
+            <SellerTrustBadge trust={sellerTrust} />
 
             {/* Stars run from 1 to 5, so a zero means nobody has rated
                 the offer yet, not that it was rated badly. */}

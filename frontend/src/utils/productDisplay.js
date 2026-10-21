@@ -82,13 +82,13 @@ export function formatAttributeLabel(value) {
       character.toUpperCase(),
     );
 }
-// Product decision: every offer is presented with a one-year warranty.
-// This is a fixed label, not the scraped value. What each marketplace
-// actually states ("No Warranty", "2 Years Warranty", or nothing) is still
-// collected and stored on the listing as `warranty`; returning
-// `listing.warranty` here instead restores the real figure.
-export const DISPLAYED_WARRANTY = "1 Year Warranty";
+// The warranty exactly as the marketplace states it for this offer
+// ("1 Year Warranty", "No Warranty", "Check at Delivery"), read from the
+// listing's stored `warranty`. Daraz states one for few of its offers.
+export const WARRANTY_NOT_STATED = "Not stated";
 
-export function formatWarranty() {
-  return DISPLAYED_WARRANTY;
+export function formatWarranty(listing) {
+  const warranty = String(listing?.warranty ?? "").trim();
+
+  return warranty || WARRANTY_NOT_STATED;
 }
