@@ -44,7 +44,11 @@ DEFAULT_SPIDERS = (
     "priceoye_smartphones",
     "daraz_smartphones",
     "shophive_smartphones",
-    # Last: it looks up the phones the three marketplace crawls just listed.
+    "priceoye_tablets",
+    "shophive_tablets",
+    # After the two above: its listings only join tablets they catalogued.
+    "daraz_tablets",
+    # Last: it looks up the phones the marketplace crawls just listed.
     "whatmobile_opinions",
 )
 JOB_ID = "vextro-marketplace-refresh"

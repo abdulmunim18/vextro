@@ -56,6 +56,10 @@ class PriceoyeSpider(scrapy.Spider):
     catalog_category = "mobile-phones"
     parser_version = "priceoye-v5-brand-catalogues"
     allowed_domains = ["priceoye.pk"]
+    # The catalogue this spider walks. Every PriceOye category is laid out
+    # alike - /<catalogue>, /<catalogue>/<brand>, /<catalogue>/<brand>/<page>
+    # - so another category is a subclass naming its own path.
+    catalog_path = "/mobiles"
     start_urls = ["https://priceoye.pk/mobiles"]
 
     custom_settings = {
@@ -323,7 +327,7 @@ class PriceoyeSpider(scrapy.Spider):
 
         for slug in self.brand_slugs(response):
             yield response.follow(
-                f'/mobiles/{slug}',
+                f'{self.catalog_path}/{slug}',
                 callback=self.parse_brand,
                 errback=self.page_fetch_error,
                 cb_kwargs={'brand_slug': slug},
@@ -341,7 +345,7 @@ class PriceoyeSpider(scrapy.Spider):
             and page_number < self.max_catalog_pages()
         ):
             yield response.follow(
-                f'/mobiles/{brand_slug}?page={page_number + 1}',
+                f'{self.catalog_path}/{brand_slug}?page={page_number + 1}',
                 callback=self.parse_brand,
                 errback=self.page_fetch_error,
                 cb_kwargs={
@@ -1049,3 +1053,19 @@ class PriceoyeSpider(scrapy.Spider):
         if cause is None:
             raise error
         raise error from cause
+
+
+class PriceoyeTabletSpider(PriceoyeSpider):
+    """PriceOye's tablet catalogue, read exactly as its phone catalogue is.
+
+    Tablet pages carry the same offer matrix ("128gb - 8gb ram" per colour)
+    and say Wi-Fi or 4G in the title, which the backend's tablet profile
+    reads as the variant's connectivity.
+    """
+
+    name = "priceoye_tablets"
+    catalog_category = "tablets"
+    parser_version = "priceoye-tablets-v1"
+    catalog_path = "/tablets"
+    start_urls = ["https://priceoye.pk/tablets"]
+    PRODUCT_URL_PREFIX = "https://priceoye.pk/tablets/"

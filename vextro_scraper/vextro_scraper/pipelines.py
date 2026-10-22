@@ -40,6 +40,25 @@ class NonSmartphoneItemError(DropItem):
 
     error_type = 'non_smartphone_item'
     error_stage = 'validation'
+    # Turned away on purpose, not lost: it must not mark the run partial.
+    outcome = 'rejected'
+
+
+# The matcher's MEDIUM tier: close enough for an administrator to confirm.
+MATCH_ONLY_REVIEW_CONFIDENCE = 75
+
+
+class NotInCatalogueError(DropItem):
+    """Pass over a match-only listing that names no catalogue product.
+
+    Daraz's tablet and watch listings are mostly unbranded. They may join a
+    product another marketplace catalogued; one that resembles nothing is
+    not queued for an administrator, who could not map it either.
+    """
+
+    error_type = 'not_in_catalogue'
+    error_stage = 'matching'
+    outcome = 'rejected'
 
 
 class InvalidMarketplacePriceError(DropItem):
@@ -273,6 +292,30 @@ def infer_title_specifications(model, specifications=None):
 
 PHONE_CATEGORY = 'mobile-phones'
 
+# What a tablet category also serves: drawing pads and pen displays,
+# children's LCD writing boards, e-paper notebooks, and tablet accessories
+# and keyboard bundles, which are priced apart from the tablet itself.
+NOT_A_TABLET = re.compile(
+    r'\b(?:'
+    r'drawing|graphics?\s+(?:pen\s+)?tablet|pen\s+(?:display|tablet)'
+    r'|digital\s+paper|e-?reader|writing\s+(?:tablet|pad|board)'
+    r'|stylus|pen\s+for|nibs?|screen\s+protector|tempered\s+glass'
+    r'|keyboard|(?:tablet|ipad)\s+(?:bag|sleeve|stand|holder|case|cover)'
+    r'|(?:case|cover)\s+for'
+    r')\b',
+    re.I,
+)
+
+
+def is_out_of_category(category, title):
+    """Return whether a title names something its category does not sell."""
+
+    if category == PHONE_CATEGORY:
+        return is_accessory_title(title)
+    if category == 'tablets':
+        return bool(NOT_A_TABLET.search(title or ''))
+    return False
+
 
 class VextroCleaningPipeline:
     def process_item(self, item, spider):
@@ -387,22 +430,24 @@ class VextroCleaningPipeline:
             or PHONE_CATEGORY
         )
         adapter['category'] = category
+        if getattr(spider, 'match_only', False):
+            adapter['match_only'] = True
 
-        # The accessory rules describe what is not a phone. Other categories
-        # bring their own rules; a phone's rules would drop an earbud's
-        # "charging case" or a tablet's "keyboard cover".
-        if category == PHONE_CATEGORY and is_accessory_title(cleaned_title):
+        # Each category has its own rules for what it does not sell; a
+        # phone's accessory rules would drop an earbud's "charging case".
+        if is_out_of_category(category, cleaned_title):
             platform = str(adapter.get('platform') or 'unknown').lower()
             external_id = str(adapter.get('external_id') or 'unknown')
             logging.info(
-                'Dropped marketplace accessory: platform=%s external_id=%s '
-                'title=%r',
+                'Dropped marketplace item outside its category: '
+                'platform=%s external_id=%s category=%s title=%r',
                 platform,
                 external_id,
+                category,
                 cleaned_title[:200],
             )
             raise NonSmartphoneItemError(
-                'Marketplace item is an accessory, not a smartphone '
+                f'Marketplace item is not sold as {category} '
                 f'(platform={platform} external_id={external_id}).'
             )
 
@@ -895,6 +940,9 @@ class VextroApiIngestionPipeline:
         if category:
             match_payload['category_slug'] = category
 
+        if payload.get('match_only'):
+            match_payload['allow_new_product'] = False
+
         return match_payload
 
     @staticmethod
@@ -1125,13 +1173,39 @@ class VextroApiIngestionPipeline:
         product_variant_id = match_result.get('product_variant_id')
         if not match_result.get('matched') or not product_variant_id:
             reason = str(match_result.get('reason') or 'no safe match')
+
+            # The matcher suggests its best guess for nearly anything, so a
+            # match-only listing is queued only when that guess is a
+            # likely one; the rest resemble no catalogued product.
+            if payload.get('match_only') and (
+                not match_result.get('suggested_product_variant_id')
+                or int(match_result.get('confidence') or 0)
+                < MATCH_ONLY_REVIEW_CONFIDENCE
+            ):
+                logging.info(
+                    'Passed over a match-only listing with no catalogue '
+                    'product (%s, reason=%s).',
+                    context,
+                    reason,
+                )
+                raise NotInCatalogueError(
+                    f'No catalogue product for a match-only listing ({context}).'
+                )
+
             listing_payload = self._build_listing_payload(payload)
             pending_payload = {
                 'platform_code': listing_payload['platform_code'],
                 'external_id': listing_payload['external_id'],
                 'title': listing_payload['title'],
                 'product_url': listing_payload['product_url'],
-                'match_payload': self._build_match_payload(payload),
+                # The queue keeps the match request an administrator can
+                # replay; whether its source may add products is not part
+                # of it.
+                'match_payload': {
+                    key: value
+                    for key, value in self._build_match_payload(payload).items()
+                    if key != 'allow_new_product'
+                },
                 'listing_payload': listing_payload,
                 'match_confidence': int(
                     match_result.get('confidence') or 0

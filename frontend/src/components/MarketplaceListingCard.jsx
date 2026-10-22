@@ -5,6 +5,10 @@ import {
   toFiniteNumber,
 } from "../utils/productDisplay";
 import { getMarketplaceDestination } from "../utils/marketplaceDestination";
+import {
+  formatCapacity,
+  variantIdentityDetails,
+} from "../utils/variantIdentity";
 
 function MarketplaceListingCard({
   listing,
@@ -52,11 +56,6 @@ function MarketplaceListingCard({
 
   const variant = listing.product_variant;
 
-  const formatCapacity = (gigabytes) =>
-    gigabytes >= 1024 && gigabytes % 1024 === 0
-      ? `${gigabytes / 1024}TB`
-      : `${gigabytes}GB`;
-
   const offerDetails = [
     {
       label: "Colour",
@@ -75,6 +74,11 @@ function MarketplaceListingCard({
       value: variant?.ram_gb ? `${variant.ram_gb}GB` : "",
       missing: "Not stated",
     },
+    // A tablet's screen and Wi-Fi or cellular model, a watch's case size:
+    // shown only where the category has them.
+    ...variantIdentityDetails(variant)
+      .filter(({ key }) => key !== "ram_gb" && key !== "storage_gb")
+      .map(({ label, value }) => ({ label, value, missing: "" })),
   ];
 
   return (

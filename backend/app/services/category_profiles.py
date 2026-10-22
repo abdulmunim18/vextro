@@ -51,21 +51,32 @@ class CategoryProfile:
     slug: str
     name: str
     identity: tuple[IdentityAttribute, ...]
-    # Words that name a variant, not the product: "Wi-Fi" and "LTE" on a
-    # tablet, "44mm" and "GPS" on a watch. They come off before a title
-    # becomes a product name or is compared with one.
+    # Words that name a variant or the offer, not the product: "Wi-Fi" and
+    # "11-inch" on a tablet, "44mm" and "GPS" on a watch, "1 Year Warranty".
+    # They come off before a title becomes a product name or is compared
+    # with one.
     variant_words: tuple[re.Pattern, ...] = ()
+    # One model spelled two ways by two stores, written one way: "8th
+    # Generation M4 Chip" and "M4 8th Gen", "SM-X400" and "X400".
+    name_rewrites: tuple[tuple[re.Pattern, str], ...] = ()
 
     def product_title(self, title: str | None) -> str:
         """Return the title without the words that name a variant."""
 
         text = str(title or "")
+        removed = 0
+        for pattern, replacement in self.name_rewrites:
+            text, count = pattern.subn(replacement, text)
+            removed += count
         for pattern in self.variant_words:
-            text = pattern.sub(" ", text)
+            text, count = pattern.subn(" ", text)
+            removed += count
 
         # "Wi-Fi + Cellular" leaves a lone "+"; brackets may be left empty.
-        text = re.sub(r"(?<!\S)[+&/,|-](?!\S)", " ", text)
-        text = re.sub(r"\(\s*\)", " ", text)
+        # A title that lost nothing (every phone title) is left as it was.
+        if removed:
+            text = re.sub(r"(?<!\S)[+&/,|-](?!\S)", " ", text)
+            text = re.sub(r"\(\s*\)", " ", text)
 
         return " ".join(text.split())
 
@@ -137,7 +148,7 @@ def _storage_gb(text: str, specifications: dict[str, str], title: str) -> int | 
     return _memory(text, specifications, title)[1]
 
 
-_CELLULAR = re.compile(r"\b(?:cellular|lte|4g|5g|sim)\b", re.I)
+_CELLULAR = re.compile(r"\b(?:cellular|lte|3g|4g|5g|sim)\b", re.I)
 _WIFI_ONLY = re.compile(r"\bwi[\s-]?fi\b", re.I)
 
 
@@ -178,10 +189,49 @@ def _case_size_mm(text: str, specifications: dict[str, str], title: str) -> int 
     return None
 
 
+_SCREEN_SIZE = re.compile(
+    # Stores write inches as a word, a quote, a double prime or two
+    # apostrophes: 11-inch, 13", 14.6″, 8.3''.
+    r"\b(\d{1,2}(?:\.\d{1,2})?)\s*-?\s*(?:inches|inch|\"|''|”|″)",
+    re.I,
+)
+
+
+def _screen_inches(text: str, specifications: dict[str, str], title: str) -> int | float | None:
+    """A tablet's screen size as the title states it: 11 or 13 inches.
+
+    The 11- and 13-inch iPad Pro are one model at two prices. Only the
+    title is read: a specification sheet's 10.95 against another store's
+    "11-inch" would part one tablet into two.
+    """
+
+    for match in _SCREEN_SIZE.finditer(text):
+        size = float(match.group(1))
+        if 7 <= size <= 15:
+            return int(size) if size.is_integer() else round(size, 1)
+    return None
+
+
+# "1 Year Warranty", "(1 Year Brand Warranty)": the seller's promise, not
+# the product's name.
+_WARRANTY_WORDS = re.compile(
+    r"\b\d{1,2}\s*(?:years?|yrs?|months?)\s+(?:of\s+)?"
+    r"(?:brand\s+|official\s+|local\s+)?warranty\b",
+    re.I,
+)
+
+# "(2025)", "2026": a tablet is named by its chip and generation ("iPad Air
+# M4", "Tab S10 FE"); stores add the year in different places, and the
+# phone name cleaner cuts a name at its first bracket ("iPad Pro (2025) M5"
+# became "iPad Pro").
+_MODEL_YEAR = re.compile(r"\(\s*20\d{2}\s*\)|\b20\d{2}\b")
+
+
 RAM = IdentityAttribute("ram_gb", "RAM", "GB", _ram_gb)
 STORAGE = IdentityAttribute("storage_gb", "Storage", "GB", _storage_gb)
 CONNECTIVITY = IdentityAttribute("connectivity", "Connectivity", None, _connectivity)
 CASE_SIZE = IdentityAttribute("case_size_mm", "Case size", "mm", _case_size_mm)
+SCREEN_SIZE = IdentityAttribute("screen_in", "Screen", "inch", _screen_inches)
 
 
 # ---------------------------------------------------------------------------
@@ -197,10 +247,21 @@ PROFILES: dict[str, CategoryProfile] = {
         CategoryProfile(
             "tablets",
             "Tablets",
-            (RAM, STORAGE, CONNECTIVITY),
+            (RAM, STORAGE, CONNECTIVITY, SCREEN_SIZE),
             variant_words=(
-                re.compile(r"\bwi[\s-]?fi\b", re.I),
-                re.compile(r"\b(?:cellular|lte|4g|5g)\b", re.I),
+                re.compile(r"\bwi[\s-]?fi(?:\s+only)?\b", re.I),
+                re.compile(r"\b(?:cellular|lte|3g|4g|5g)\b", re.I),
+                _SCREEN_SIZE,
+                _WARRANTY_WORDS,
+                _MODEL_YEAR,
+            ),
+            name_rewrites=(
+                (re.compile(r"\bgeneration\b", re.I), "Gen"),
+                (re.compile(r"\bchip\b", re.I), " "),
+                # Samsung's "SM-" model prefix, written by some stores only.
+                (re.compile(r"\bSM-(?=[a-z]\d)", re.I), ""),
+                # A Shophive typo on its Redmi Pad 2 listings.
+                (re.compile(r"\bSSD\b"), " "),
             ),
         ),
         CategoryProfile(

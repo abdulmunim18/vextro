@@ -75,6 +75,11 @@ TARGETED_SPIDERS: dict[str, TargetedSpider] = {
 # A category without an entry is refreshed only by its scheduled crawl.
 CATEGORY_SPIDERS: dict[str, dict[str, TargetedSpider]] = {
     "mobile-phones": TARGETED_SPIDERS,
+    "tablets": {
+        "priceoye": TargetedSpider("priceoye_tablets", "product_urls"),
+        "daraz": TargetedSpider("daraz_tablets", "search_terms", "|"),
+        "shophive": TargetedSpider("shophive_tablets", "product_urls"),
+    },
 }
 
 Launcher = Callable[[TargetedSpider, list[str]], object]

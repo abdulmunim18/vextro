@@ -109,9 +109,9 @@ query($filter: ProductAttributeFilterInput!, $page: Int!, $size: Int!) {
 }
 '''
 
-# "8GB 256GB", "4GB +64GB", "12GB 1TB": RAM, then storage.
+# "8GB 256GB", "4GB +64GB", "12GB/256GB", "12GB 1TB": RAM, then storage.
 MEMORY_PAIR = re.compile(
-    r'\b(\d{1,2})\s*GB\s*\+?\s*(\d{1,4})\s*(GB|TB)\b',
+    r'\b(\d{1,2})\s*GB\s*[+/]?\s*(\d{1,4})\s*(GB|TB)\b',
     re.I,
 )
 # A lone figure, as on iPhones: "512GB", "2TB".
@@ -122,6 +122,8 @@ BRACKETED = re.compile(r'\(\s*([^()]*?)\s*\)')
 MODEL_YEAR = re.compile(r'(?:19|20)\d{2}')
 
 COLOUR_OPTION_TITLE = re.compile(r'^\s*colou?rs?\s*$', re.I)
+# A short code mixing letters and digits: "Mh5U4", "MXW23".
+PART_NUMBER = re.compile(r'(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{4,6}')
 
 # Values Shophive types where it has nothing to state.
 EMPTY_VALUES = frozenset({
@@ -218,6 +220,11 @@ def tidy_colour(title):
 
     words = str(title or '').split()
 
+    # Shophive appends Apple's part number to iPad colours: "Space Grey
+    # Mh5U4". It names the configuration, not the colour.
+    if len(words) > 1 and PART_NUMBER.fullmatch(words[-1]):
+        words.pop()
+
     if not words:
         return None
 
@@ -285,6 +292,11 @@ class ShophiveSpider(scrapy.Spider):
     catalog_category = 'mobile-phones'
     parser_version = 'shophive-v1-storefront-feed'
     allowed_domains = ['shophive.com']
+
+    # The store categories this spider reads, and the subcategories within
+    # them that hold something else (drawing pads, accessories).
+    category_paths = CATEGORY_PATHS
+    excluded_paths = ()
 
     custom_settings = {
         'USER_AGENT': (
@@ -358,7 +370,7 @@ class ShophiveSpider(scrapy.Spider):
                 and self.expected_counts.get(path) is not None
                 and len(self.received_skus.get(path, ()))
                 == self.expected_counts[path]
-                for path in CATEGORY_PATHS
+                for path in self.category_paths
             )
         )
 
@@ -374,7 +386,7 @@ class ShophiveSpider(scrapy.Spider):
             GRAPHQL_URL,
             data={
                 'query': CATEGORIES_QUERY,
-                'variables': {'paths': list(CATEGORY_PATHS)},
+                'variables': {'paths': list(self.category_paths)},
             },
             callback=self.parse_categories,
             errback=self.feed_fetch_error,
@@ -448,7 +460,7 @@ class ShophiveSpider(scrapy.Spider):
             if isinstance(category, dict)
         }
 
-        for path in CATEGORY_PATHS:
+        for path in self.category_paths:
             category = categories.get(path)
 
             if not category or not category.get('uid'):
@@ -527,6 +539,9 @@ class ShophiveSpider(scrapy.Spider):
 
         for entry in entries:
             if entry['sku'] in self.emitted_skus:
+                continue
+
+            if any(self.filed_under(entry, path) for path in self.excluded_paths):
                 continue
 
             if self.targeted:
@@ -783,3 +798,25 @@ class ShophiveSpider(scrapy.Spider):
             self.expected_counts,
             self.full_crawl_completed,
         )
+
+
+class ShophiveTabletSpider(ShophiveSpider):
+    """Shophive's tablets: the Apple iPad store and the tablets category.
+
+    The tablets category also holds Wacom, XP-Pen and Penpower drawing
+    pads, Kindle e-readers and tablet accessories, each in a subcategory of
+    its own; those are skipped. Drawing pads filed in no subcategory are
+    caught by the pipeline's tablet rules.
+    """
+
+    name = 'shophive_tablets'
+    catalog_category = 'tablets'
+    parser_version = 'shophive-tablets-v1'
+    category_paths = ('apple/ipad', 'tablets')
+    excluded_paths = (
+        'tablets/wacom',
+        'tablets/xp-pen',
+        'tablets/penpower',
+        'tablets/tablet-accessories',
+        'tablets/amazon-kindle',
+    )

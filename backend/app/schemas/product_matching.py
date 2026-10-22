@@ -125,6 +125,11 @@ class ProductResolveRequest(ProductMatchRequest):
     """A match request that may also create missing catalog records."""
 
     allow_create: bool = True
+    # False files the listing only under a product the catalogue already
+    # holds. A seller marketplace (Daraz) uses it in categories where its
+    # titles are mostly unbranded: it may add a colour to a known tablet,
+    # but never a new tablet or brand.
+    allow_new_product: bool = True
 
 
 class ProductMatchResponse(BaseModel):

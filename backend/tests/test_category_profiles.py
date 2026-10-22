@@ -85,6 +85,46 @@ def test_a_tablet_keeps_its_memory_too():
     }
 
 
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ('Apple IPad Pro M5 Chip 13" 256GB Wifi', 13),
+        ("Apple iPad Air 11inch 2026 8th Generation M4 Chip Wifi", 11),
+        ("Samsung Galaxy Tab S11 Ultra 14.6″ 512GB Wifi", 14.6),
+        ("Apple iPad Mini 7 8.3'' 128GB Wifi (2024)", 8.3),
+        ("Apple iPad Pro M5 Chip 13 Inches WiFi 2025 256GB", 13),
+        # "11" here is the generation, not a size.
+        ("Apple iPad 11 (A16)", None),
+        # A desktop monitor's size is not a tablet's.
+        ('Samsung 27" Monitor Tab', None),
+    ],
+)
+def test_a_tablet_states_its_screen_size(title, expected):
+    assert identity("tablets", title).get("screen_in") == expected
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("Apple iPad Air 11inch 2026 8th Generation M4 Chip Wifi", "Apple iPad Air 8th Gen M4"),
+        ("Xiaomi Redmi Pad 2 Wifi 1 Year Warranty", "Xiaomi Redmi Pad 2"),
+        ("Xiaomi Pad 7 (1 Year Brand Warranty)", "Xiaomi Pad 7"),
+        ("E18 D08 8 Inches Tab Wifi Only", "E18 D08 Tab"),
+        ('Apple iPad Pro 12.9" M2 Wi-Fi + Cellular', "Apple iPad Pro M2"),
+        # The year goes too; a bracket before the chip once cut the name
+        # down to "Apple iPad Pro".
+        ("Apple iPad Pro 11inch (2025) M5 Chip WiFi", "Apple iPad Pro M5"),
+        ("Apple iPad Pro M5 Chip 13 inches WiFi 2025 256GB", "Apple iPad Pro M5 256GB"),
+        # One model as two stores spell it.
+        ("Apple iPad Air 8th Generation M4 Chip", "Apple iPad Air 8th Gen M4"),
+        ("Samsung Galaxy Tab S10 Lite WiFi SM-x400", "Samsung Galaxy Tab S10 Lite x400"),
+        ("Xiaomi Redmi Pad 2 SSD - Wifi", "Xiaomi Redmi Pad 2"),
+    ],
+)
+def test_a_tablets_name_leaves_out_its_variant_and_warranty(title, expected):
+    assert profile_for("tablets").product_title(title) == expected
+
+
 # --------------------------------------------------------------------------
 # Smart watches and earbuds
 # --------------------------------------------------------------------------
