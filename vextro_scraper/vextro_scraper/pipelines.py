@@ -271,6 +271,9 @@ def infer_title_specifications(model, specifications=None):
 
     return inferred
 
+PHONE_CATEGORY = 'mobile-phones'
+
+
 class VextroCleaningPipeline:
     def process_item(self, item, spider):
         adapter = ItemAdapter(item)
@@ -378,7 +381,17 @@ class VextroCleaningPipeline:
 
         adapter['model'] = cleaned_title
 
-        if is_accessory_title(cleaned_title):
+        category = (
+            adapter.get('category')
+            or getattr(spider, 'catalog_category', None)
+            or PHONE_CATEGORY
+        )
+        adapter['category'] = category
+
+        # The accessory rules describe what is not a phone. Other categories
+        # bring their own rules; a phone's rules would drop an earbud's
+        # "charging case" or a tablet's "keyboard cover".
+        if category == PHONE_CATEGORY and is_accessory_title(cleaned_title):
             platform = str(adapter.get('platform') or 'unknown').lower()
             external_id = str(adapter.get('external_id') or 'unknown')
             logging.info(
@@ -877,6 +890,10 @@ class VextroApiIngestionPipeline:
 
         if payload.get('exact_model_title'):
             match_payload['exact_model_title'] = True
+
+        category = _optional_text(payload.get('category'))
+        if category:
+            match_payload['category_slug'] = category
 
         return match_payload
 

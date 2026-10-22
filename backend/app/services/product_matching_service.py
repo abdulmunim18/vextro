@@ -5,6 +5,9 @@ from difflib import SequenceMatcher
 
 from sqlalchemy.orm import Session
 
+from app.services.category_profiles import profile_for
+from app.services.variant_identity import MEMORY_COLUMNS
+
 from app.repositories.product_matching_repository import (
     ProductMatchCandidate,
     ProductMatchingRepository,
@@ -606,6 +609,7 @@ def _score_candidate(
     requested_color: str | None,
     exact_model_title: bool = False,
     same_source_names: frozenset[str] = frozenset(),
+    requested_identity: dict[str, object] | None = None,
 ) -> _ScoredCandidate:
     """Weigh every available identity signal for one catalog variant."""
 
@@ -700,6 +704,23 @@ def _score_candidate(
                     "The requested colour does not "
                     "match this catalog variant."
                 )
+
+    # Attributes the category adds to RAM and storage: a Wi-Fi tablet is
+    # not its cellular model, a 41 mm watch is not the 45 mm one. Phones
+    # have none, so their scoring is unchanged.
+    for key, requested in (requested_identity or {}).items():
+        stored = candidate.identity.get(key)
+        if stored is None:
+            continue
+        possible_score += 5.0
+        if str(stored).lower() == str(requested).lower():
+            score += 5.0
+            confirmed_signals += 1
+        else:
+            rejection_reason = (
+                f"The requested {key.replace('_', ' ')} does not "
+                "match this catalog variant."
+            )
 
     if _model_numbers_conflict(title, candidate):
         rejection_reason = (
@@ -840,10 +861,18 @@ class ProductMatchingService:
         if exact_match is not None:
             return exact_match
 
+        profile = profile_for(payload.category_slug)
+        category = self.repository.get_category(
+            database_session,
+            profile.slug,
+        )
+        category_id = category.id if category is not None else None
+
         candidates = (
             self.repository.list_match_candidates(
                 database_session,
                 brand=payload.brand,
+                category_id=category_id,
             )
         )
 
@@ -854,6 +883,7 @@ class ProductMatchingService:
             candidates = (
                 self.repository.list_match_candidates(
                     database_session,
+                    category_id=category_id,
                 )
             )
 
@@ -903,6 +933,21 @@ class ProductMatchingService:
             requested_storage = (
                 specification_storage or extracted_storage
             )
+
+        # The category's other identity attributes, read from the same
+        # title and specification sheet. RAM and storage are left to the
+        # established path above.
+        requested_identity = {
+            key: value
+            for key, value in profile.identity_from(
+                title=title,
+                specifications=payload.specifications,
+            ).items()
+            if key not in MEMORY_COLUMNS
+        }
+        # Names are compared without the words that name a variant, so a
+        # "Tab S10 FE 5G" listing and the "Tab S10 FE" product agree.
+        title = profile.product_title(title)
 
         requested_brand = (
             payload.brand
@@ -966,6 +1011,7 @@ class ProductMatchingService:
                 same_source_names=frozenset(
                     own_names.get(candidate.canonical_product_id, ())
                 ),
+                requested_identity=requested_identity,
             )
             for candidate in candidates
         ]

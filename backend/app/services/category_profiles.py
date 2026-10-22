@@ -51,6 +51,23 @@ class CategoryProfile:
     slug: str
     name: str
     identity: tuple[IdentityAttribute, ...]
+    # Words that name a variant, not the product: "Wi-Fi" and "LTE" on a
+    # tablet, "44mm" and "GPS" on a watch. They come off before a title
+    # becomes a product name or is compared with one.
+    variant_words: tuple[re.Pattern, ...] = ()
+
+    def product_title(self, title: str | None) -> str:
+        """Return the title without the words that name a variant."""
+
+        text = str(title or "")
+        for pattern in self.variant_words:
+            text = pattern.sub(" ", text)
+
+        # "Wi-Fi + Cellular" leaves a lone "+"; brackets may be left empty.
+        text = re.sub(r"(?<!\S)[+&/,|-](?!\S)", " ", text)
+        text = re.sub(r"\(\s*\)", " ", text)
+
+        return " ".join(text.split())
 
     def identity_from(
         self,
@@ -177,8 +194,24 @@ PROFILES: dict[str, CategoryProfile] = {
     profile.slug: profile
     for profile in (
         CategoryProfile("mobile-phones", "Mobile Phones", (RAM, STORAGE)),
-        CategoryProfile("tablets", "Tablets", (RAM, STORAGE, CONNECTIVITY)),
-        CategoryProfile("smart-watches", "Smart Watches", (CASE_SIZE, CONNECTIVITY)),
+        CategoryProfile(
+            "tablets",
+            "Tablets",
+            (RAM, STORAGE, CONNECTIVITY),
+            variant_words=(
+                re.compile(r"\bwi[\s-]?fi\b", re.I),
+                re.compile(r"\b(?:cellular|lte|4g|5g)\b", re.I),
+            ),
+        ),
+        CategoryProfile(
+            "smart-watches",
+            "Smart Watches",
+            (CASE_SIZE, CONNECTIVITY),
+            variant_words=(
+                re.compile(r"\b\d{2}\s*mm\b", re.I),
+                re.compile(r"\b(?:gps|cellular|lte|4g)\b", re.I),
+            ),
+        ),
         # Earbuds come in colours only; the model name is the product.
         CategoryProfile("audio-and-earbuds", "Audio and Earbuds", ()),
     )

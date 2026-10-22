@@ -6,8 +6,11 @@ from typing import Any
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, selectinload
 
+from app.models.canonical_product import CanonicalProduct
+from app.models.category import Category
 from app.models.platform import Platform
 from app.models.product_listing import ProductListing
+from app.models.product_variant import ProductVariant
 from app.models.scrape_error import ScrapeError
 from app.models.scrape_run import ScrapeRun
 
@@ -21,6 +24,7 @@ class ScrapeMonitoringRepository:
         spider_name: str,
         trigger_type: str,
         parser_version: str,
+        category: str | None = None,
     ) -> ScrapeRun:
         run = ScrapeRun(
             platform=platform,
@@ -28,6 +32,7 @@ class ScrapeMonitoringRepository:
             status="running",
             trigger_type=trigger_type,
             parser_version=parser_version,
+            category=category,
         )
         database_session.add(run)
         database_session.flush()
@@ -77,11 +82,33 @@ class ScrapeMonitoringRepository:
         )
 
     @staticmethod
+    def _in_category(category_slug: str):
+        """Listings whose product belongs to one catalogue category."""
+
+        slugs = (
+            ("mobile-phones", "smartphones")
+            if category_slug == "mobile-phones"
+            else (category_slug,)
+        )
+
+        return ProductListing.product_variant_id.in_(
+            select(ProductVariant.id)
+            .join(
+                CanonicalProduct,
+                CanonicalProduct.id == ProductVariant.canonical_product_id,
+            )
+            .join(Category, Category.id == CanonicalProduct.category_id)
+            .where(Category.slug.in_(slugs))
+        )
+
+    @classmethod
     def count_platform_listings(
+        cls,
         database_session: Session,
         *,
         platform_code: str,
         seen_since: datetime,
+        category_slug: str = "mobile-phones",
     ) -> tuple[int, int]:
         """Return ``(seen, unseen_available)`` listings for one platform.
 
@@ -94,10 +121,13 @@ class ScrapeMonitoringRepository:
             Platform.code == platform_code
         ).scalar_subquery()
 
+        in_category = cls._in_category(category_slug)
+
         seen = database_session.scalar(
             select(func.count(ProductListing.id)).where(
                 ProductListing.platform_id == platform_id,
                 ProductListing.last_seen_at >= seen_since,
+                in_category,
             )
         )
         unseen_available = database_session.scalar(
@@ -105,17 +135,20 @@ class ScrapeMonitoringRepository:
                 ProductListing.platform_id == platform_id,
                 ProductListing.last_seen_at < seen_since,
                 ProductListing.is_available.is_(True),
+                in_category,
             )
         )
 
         return int(seen or 0), int(unseen_available or 0)
 
-    @staticmethod
+    @classmethod
     def mark_unseen_listings_unavailable(
+        cls,
         database_session: Session,
         *,
         platform_code: str,
         seen_since: datetime,
+        category_slug: str = "mobile-phones",
     ) -> int:
         """Mark listings a complete crawl did not see as not on sale."""
 
@@ -129,6 +162,7 @@ class ScrapeMonitoringRepository:
                 ProductListing.platform_id == platform_id,
                 ProductListing.last_seen_at < seen_since,
                 ProductListing.is_available.is_(True),
+                cls._in_category(category_slug),
             )
             .values(is_available=False)
             .execution_options(synchronize_session=False)

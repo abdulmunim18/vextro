@@ -83,6 +83,7 @@ class DarazReviewFetchError(RuntimeError):
 class DarazSpider(scrapy.Spider):
     name = "daraz_smartphones"
     platform_code = "daraz"
+    catalog_category = "mobile-phones"
     parser_version = "daraz-v4-catalogue-search"
     allowed_domains = ["daraz.pk"]
 

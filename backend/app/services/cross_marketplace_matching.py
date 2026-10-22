@@ -166,6 +166,7 @@ def find_cross_platform_canonical(
     title: str,
     brand_id: int | None,
     incoming_platform_id: int,
+    category_id: int | None = None,
 ) -> CanonicalProduct | None:
     """Return one unambiguous same-brand identity from another platform."""
 
@@ -193,6 +194,11 @@ def find_cross_platform_canonical(
             CanonicalProduct.is_active.is_(True),
             CanonicalProduct.brand_id == brand_id,
             ProductListing.platform_id != incoming_platform_id,
+            *(
+                (CanonicalProduct.category_id == category_id,)
+                if category_id is not None
+                else ()
+            ),
         )
         .distinct()
         .all()

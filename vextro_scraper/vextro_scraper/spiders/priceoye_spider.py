@@ -53,6 +53,7 @@ class PriceOyePageFetchError(RuntimeError):
 class PriceoyeSpider(scrapy.Spider):
     name = "priceoye_smartphones"
     platform_code = "priceoye"
+    catalog_category = "mobile-phones"
     parser_version = "priceoye-v5-brand-catalogues"
     allowed_domains = ["priceoye.pk"]
     start_urls = ["https://priceoye.pk/mobiles"]

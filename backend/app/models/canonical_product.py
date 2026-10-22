@@ -28,10 +28,13 @@ class CanonicalProduct(Base):
     __tablename__ = "canonical_products"
 
     __table_args__ = (
+        # A model name is unique within its category: a brand may sell a
+        # phone and a tablet of the same name.
         UniqueConstraint(
             "brand_id",
+            "category_id",
             "model",
-            name="uq_canonical_products_brand_model",
+            name="uq_canonical_products_brand_category_model",
         ),
     )
 

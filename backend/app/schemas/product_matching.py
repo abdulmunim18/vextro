@@ -99,16 +99,32 @@ class ProductMatchRequest(BaseModel):
 
         return value
 
+    # The catalogue category the listing belongs to. Matching looks only
+    # at products of that category and new products are filed under it.
+    # Absent means a smartphone, as every listing was before categories.
+    category_slug: str | None = Field(default=None, max_length=120)
+
+    @field_validator("category_slug")
+    @classmethod
+    def category_is_known(cls, value: str | None) -> str | None:
+        return _known_category(value)
+
+
+def _known_category(value: str | None) -> str | None:
+    """Accept only a category VEXTRO has a profile for; None is a phone."""
+
+    if value is None or not value.strip():
+        return None
+
+    from app.services.category_profiles import profile_for
+
+    return profile_for(value).slug
+
 
 class ProductResolveRequest(ProductMatchRequest):
     """A match request that may also create missing catalog records."""
 
     allow_create: bool = True
-
-    category_slug: str | None = Field(
-        default=None,
-        max_length=120,
-    )
 
 
 class ProductMatchResponse(BaseModel):

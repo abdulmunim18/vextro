@@ -26,6 +26,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.canonical_product import CanonicalProduct
+from app.models.product_variant import ProductVariant
+from app.services.category_profiles import profile_for
+from app.services.variant_identity import IDENTITY, MEMORY_COLUMNS
 from app.repositories.product_matching_repository import (
     ProductMatchingRepository,
 )
@@ -134,7 +137,11 @@ class ProductResolutionService:
                     database_session,
                     variant_id=response.product_variant_id,
                     platform_code=payload.platform_code,
-                    model_name=payload.title,
+                    # Without variant words, so a tablet's "5G" names its
+                    # connectivity, not a different product.
+                    model_name=profile_for(
+                        payload.category_slug
+                    ).product_title(payload.title),
                 )
             database_session.commit()
         except Exception:
@@ -327,12 +334,29 @@ class ProductResolutionService:
                 # The seller wrote the colour into the title.
                 return None
 
+        # The new colour keeps the matched variant's whole identity, not
+        # only its memory: a cellular tablet's other colour is cellular too.
+        matched_variant = database_session.get(
+            ProductVariant,
+            match.product_variant_id,
+        )
+        extra_identity = {
+            key: value
+            for key, value in (
+                (matched_variant.variant_attributes or {}).get(IDENTITY) or {}
+                if matched_variant is not None
+                else {}
+            ).items()
+            if key not in MEMORY_COLUMNS
+        }
+
         variant = self.repository.get_variant(
             database_session,
             canonical_product_id=match.canonical_product_id,
             ram_gb=match.ram_gb,
             storage_gb=match.storage_gb,
             color=color,
+            identity=extra_identity,
         )
         variant_created = variant is None
 
@@ -343,6 +367,7 @@ class ProductResolutionService:
                 ram_gb=match.ram_gb,
                 storage_gb=match.storage_gb,
                 color=color,
+                identity=extra_identity,
                 sku=None,
                 variant_attributes={
                     key: value
@@ -419,8 +444,14 @@ class ProductResolutionService:
         # seller's store name forever ("Carrefour Samsung Galaxy A07"), and
         # the same phone from another marketplace can then never find it.
         title = clean_marketplace_title(payload.title, payload.seller_name)
+        profile = profile_for(payload.category_slug)
+        # The product's name leaves out what names a variant ("Wi-Fi",
+        # "44mm"); the full title is still read for the variant itself.
+        name_title = profile.product_title(title)
 
-        if is_accessory_title(title):
+        # The accessory rules describe what is not a phone; other categories
+        # bring their own.
+        if profile.slug == "mobile-phones" and is_accessory_title(title):
             logger.warning(
                 "Declined to create a canonical product for an accessory: "
                 "platform=%s external_id=%s",
@@ -431,8 +462,10 @@ class ProductResolutionService:
 
         brand_name = infer_brand_name(title, payload.brand)
         display_name = clean_model_name(
-            clean_product_display_name(payload.model or title)
-            or clean_product_display_name(title),
+            clean_product_display_name(
+                profile.product_title(payload.model) if payload.model else name_title
+            )
+            or clean_product_display_name(name_title),
             brand_name,
         )
 
@@ -449,14 +482,16 @@ class ProductResolutionService:
             )
             return None
 
-        category = self.repository.get_smartphone_category(
+        category = self.repository.get_category(
             database_session,
+            profile.slug,
         )
 
         if category is None:
             logger.error(
-                "Cannot create canonical products: no smartphone category "
-                "exists in the catalog."
+                "Cannot create canonical products: the %s category does "
+                "not exist in the catalog.",
+                profile.slug,
             )
             return None
 
@@ -477,11 +512,19 @@ class ProductResolutionService:
             storage_gb = payload.storage_gb
 
         color = normalize_color(payload.color)
+        extra_identity = {
+            key: value
+            for key, value in profile.identity_from(
+                title=title,
+                specifications=payload.specifications,
+            ).items()
+            if key not in MEMORY_COLUMNS
+        }
 
         product, product_created = self._resolve_canonical_product(
             database_session,
             platform_code=payload.platform_code,
-            title=title,
+            title=name_title,
             display_name=display_name,
             brand=brand,
             category_id=category.id,
@@ -495,6 +538,7 @@ class ProductResolutionService:
             ram_gb=ram_gb,
             storage_gb=storage_gb,
             color=color,
+            identity=extra_identity,
         )
         variant_created = variant is None
 
@@ -505,6 +549,7 @@ class ProductResolutionService:
                 ram_gb=ram_gb,
                 storage_gb=storage_gb,
                 color=color,
+                identity=extra_identity,
                 sku=self._available_sku(database_session, payload),
                 variant_attributes={
                     key: value
@@ -608,6 +653,7 @@ class ProductResolutionService:
             database_session,
             brand_id=brand_id,
             model=model,
+            category_id=category_id,
         )
 
         if existing is None and brand_id is not None:
@@ -616,6 +662,7 @@ class ProductResolutionService:
                 title=title,
                 brand_id=brand_id,
                 brand_name=brand_name,
+                category_id=category_id,
             )
 
         if existing is not None and exact_model_title and any(
@@ -669,8 +716,9 @@ class ProductResolutionService:
         title: str,
         brand_id: int,
         brand_name: str | None,
+        category_id: int | None = None,
     ) -> CanonicalProduct | None:
-        """Return the same phone already registered under another title."""
+        """Return the same product already registered under another title."""
 
         identity = cross_marketplace_product_key(title, brand_name)
 
@@ -685,6 +733,11 @@ class ProductResolutionService:
             .where(
                 CanonicalProduct.is_active.is_(True),
                 CanonicalProduct.brand_id == brand_id,
+                *(
+                    (CanonicalProduct.category_id == category_id,)
+                    if category_id is not None
+                    else ()
+                ),
             )
             .order_by(CanonicalProduct.id.asc())
         )
@@ -705,6 +758,7 @@ class ProductResolutionService:
             title=title,
             brand_id=brand_id,
             incoming_platform_id=-1,
+            category_id=category_id,
         )
 
     def _available_sku(

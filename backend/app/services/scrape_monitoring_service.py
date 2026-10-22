@@ -142,6 +142,7 @@ class ScrapeMonitoringService:
                 spider_name=payload.spider_name,
                 trigger_type=payload.trigger_type,
                 parser_version=payload.parser_version,
+                category=payload.category,
             )
             database_session.commit()
             database_session.refresh(run)
@@ -274,10 +275,16 @@ class ScrapeMonitoringService:
         part of the catalogue and proves nothing about what is missing.
         """
 
+        # A crawl of one category proves nothing about another: a complete
+        # phone crawl must not retire tablets it never looked for. Runs
+        # from before categories covered smartphones.
+        category_slug = run.category or "mobile-phones"
+
         seen, unseen_available = self.repository.count_platform_listings(
             database_session,
             platform_code=run.platform,
             seen_since=run.started_at,
+            category_slug=category_slug,
         )
 
         if not unseen_available:
@@ -298,6 +305,7 @@ class ScrapeMonitoringService:
             database_session,
             platform_code=run.platform,
             seen_since=run.started_at,
+            category_slug=category_slug,
         )
         logger.info(
             "Retired %s unseen listings: run_id=%s platform=%s.",

@@ -282,6 +282,7 @@ def colour_image(colour, image_urls):
 class ShophiveSpider(scrapy.Spider):
     name = 'shophive_smartphones'
     platform_code = 'shophive'
+    catalog_category = 'mobile-phones'
     parser_version = 'shophive-v1-storefront-feed'
     allowed_domains = ['shophive.com']
 

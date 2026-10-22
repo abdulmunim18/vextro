@@ -39,16 +39,10 @@ class ProductVariant(Base):
     __tablename__ = "product_variants"
 
     __table_args__ = (
-        UniqueConstraint(
-            "canonical_product_id",
-            "ram_gb",
-            "storage_gb",
-            "color",
-            "condition",
-            name="uq_product_variants_configuration",
-        ),
-        # The category-independent form of the same rule: one variant per
-        # product, identity, colour and condition.
+        # One variant per product, identity, colour and condition. The
+        # identity includes RAM and storage, so this also covers what the
+        # older RAM-and-storage rule did, and lets a Wi-Fi and a cellular
+        # tablet of one memory size exist side by side.
         UniqueConstraint(
             "canonical_product_id",
             "configuration_key",
