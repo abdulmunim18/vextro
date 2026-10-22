@@ -26,6 +26,7 @@ from app.services.smartphone_normalization import (
     extract_memory_capacities,
     normalize_specifications,
 )
+from app.services.variant_identity import configuration_key
 
 
 class UnknownCategoryError(ValueError):
@@ -201,26 +202,6 @@ def profile_for(slug: str | None) -> CategoryProfile:
         raise UnknownCategoryError(
             f"No category profile for {slug!r}; known: {', '.join(sorted(PROFILES))}."
         ) from None
-
-
-def configuration_key(attributes: dict[str, object]) -> str:
-    """One stable string for a variant's identity attributes.
-
-    Sorted by key so the order a source states them in never matters;
-    ``{"storage_gb": 256, "ram_gb": 8}`` is ``ram_gb=8|storage_gb=256``. A
-    product with no identity attributes (one model, colours only) has the
-    empty key.
-    """
-
-    parts = []
-    for key in sorted(attributes):
-        value = attributes[key]
-        if value is None or value == "":
-            continue
-        text = str(value).strip().lower()
-        parts.append(f"{key}={text}")
-
-    return "|".join(parts)
 
 
 __all__ = [
