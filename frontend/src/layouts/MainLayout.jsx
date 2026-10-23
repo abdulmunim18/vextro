@@ -38,11 +38,13 @@ const footerGroups = [
   },
 ];
 
+// The slugs are the catalogue's own category slugs.
 const headerCategories = [
-  { label: "Smartphones", to: "/products?category=smartphones" },
+  { label: "Smartphones", to: "/products?category=mobile-phones" },
+  { label: "Tablets", to: "/products?category=tablets" },
   { label: "Laptops", to: "/products?category=laptops" },
-  { label: "Wearables", to: "/products?category=wearables" },
-  { label: "Audio", to: "/products?category=audio" },
+  { label: "Wearables", to: "/products?category=smart-watches" },
+  { label: "Audio", to: "/products?category=audio-and-earbuds" },
 ];
 
 function getDesktopNavClass({ isActive }) {

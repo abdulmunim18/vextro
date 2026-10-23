@@ -40,6 +40,41 @@ class NonSmartphoneItemError(DropItem):
 
     error_type = 'non_smartphone_item'
     error_stage = 'validation'
+    # Turned away on purpose, not lost: it must not mark the run partial.
+    outcome = 'rejected'
+
+
+class ReviewsOfTurnedAwayListingError(DropItem):
+    """Pass over the reviews of a listing this run turned away."""
+
+    error_type = 'review_of_turned_away_listing'
+    error_stage = 'validation'
+    outcome = 'rejected'
+
+
+class UnbrandedItemError(DropItem):
+    """Pass over a non-phone listing that names no manufacturer."""
+
+    error_type = 'unbranded_item'
+    error_stage = 'validation'
+    outcome = 'rejected'
+
+
+# The matcher's MEDIUM tier: close enough for an administrator to confirm.
+MATCH_ONLY_REVIEW_CONFIDENCE = 75
+
+
+class NotInCatalogueError(DropItem):
+    """Pass over a match-only listing that names no catalogue product.
+
+    Daraz's tablet and watch listings are mostly unbranded. They may join a
+    product another marketplace catalogued; one that resembles nothing is
+    not queued for an administrator, who could not map it either.
+    """
+
+    error_type = 'not_in_catalogue'
+    error_stage = 'matching'
+    outcome = 'rejected'
 
 
 class InvalidMarketplacePriceError(DropItem):
@@ -141,7 +176,12 @@ BRAND_RESELLER_WORDS = frozenset(
 )
 
 BRAND_PLACEHOLDERS = frozenset(
-    {'n/a', 'na', 'none', 'no brand', 'nobrand', 'unbranded', 'unknown', ''}
+    {
+        'n/a', 'na', 'none', 'no brand', 'nobrand', 'unbranded', 'unknown',
+        # PriceOye's brand for unbranded goods, and Daraz's refurbished
+        # programme, which is a seller, not a maker.
+        'assorted', 'generic', 'daraz like new', '',
+    }
 )
 
 
@@ -168,12 +208,31 @@ def canonical_brand(value):
     return None
 
 
-def infer_brand(model, provided_brand=None):
+def brands_named(value):
+    """Return every manufacturer a piece of text names, in alias order."""
+
+    words = _brand_words(value)
+    if not words:
+        return []
+
+    normalized = f" {' '.join(words)} "
+    return [
+        canonical_name
+        for canonical_name, aliases in BRAND_ALIASES
+        if any(f' {alias} ' in normalized for alias in aliases)
+    ]
+
+
+def infer_brand(model, provided_brand=None, *, prefer_provided=False):
     """Return the manufacturer behind a listing, never the seller.
 
     The marketplace's own brand field is trusted only once it is recognised
     as a manufacturer; otherwise the title decides, and a value that merely
     names a shop is dropped instead of becoming a catalog brand.
+
+    ``prefer_provided`` trusts a store that catalogues its own goods: its
+    "Xinji" brand stands for the "Xinji Nothing N1", which the title alone
+    reads as a Nothing watch.
     """
 
     cleaned_brand = ' '.join(str(provided_brand or '').split())
@@ -183,8 +242,24 @@ def infer_brand(model, provided_brand=None):
         cleaned_brand = ''
 
     from_brand = canonical_brand(cleaned_brand)
+
+    if prefer_provided and from_brand is not None:
+        # Shophive files Mibro and Imilab watches under "Xiaomi" (and some
+        # titles say both, "Xiaomi Imilab"); a title naming another known
+        # maker names the product's own.
+        others = [brand for brand in brands_named(model) if brand != from_brand]
+        if len(others) == 1:
+            return others[0]
+
     if from_brand is not None:
         return from_brand
+
+    if (
+        prefer_provided
+        and cleaned_brand
+        and not set(_brand_words(cleaned_brand)) & BRAND_RESELLER_WORDS
+    ):
+        return cleaned_brand[:120]
 
     from_title = canonical_brand(model)
     if from_title is not None:
@@ -199,8 +274,12 @@ def infer_brand(model, provided_brand=None):
     return cleaned_brand[:120]
 
 
-def infer_title_specifications(model, specifications=None):
-    """Fill common smartphone specifications encoded in listing titles."""
+def infer_title_specifications(model, specifications=None, *, bare_memory_pairs=False):
+    """Fill common smartphone specifications encoded in listing titles.
+
+    ``bare_memory_pairs`` also reads "12/256" (no unit) as RAM and storage,
+    when the second figure is a storage size a device is sold in.
+    """
 
     title = str(model or '')
     inferred = dict(specifications or {})
@@ -240,6 +319,19 @@ def infer_title_specifications(model, specifications=None):
         title,
         re.I,
     )
+    if capacity_pair is None and bare_memory_pairs:
+        capacity_pair = next(
+            (
+                match
+                for match in re.finditer(
+                    r'(?<![\d.])(\d{1,2})\s*[/+]\s*(\d{2,4})(?![\d.])',
+                    title,
+                )
+                if int(match.group(1)) <= 24
+                and int(match.group(2)) in {16, 32, 64, 128, 256, 512}
+            ),
+            None,
+        )
     if capacity_pair:
         inferred.setdefault('ram', f'{capacity_pair.group(1)}GB')
         inferred.setdefault(
@@ -271,13 +363,88 @@ def infer_title_specifications(model, specifications=None):
 
     return inferred
 
+PHONE_CATEGORY = 'mobile-phones'
+
+# What a tablet category also serves: drawing pads and pen displays,
+# children's LCD writing boards, e-paper notebooks, and tablet accessories
+# and keyboard bundles, which are priced apart from the tablet itself.
+NOT_A_TABLET = re.compile(
+    r'\b(?:'
+    r'drawing|graphics?\s+(?:pen\s+)?tablet|pen\s+(?:display|tablet)'
+    r'|digital\s+paper|e-?reader|writing\s+(?:tablet|pad|board)'
+    r'|stylus|pen\s+for|nibs?|screen\s+protector|tempered\s+glass'
+    r'|keyboard|(?:tablet|ipad)\s+(?:bag|sleeve|stand|holder|case|cover)'
+    r'|(?:case|cover)\s+for'
+    r')\b',
+    re.I,
+)
+
+
+# What a watch category also serves: straps and strap sets, chargers,
+# screen guards and bumper cases, and screen-less trackers (WHOOP, Fitbit
+# Air), which are subscriptions rather than watches. A "Smart Band" is a
+# wearable sold beside watches and is kept.
+NOT_A_WATCH = re.compile(
+    r'\b(?:'
+    r'straps?|strap\s+set|replacement\s+band|bands?\s+for|watch\s+band\s+for'
+    r'|charg(?:er|ing\s+(?:cable|dock|stand|base))|magnetic\s+cable'
+    r'|screen\s+protector|tempered\s+glass|protective\s+film'
+    r'|(?:case|cover|bumper)\s+for|screen-?less|whoop|fitbit\s+air'
+    r')\b',
+    re.I,
+)
+
+
+# What sellers write on copies of branded goods: "Samsung Logo Smart Watch
+# Ultra", "Super Master Copy". Phones have their own accessory rules.
+COPY_MARKERS = re.compile(
+    r'\b(?:logo|(?:super\s+|first\s+|high\s+|master\s+|aaa\s+)?copy'
+    r'|super\s+master|replica|clone'
+    # A listing kept up at an absurd price so nobody buys it.
+    r'|do\s+not\s+(?:buy|purchase|order)|not\s+for\s+sale)\b',
+    re.I,
+)
+
+
+def is_out_of_category(category, title):
+    """Return whether a title names something its category does not sell."""
+
+    if category == PHONE_CATEGORY:
+        return is_accessory_title(title)
+    if COPY_MARKERS.search(title or ''):
+        return True
+    if category == 'tablets':
+        return bool(NOT_A_TABLET.search(title or ''))
+    if category == 'smart-watches':
+        # "... Smart Watch with 2 Straps" is a watch with a spare strap.
+        watch = re.sub(r'\bwith\b[^|,]{0,25}?\bstraps?\b', ' ', title or '', flags=re.I)
+        return bool(NOT_A_WATCH.search(watch))
+    return False
+
+
 class VextroCleaningPipeline:
+    def __init__(self):
+        # Listings this run turned away. A spider asks for a listing's
+        # reviews as it reads the listing, so their reviews still arrive
+        # and would be sent for a listing the catalogue never received.
+        self.turned_away = set()
+
+    def turn_away(self, adapter, error):
+        external_id = adapter.get('external_id')
+        if external_id:
+            self.turned_away.add(str(external_id))
+        raise error
+
     def process_item(self, item, spider):
         adapter = ItemAdapter(item)
 
         # Review batches use the dedicated backend review contract and do not
         # contain listing prices.
         if adapter.get('reviews') is not None:
+            if str(adapter.get('external_listing_id')) in self.turned_away:
+                raise ReviewsOfTurnedAwayListingError(
+                    'Reviews of a listing this run did not deliver.'
+                )
             return item
 
         # Community opinions describe a phone, not an offer: there is no
@@ -378,20 +545,32 @@ class VextroCleaningPipeline:
 
         adapter['model'] = cleaned_title
 
-        if is_accessory_title(cleaned_title):
+        category = (
+            adapter.get('category')
+            or getattr(spider, 'catalog_category', None)
+            or PHONE_CATEGORY
+        )
+        adapter['category'] = category
+        if getattr(spider, 'match_only', False):
+            adapter['match_only'] = True
+
+        # Each category has its own rules for what it does not sell; a
+        # phone's accessory rules would drop an earbud's "charging case".
+        if is_out_of_category(category, cleaned_title):
             platform = str(adapter.get('platform') or 'unknown').lower()
             external_id = str(adapter.get('external_id') or 'unknown')
             logging.info(
-                'Dropped marketplace accessory: platform=%s external_id=%s '
-                'title=%r',
+                'Dropped marketplace item outside its category: '
+                'platform=%s external_id=%s category=%s title=%r',
                 platform,
                 external_id,
+                category,
                 cleaned_title[:200],
             )
-            raise NonSmartphoneItemError(
-                'Marketplace item is an accessory, not a smartphone '
+            self.turn_away(adapter, NonSmartphoneItemError(
+                f'Marketplace item is not sold as {category} '
                 f'(platform={platform} external_id={external_id}).'
-            )
+            ))
 
         # 3. Clean Availability: Convert 'In Stock' to Boolean (True/False)
         avail = adapter.get('availability', '')
@@ -432,13 +611,37 @@ class VextroCleaningPipeline:
         adapter['brand'] = infer_brand(
             adapter.get('model'),
             adapter.get('brand'),
+            # PriceOye and Shophive name their own goods; outside phones a
+            # model is often named after another brand's line.
+            prefer_provided=bool(adapter.get('exact_model_title'))
+            and category != PHONE_CATEGORY,
         )
+
+        # Outside phones the catalogue holds only goods a manufacturer
+        # stands behind: PriceOye files unbranded kids' tablets under
+        # "Assorted", Daraz under "No Brand". Phones keep their own handling.
+        if category != PHONE_CATEGORY and not adapter['brand']:
+            logging.info(
+                'Dropped an unbranded marketplace item: platform=%s '
+                'external_id=%s category=%s title=%r',
+                str(adapter.get('platform') or 'unknown').lower(),
+                str(adapter.get('external_id') or 'unknown'),
+                category,
+                cleaned_title[:200],
+            )
+            self.turn_away(adapter, UnbrandedItemError(
+                f'Marketplace item names no manufacturer ({category}).'
+            ))
 
         # 6. Keep API-safe, consistently named specification pairs.
         normalized_specifications = {}
         source_specifications = infer_title_specifications(
             adapter.get('model'),
             adapter.get('specifications'),
+            # "12/256" names RAM and storage on tablets; on phones the
+            # crawlers already state memory and the matcher was tuned
+            # without it.
+            bare_memory_pairs=category != PHONE_CATEGORY,
         )
         for label, value in source_specifications.items():
             normalized_label = re.sub(
@@ -878,6 +1081,17 @@ class VextroApiIngestionPipeline:
         if payload.get('exact_model_title'):
             match_payload['exact_model_title'] = True
 
+        category = _optional_text(payload.get('category'))
+        if category:
+            match_payload['category_slug'] = category
+
+        if payload.get('match_only'):
+            match_payload['allow_new_product'] = False
+            # Lets the backend tell a copy wearing a product's name (a
+            # "Galaxy Watch Ultra" at a tenth of its price) from the product.
+            if payload.get('price'):
+                match_payload['listing_price'] = payload['price']
+
         return match_payload
 
     @staticmethod
@@ -1108,13 +1322,39 @@ class VextroApiIngestionPipeline:
         product_variant_id = match_result.get('product_variant_id')
         if not match_result.get('matched') or not product_variant_id:
             reason = str(match_result.get('reason') or 'no safe match')
+
+            # The matcher suggests its best guess for nearly anything, so a
+            # match-only listing is queued only when that guess is a
+            # likely one; the rest resemble no catalogued product.
+            if payload.get('match_only') and (
+                not match_result.get('suggested_product_variant_id')
+                or int(match_result.get('confidence') or 0)
+                < MATCH_ONLY_REVIEW_CONFIDENCE
+            ):
+                logging.info(
+                    'Passed over a match-only listing with no catalogue '
+                    'product (%s, reason=%s).',
+                    context,
+                    reason,
+                )
+                raise NotInCatalogueError(
+                    f'No catalogue product for a match-only listing ({context}).'
+                )
+
             listing_payload = self._build_listing_payload(payload)
             pending_payload = {
                 'platform_code': listing_payload['platform_code'],
                 'external_id': listing_payload['external_id'],
                 'title': listing_payload['title'],
                 'product_url': listing_payload['product_url'],
-                'match_payload': self._build_match_payload(payload),
+                # The queue keeps the match request an administrator can
+                # replay; whether its source may add products is not part
+                # of it.
+                'match_payload': {
+                    key: value
+                    for key, value in self._build_match_payload(payload).items()
+                    if key not in ('allow_new_product', 'listing_price')
+                },
                 'listing_payload': listing_payload,
                 'match_confidence': int(
                     match_result.get('confidence') or 0

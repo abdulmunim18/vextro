@@ -27,6 +27,12 @@ class SmartphoneItem(scrapy.Item):
 
     # NLP & Operational Data
     platform = scrapy.Field()     # 'Daraz', 'PriceOye' or 'Shophive'
+    # Catalogue category slug ('mobile-phones', 'tablets', ...). Filled from
+    # the spider's ``catalog_category`` when the spider does not set it.
+    category = scrapy.Field()
+    # True when the listing may only join a product the catalogue already
+    # holds. Filled from the spider's ``match_only``.
+    match_only = scrapy.Field()
     product_url = scrapy.Field()
     image_urls = scrapy.Field()   # Ordered product gallery URLs
     specifications = scrapy.Field() # Normalized label/value technical data

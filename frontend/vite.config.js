@@ -10,6 +10,10 @@ export default defineConfig({
 
   server: {
     port: 5173,
+    // The backend allows requests from port 5173 only (CORS_ORIGINS). On
+    // another port every request is refused and the site reads "Unable to
+    // connect", so a busy 5173 is reported instead of quietly moving on.
+    strictPort: true,
 
     proxy: {
       "/api": {

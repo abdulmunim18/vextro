@@ -19,6 +19,11 @@ import ReviewsPanel from "../components/ReviewsPanel";
 import RouteLoadingState from "../components/RouteLoadingState";
 import { useAuth } from "../context/useAuth";
 import {
+  isInternalVariantAttribute,
+  variantIdentityChips,
+  variantIdentityDetails,
+} from "../utils/variantIdentity";
+import {
   getBrands,
   getCategories,
   getPlatforms,
@@ -155,10 +160,28 @@ function buildSpecifications(productData) {
     (value) => `${value} GB`,
   );
 
+  // A tablet's Wi-Fi or cellular models and screen sizes, a watch's case
+  // sizes: listed like RAM and storage, one row per attribute.
+  const identityRows = new Map();
+  variants.forEach((variant) => {
+    variantIdentityDetails(variant)
+      .filter(({ key }) => key !== "ram_gb" && key !== "storage_gb")
+      .forEach(({ label, value }) => {
+        const row = label.toLowerCase().replaceAll(" ", "_");
+        identityRows.set(row, [
+          ...(identityRows.get(row) || []),
+          value,
+        ]);
+      });
+  });
+  identityRows.forEach((values, row) => {
+    entries.set(row, [...new Set(values)].join(", "));
+  });
+
   variants.forEach((variant) => {
     Object.entries(variant.variant_attributes || {}).forEach(
       ([key, value]) => {
-        if (!entries.has(key)) {
+        if (!isInternalVariantAttribute(key) && !entries.has(key)) {
           entries.set(key, value);
         }
       },
@@ -169,6 +192,10 @@ function buildSpecifications(productData) {
     "color",
     "ram",
     "storage_capacity",
+    "screen",
+    "case_size",
+    "case",
+    "connectivity",
     "display",
     "processor",
     "battery_capacity",
@@ -964,17 +991,14 @@ function ProductDetailPage() {
                   </div>
 
                   <div className="mt-4 flex flex-wrap gap-2">
-                    {variant.ram_gb ? (
-                      <span className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-vextro-ink">
-                        {variant.ram_gb} GB RAM
+                    {variantIdentityChips(variant).map((chip) => (
+                      <span
+                        className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-vextro-ink"
+                        key={chip}
+                      >
+                        {chip}
                       </span>
-                    ) : null}
-
-                    {variant.storage_gb ? (
-                      <span className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-vextro-ink">
-                        {variant.storage_gb} GB Storage
-                      </span>
-                    ) : null}
+                    ))}
 
                     {variant.color ? (
                       <span className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-vextro-ink">

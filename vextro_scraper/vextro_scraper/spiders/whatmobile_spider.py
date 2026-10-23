@@ -198,6 +198,9 @@ class WhatmobileSpider(scrapy.Spider):
                         'page': page,
                         'page_size': 100,
                         'is_available': 'true',
+                        # WhatMobile is a phone guide; tablets and watches
+                        # have no pages there.
+                        'category_slug': 'mobile-phones',
                     },
                     timeout=settings.getfloat('VEXTRO_API_TIMEOUT', 20),
                 )
