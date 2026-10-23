@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -43,12 +44,47 @@ function extractItems(responseData) {
   return [];
 }
 
-function ProductsCatalog({ searchParams }) {
-  const routeFilters = {
+// Category links written before the catalogue's own slugs were used.
+const LEGACY_CATEGORY_SLUGS = {
+  smartphones: "mobile-phones",
+  wearables: "smart-watches",
+  audio: "audio-and-earbuds",
+};
+
+// Categories that hold no products of their own: the parent of every
+// category, and the old name phones were filed under.
+const HIDDEN_CATEGORY_SLUGS = new Set(["electronics", "smartphones"]);
+
+function filtersFromUrl(searchParams) {
+  const categorySlug = searchParams.get("category")?.trim() || "";
+
+  return {
     ...initialFilters,
     query: searchParams.get("q")?.trim() || "",
-    categorySlug: searchParams.get("category")?.trim() || "",
+    categorySlug: LEGACY_CATEGORY_SLUGS[categorySlug] || categorySlug,
   };
+}
+
+function urlFromFilters(filters) {
+  const params = new URLSearchParams();
+
+  if (filters.query) {
+    params.set("q", filters.query);
+  }
+
+  if (filters.categorySlug) {
+    params.set("category", filters.categorySlug);
+  }
+
+  return params;
+}
+
+function ProductsCatalog({ searchParams, setSearchParams }) {
+  const routeFilters = filtersFromUrl(searchParams);
+
+  // The address the page last wrote itself. Any other change came from a
+  // link or the back button, and the page follows it.
+  const writtenUrl = useRef(searchParams.toString());
 
   const [draftFilters, setDraftFilters] = useState(
     routeFilters,
@@ -80,6 +116,30 @@ const [platforms, setPlatforms] = useState([]);
     useState(true);
 
   const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    const address = searchParams.toString();
+
+    if (address === writtenUrl.current) {
+      return;
+    }
+
+    // A header link ("Tablets") or the back button: start over from the
+    // address, as a fresh visit would.
+    writtenUrl.current = address;
+    const filters = filtersFromUrl(searchParams);
+    setDraftFilters(filters);
+    setAppliedFilters(filters);
+    setPage(1);
+    setPageInput("1");
+    setPageInputError("");
+  }, [searchParams]);
+
+  function writeUrl(filters) {
+    const params = urlFromFilters(filters);
+    writtenUrl.current = params.toString();
+    setSearchParams(params);
+  }
 
   useEffect(() => {
     let isMounted = true;
@@ -261,10 +321,14 @@ function handleSearch(event) {
   setPageInput("1");
   setPageInputError("");
 
-  setAppliedFilters({
+  const filters = {
     ...draftFilters,
     query: draftFilters.query.trim(),
-  });
+  };
+  setAppliedFilters(filters);
+  // The address names the search and category shown, so it can be shared
+  // and never says "wearables" over a list of every product.
+  writeUrl(filters);
 }
 
 function handleReset() {
@@ -272,6 +336,7 @@ function handleReset() {
   setErrorMessage("");
   setDraftFilters(initialFilters);
   setAppliedFilters(initialFilters);
+  writeUrl(initialFilters);
   setPage(1);
   setPageInput("1");
   setPageInputError("");
@@ -482,14 +547,16 @@ const comparisonUrl =
 >
   <option value="">All categories</option>
 
-  {categories.map((category) => (
-    <option
-      key={category.id}
-      value={category.slug}
-    >
-      {category.name}
-    </option>
-  ))}
+  {categories
+    .filter((category) => !HIDDEN_CATEGORY_SLUGS.has(category.slug))
+    .map((category) => (
+      <option
+        key={category.id}
+        value={category.slug}
+      >
+        {category.name}
+      </option>
+    ))}
 </select>
           </div>
 
@@ -867,12 +934,12 @@ const comparisonUrl =
 }
 
 function ProductsPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   return (
     <ProductsCatalog
-      key={searchParams.toString()}
       searchParams={searchParams}
+      setSearchParams={setSearchParams}
     />
   );
 }

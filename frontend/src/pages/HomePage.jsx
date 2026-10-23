@@ -9,12 +9,11 @@ const popularSearches = [
 ];
 
 const categoryLinks = [
-  { icon: "📱", label: "Smartphones", slug: "smartphones" },
+  { icon: "📱", label: "Smartphones", slug: "mobile-phones" },
+  { icon: "📲", label: "Tablets", slug: "tablets" },
   { icon: "💻", label: "Laptops", slug: "laptops" },
-  { icon: "🎧", label: "Audio", slug: "audio" },
-  { icon: "⌚", label: "Wearables", slug: "wearables" },
-  { icon: "🏠", label: "Home", slug: "home-appliances" },
-  { icon: "✨", label: "Beauty", slug: "health-beauty" },
+  { icon: "⌚", label: "Wearables", slug: "smart-watches" },
+  { icon: "🎧", label: "Audio", slug: "audio-and-earbuds" },
 ];
 
 const howItWorks = [
@@ -251,7 +250,7 @@ function HomePage() {
             <Link className="text-sm font-black text-vextro-primary hover:text-vextro-primary-dark" to="/products">View all products →</Link>
           </div>
 
-          <div className="mt-9 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="mt-9 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             {categoryLinks.map((category) => (
               <Link
                 key={category.label}
