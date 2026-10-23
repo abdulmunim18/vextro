@@ -48,6 +48,9 @@ DEFAULT_SPIDERS = (
     "shophive_tablets",
     # After the two above: its listings only join tablets they catalogued.
     "daraz_tablets",
+    "priceoye_smartwatches",
+    "shophive_smartwatches",
+    "daraz_smartwatches",
     # Last: it looks up the phones the marketplace crawls just listed.
     "whatmobile_opinions",
 )

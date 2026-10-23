@@ -342,6 +342,9 @@ BRAND_ALIASES = (
     ('Microsoft', ('microsoft', 'surface pro')),
     ('Asus', ('asus',)),
     ('Acer', ('acer',)),
+    # Watch makers Shophive files under Xiaomi.
+    ('Mibro', ('mibro',)),
+    ('Imilab', ('imilab',)),
 )
 
 

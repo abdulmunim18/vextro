@@ -180,14 +180,70 @@ def test_phone_titles_are_not_rewritten():
 @pytest.mark.parametrize(
     ("title", "expected"),
     [
-        ("Apple Watch Series 11 46mm GPS", {"case_size_mm": 46}),
+        # GPS and GPS + Cellular are two models at two prices.
+        ("Apple Watch Series 11 46mm GPS", {"case_size_mm": 46, "connectivity": "gps"}),
         ("Apple Watch Ultra 3 49 mm GPS + Cellular", {"case_size_mm": 49, "connectivity": "cellular"}),
         ("Samsung Galaxy Watch 8 44MM", {"case_size_mm": 44}),
+        ("Samsung Galaxy Watch 8 Classic 46mm Bluetooth", {"case_size_mm": 46, "connectivity": "gps"}),
         ("Xiaomi Redmi Watch 5 Active", {}),
+        # The case's material, not the band's.
+        (
+            "Apple Watch Series 12 GPS + Cellular 46mm Natural Titanium Case with Natural Milanese Loop",
+            {"case_size_mm": 46, "connectivity": "cellular", "case_material": "titanium"},
+        ),
+        (
+            "Apple Watch Series 11 42mm Space Gray Aluminium Case With Black Sports Band",
+            {"case_size_mm": 42, "case_material": "aluminium"},
+        ),
     ],
 )
 def test_a_watch_is_identified_by_case_size(title, expected):
     assert identity("smart-watches", title) == expected
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("Apple Watch SE 3 40mm GPS (2025)", "Apple Watch SE Gen 3 40mm Midnight Case With Midnight Sports Band"),
+        (
+            "Apple Watch Ultra 3 49mm (2025)",
+            "Apple Watch Ultra 3 GPS + Cellular 49mm Black Titanium Case with Black Ocean Band (MF254)",
+        ),
+        ("Samsung Watch 8 Classic 46mm", "Samsung Galaxy Watch 8 Classic 46mm Bluetooth"),
+        ("Huawei GT7 Pro Smart Watch 46mm", "Huawei Watch GT7 Pro 46mm"),
+        ("Xiaomi Mi Band 10", "Xiaomi Smart Band 10"),
+        ("Faster Nerv Smart Watch 2", "Faster Nerv Watch 2"),
+    ],
+)
+def test_two_stores_spellings_of_one_watch_read_the_same(first, second):
+    profile = profile_for("smart-watches")
+
+    assert profile.product_title(first).lower() == profile.product_title(second).lower()
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("Amazfit Pop 3S Smart Watch With 1.96″ Amoled", "Amazfit Pop 3S Watch"),
+        ("Xinji N3 Smart Watch Ultra-Thin 1.43&#039;&#039; Amoled", "Xinji N3 Watch Ultra-Thin"),
+        ("Samsung Galaxy Watch 9 WiFi With Sports Band 44mm", "Samsung Galaxy Watch 9"),
+        ("Huawei Band 11 Pro Premium Fitness Tracker", "Huawei Band 11 Pro"),
+        ("Xiaomi Smart Band 9 Active Smart Watch (Global)", "Xiaomi Smart Band 9 Active"),
+        ("Haylou RS4 Max Calling Watch", "Haylou RS4 Max Watch"),
+        ("Nothing CMF Watch 3 Pro With One Year Brand", "Nothing CMF Watch 3 Pro"),
+        # "Inch" after the quote once survived, and its "2" was read away.
+        ('CMF Nothing Watch Pro 2 With 1.32" Inch Amoled Display', "CMF Nothing Watch Pro 2"),
+        ('Kospet Tank S2 1.32" Inch Amoled', "Kospet Tank S2"),
+    ],
+)
+def test_a_watchs_name_leaves_out_its_screen_band_and_selling_points(title, expected):
+    assert profile_for("smart-watches").product_title(title) == expected
+
+
+def test_memory_does_not_tell_watches_apart():
+    assert profile_for("mobile-phones").uses_memory
+    assert profile_for("tablets").uses_memory
+    assert not profile_for("smart-watches").uses_memory
 
 
 def test_a_screen_measured_in_millimetres_elsewhere_is_not_a_case_size():

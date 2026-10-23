@@ -21,11 +21,14 @@ from __future__ import annotations
 
 import logging
 import re
+from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.canonical_product import CanonicalProduct
+from app.models.platform import Platform
+from app.models.product_listing import ProductListing
 from app.models.product_variant import ProductVariant
 from app.services.category_profiles import profile_for
 from app.services.variant_identity import IDENTITY, MEMORY_COLUMNS
@@ -68,6 +71,12 @@ logger = logging.getLogger(__name__)
 AUTO_ATTACH_TIERS = frozenset({TIER_EXACT, TIER_HIGH})
 
 MIN_MODEL_NAME_LENGTH = 3
+
+# A match-only listing below this share of the product's cheapest offer
+# elsewhere is taken for a copy wearing the product's name.
+COPY_PRICE_RATIO = Decimal("0.5")
+# Above this multiple of its dearest offer elsewhere, a placeholder.
+PLACEHOLDER_PRICE_RATIO = Decimal("3")
 
 
 def _compact(value: str | None) -> str:
@@ -123,6 +132,27 @@ class ProductResolutionService:
                     payload = payload.model_copy(update={"color": stated})
 
             response = self._resolve(database_session, payload)
+
+            if self._priced_out_of_line(database_session, payload, response):
+                # Anything the match prepared (a colour variant) is undone.
+                database_session.rollback()
+                logger.info(
+                    "Passed over a match-only listing priced far from its "
+                    "product: platform=%s external_id=%s product_id=%s",
+                    payload.platform_code,
+                    payload.external_id,
+                    response.canonical_product_id,
+                )
+                return ProductResolveResponse(
+                    matched=False,
+                    confidence=0,
+                    reason=(
+                        "Priced far from what the stores ask for this "
+                        "product: likely a copy using its name, or a "
+                        "listing not meant to sell."
+                    ),
+                )
+
             self._adopt_marketplace_name(database_session, payload, response)
 
             if (
@@ -149,6 +179,50 @@ class ProductResolutionService:
             raise
 
         return response
+
+    @staticmethod
+    def _priced_out_of_line(
+        database_session: Session,
+        payload: ProductResolveRequest,
+        response: ProductResolveResponse,
+    ) -> bool:
+        """Report whether a match-only listing's price rules it out.
+
+        Compared with the offers the product has in stock on the other
+        marketplaces: below half the cheapest, the listing is a copy using
+        the product's name; above three times the dearest, a placeholder a
+        seller keeps up so nobody buys it ("Do Not Purchase", Rs 99,999).
+        """
+
+        if (
+            payload.allow_new_product
+            or payload.listing_price is None
+            or not response.matched
+            or response.canonical_product_id is None
+        ):
+            return False
+
+        cheapest, dearest = database_session.execute(
+            select(
+                func.min(ProductListing.current_price),
+                func.max(ProductListing.current_price),
+            )
+            .join(ProductVariant, ProductVariant.id == ProductListing.product_variant_id)
+            .join(Platform, Platform.id == ProductListing.platform_id)
+            .where(
+                ProductVariant.canonical_product_id == response.canonical_product_id,
+                ProductListing.is_available.is_(True),
+                Platform.code != payload.platform_code,
+            )
+        ).one()
+
+        if cheapest is None:
+            return False
+
+        return (
+            payload.listing_price < cheapest * COPY_PRICE_RATIO
+            or payload.listing_price > dearest * PLACEHOLDER_PRICE_RATIO
+        )
 
     def _resolve(
         self,
@@ -483,7 +557,13 @@ class ProductResolutionService:
             )
             return None
 
-        brand_name = infer_brand_name(title, payload.brand)
+        brand_name = infer_brand_name(
+            title,
+            payload.brand,
+            # A store naming its own goods states their maker; outside
+            # phones, models are often named after another brand's line.
+            prefer_provided=payload.exact_model_title and profile.slug != "mobile-phones",
+        )
         display_name = clean_model_name(
             clean_product_display_name(
                 profile.product_title(payload.model) if payload.model else name_title
@@ -541,6 +621,8 @@ class ProductResolutionService:
             ram_gb = payload.ram_gb
         if storage_gb is None:
             storage_gb = payload.storage_gb
+        if not profile.uses_memory:
+            ram_gb = storage_gb = None
 
         color = normalize_color(payload.color)
         extra_identity = {

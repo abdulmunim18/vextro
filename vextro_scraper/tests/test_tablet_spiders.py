@@ -265,6 +265,8 @@ def test_a_match_only_listing_asks_the_backend_not_to_add_a_product():
     payload = VextroApiIngestionPipeline._build_match_payload(match_only_item())
 
     assert payload['allow_new_product'] is False
+    # Its price lets the backend tell a copy from the product.
+    assert payload['listing_price'] == 120000.0
     assert 'allow_new_product' not in VextroApiIngestionPipeline._build_match_payload(
         build_clean_item()
     )

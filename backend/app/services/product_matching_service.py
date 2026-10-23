@@ -1,6 +1,6 @@
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
 
 from sqlalchemy.orm import Session
@@ -370,6 +370,31 @@ def _detect_unique_text_value(
 _MODEL_NUMBER_TOKEN = re.compile(r"\b(?=[a-z0-9]*\d)[a-z0-9]{2,}\b")
 
 
+def _model_figures(value: str | None) -> set[str]:
+    """Return every word of a name that holds a figure: "2", "gt5", "s10".
+
+    Unlike :func:`_model_number_tokens` a lone digit counts, as in the
+    "CMF Watch 2 Pro"; it is used on store-written names only.
+    """
+
+    # "4 GB" is the measure "4gb".
+    text = re.sub(r"(\d)\s+(gb|tb|mb|mah|mp|hz|atm)\b", r"\1\2", _normalize_text(value))
+
+    return {
+        word
+        for word in text.split()
+        if any(character.isdigit() for character in word)
+        # Measures, not model numbers: "128gb", "5000mah", "1atm".
+        and not _MEASURE.fullmatch(word)
+    }
+
+
+_MEASURE = re.compile(r"\d+(?:gb|tb|mb|mah|mp|hz|atm|w|mm|nits)")
+# A maker's catalogue code ("SM-X133", "WT001"): one store writes it, the
+# other leaves it out, and it names the same product either way.
+_CATALOGUE_CODE = re.compile(r"[a-z]{1,3}\d{3,5}[a-z]{0,2}")
+
+
 def _model_number_tokens(value: str | None) -> set[str]:
     """Return the model-code tokens in a product name or marketplace title.
 
@@ -541,6 +566,10 @@ class _ScoredCandidate:
     model_score: float
     confirmed_signals: int
     rejection_reason: str | None
+    # How many words of the product's name the title carries: between two
+    # products whose names the title wholly contains ("CMF Watch Pro" and
+    # "CMF Watch 2 Pro" for "CMF Watch Pro 2"), the fuller name is meant.
+    name_words_matched: int = 0
 
 
 def _confidence_tier(confidence: int) -> str:
@@ -558,7 +587,7 @@ def _confidence_tier(confidence: int) -> str:
     return TIER_LOW
 
 
-def _ranking_key(item: _ScoredCandidate) -> tuple[int, int, float, float, int]:
+def _ranking_key(item: _ScoredCandidate) -> tuple[int, int, float, float, int, int]:
     """Order candidates by confidence, then by confirmed hard signals.
 
     ``confirmed_signals`` breaks ties between variants of the same phone: the
@@ -571,6 +600,7 @@ def _ranking_key(item: _ScoredCandidate) -> tuple[int, int, float, float, int]:
         item.confirmed_signals,
         item.name_score,
         item.model_score,
+        item.name_words_matched,
         -item.candidate.product_variant_id,
     )
 
@@ -763,6 +793,10 @@ def _score_candidate(
         model_score=model_score,
         confirmed_signals=confirmed_signals,
         rejection_reason=rejection_reason,
+        name_words_matched=len(
+            set(_normalize_text(title).split())
+            & set(_normalize_text(candidate.product_name).split())
+        ),
     )
 
 
@@ -934,6 +968,9 @@ class ProductMatchingService:
                 specification_storage or extracted_storage
             )
 
+        if not profile.uses_memory:
+            requested_ram = requested_storage = None
+
         # The category's other identity attributes, read from the same
         # title and specification sheet. RAM and storage are left to the
         # established path above.
@@ -1016,6 +1053,30 @@ class ProductMatchingService:
             for candidate in candidates
         ]
 
+        if payload.exact_model_title and profile.slug != "mobile-phones":
+            # A store that names its own goods writes every model number:
+            # its "CMF Watch 2 Pro" is not the "CMF Watch Pro" it already
+            # sells. (Phones keep the matcher they were tuned with.)
+            title_numbers = _model_figures(title)
+            scored_candidates = [
+                replace(
+                    item,
+                    rejection_reason=(
+                        "The marketplace title names a model number this "
+                        "product does not have."
+                    ),
+                )
+                if item.rejection_reason is None
+                and any(
+                    not _CATALOGUE_CODE.fullmatch(figure)
+                    for figure in title_numbers
+                    - _model_figures(item.candidate.product_name)
+                    - _model_figures(item.candidate.model)
+                )
+                else item
+                for item in scored_candidates
+            ]
+
         eligible_candidates = [
             item
             for item in scored_candidates
@@ -1037,6 +1098,28 @@ class ProductMatchingService:
         eligible_candidates.sort(key=_ranking_key, reverse=True)
 
         best = eligible_candidates[0]
+        settled_by_fuller_name = False
+
+        if profile.slug != "mobile-phones":
+            # "CMF Watch Pro" and "CMF Watch 2 Pro" both read well against
+            # "CMF Watch Pro 2". When one product's name holds every word of
+            # the best's and more, and the title holds those too, it is the
+            # product the title means.
+            title_words = set(_normalize_text(title).split())
+            best_words = set(_normalize_text(best.candidate.product_name).split())
+            fuller = [
+                item
+                for item in eligible_candidates
+                if item.candidate.canonical_product_id
+                != best.candidate.canonical_product_id
+                and best_words
+                < (item_words := set(_normalize_text(item.candidate.product_name).split()))
+                and item_words <= title_words
+                and item.confidence >= MATCH_THRESHOLD
+            ]
+            if fuller:
+                best = max(fuller, key=lambda item: (item.name_words_matched, _ranking_key(item)))
+                settled_by_fuller_name = True
 
         if best.confidence < MATCH_THRESHOLD:
             return _unmatched_response(
@@ -1065,6 +1148,20 @@ class ProductMatchingService:
 
         if (
             competing is not None
+            and profile.slug != "mobile-phones"
+            and not settled_by_fuller_name
+        ):
+            # The ranking may already have put the fuller name first.
+            title_words = set(_normalize_text(title).split())
+            best_words = set(_normalize_text(best.candidate.product_name).split())
+            settled_by_fuller_name = (
+                set(_normalize_text(competing.candidate.product_name).split()) < best_words
+                and best_words <= title_words
+            )
+
+        if (
+            competing is not None
+            and not settled_by_fuller_name
             and (best.confidence - competing.confidence) < AMBIGUITY_MARGIN
         ):
             return _unmatched_response(

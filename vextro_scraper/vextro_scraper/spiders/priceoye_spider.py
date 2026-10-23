@@ -73,6 +73,16 @@ class PriceoyeSpider(scrapy.Spider):
 
     PRODUCT_URL_PREFIX = "https://priceoye.pk/mobiles/"
 
+    # PriceOye's brand for unbranded goods, which the catalogue leaves out
+    # outside phones (/smart-watches/assorted/...). Phones keep every page.
+    unbranded_slugs = ()
+
+    def files_under_unbranded(self, product_url):
+        """Return whether a product page sits under an unbranded brand."""
+
+        parts = urlparse(str(product_url or '')).path.strip('/').split('/')
+        return len(parts) >= 2 and parts[1].lower() in self.unbranded_slugs
+
     def __init__(self, product_urls=None, *args, **kwargs):
         """Crawl the whole catalogue, or only the product pages given.
 
@@ -326,6 +336,8 @@ class PriceoyeSpider(scrapy.Spider):
             return
 
         for slug in self.brand_slugs(response):
+            if slug in self.unbranded_slugs:
+                continue
             yield response.follow(
                 f'{self.catalog_path}/{slug}',
                 callback=self.parse_brand,
@@ -363,6 +375,11 @@ class PriceoyeSpider(scrapy.Spider):
             # PriceOye names each phone itself; sellers do not write titles.
             item['exact_model_title'] = True
             item['product_url'] = phone.css('a::attr(href)').get()
+
+            if self.files_under_unbranded(item['product_url']):
+                # The pipeline turns unbranded goods away; their pages are
+                # not worth a request.
+                continue
 
             details = [
                 text.strip()
@@ -1069,3 +1086,21 @@ class PriceoyeTabletSpider(PriceoyeSpider):
     catalog_path = "/tablets"
     start_urls = ["https://priceoye.pk/tablets"]
     PRODUCT_URL_PREFIX = "https://priceoye.pk/tablets/"
+    unbranded_slugs = ('assorted',)
+
+
+class PriceoyeSmartwatchSpider(PriceoyeSpider):
+    """PriceOye's smart watch catalogue.
+
+    Each case size is a page of its own ("Series 11 46mm") whose options
+    are colours. Most of the catalogue is unbranded and filed under
+    "Assorted"; the pipeline leaves those out.
+    """
+
+    name = "priceoye_smartwatches"
+    catalog_category = "smart-watches"
+    parser_version = "priceoye-smartwatches-v1"
+    catalog_path = "/smart-watches"
+    start_urls = ["https://priceoye.pk/smart-watches"]
+    PRODUCT_URL_PREFIX = "https://priceoye.pk/smart-watches/"
+    unbranded_slugs = ('assorted',)

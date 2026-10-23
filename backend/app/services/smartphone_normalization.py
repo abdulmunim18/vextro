@@ -52,6 +52,9 @@ BRAND_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Microsoft", ("microsoft", "surface pro")),
     ("Asus", ("asus",)),
     ("Acer", ("acer",)),
+    # Watch makers Shophive files under Xiaomi.
+    ("Mibro", ("mibro",)),
+    ("Imilab", ("imilab",)),
 )
 
 
@@ -321,12 +324,18 @@ def looks_like_reseller(value: str | None) -> bool:
 def infer_brand_name(
     model: str | None,
     provided_brand: str | None = None,
+    *,
+    prefer_provided: bool = False,
 ) -> str | None:
     """Return the manufacturer behind a listing, never the seller.
 
     The marketplace's own brand field is trusted only once it is recognised
     as a manufacturer. Anything else falls back to the title, and a value
     that merely names a shop is dropped rather than registered as a brand.
+
+    ``prefer_provided`` trusts a store that catalogues its own goods: its
+    "Zero" brand stands even when the model is the "Zero Pixel", which the
+    title alone reads as a Google phone.
     """
 
     cleaned_brand = meaningful_text(provided_brand, max_length=120)
@@ -341,6 +350,9 @@ def infer_brand_name(
     from_brand = canonical_brand_name(cleaned_brand)
     if from_brand is not None:
         return from_brand
+
+    if prefer_provided and cleaned_brand is not None and not looks_like_reseller(cleaned_brand):
+        return cleaned_brand[:120]
 
     from_title = canonical_brand_name(model)
     if from_title is not None:

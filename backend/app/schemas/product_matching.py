@@ -1,5 +1,6 @@
 """Schemas for marketplace product-to-variant matching."""
 
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import (
@@ -130,6 +131,10 @@ class ProductResolveRequest(ProductMatchRequest):
     # titles are mostly unbranded: it may add a colour to a known tablet,
     # but never a new tablet or brand.
     allow_new_product: bool = True
+    # The listing's own price, sent with match-only listings. A seller's
+    # "Galaxy Watch Ultra" at a tenth of what the stores ask is a copy
+    # wearing the name, not an offer for the watch.
+    listing_price: Decimal | None = Field(default=None, gt=0)
 
 
 class ProductMatchResponse(BaseModel):

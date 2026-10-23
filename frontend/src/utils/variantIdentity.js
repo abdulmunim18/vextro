@@ -13,9 +13,18 @@ const INTERNAL_ATTRIBUTES = new Set([
   "source_external_id",
 ]);
 
+// A tablet is "wifi" or "cellular"; a watch "gps" or "cellular".
 const CONNECTIVITY_LABELS = {
   wifi: "Wi-Fi",
-  cellular: "Wi-Fi + Cellular",
+  gps: "GPS",
+  cellular: "Cellular",
+};
+
+const CASE_MATERIAL_LABELS = {
+  aluminium: "Aluminium case",
+  titanium: "Titanium case",
+  ceramic: "Ceramic case",
+  steel: "Stainless steel case",
 };
 
 export function isInternalVariantAttribute(key) {
@@ -53,6 +62,16 @@ export function variantIdentityDetails(variant) {
       key: "case_size_mm",
       label: "Case size",
       value: `${identity.case_size_mm} mm`,
+    });
+  }
+
+  if (identity.case_material) {
+    details.push({
+      key: "case_material",
+      label: "Case",
+      value:
+        CASE_MATERIAL_LABELS[identity.case_material] ||
+        identity.case_material,
     });
   }
 

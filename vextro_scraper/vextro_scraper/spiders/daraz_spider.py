@@ -989,3 +989,24 @@ class DarazTabletSpider(DarazSpider):
         **DarazSpider.custom_settings,
         'DARAZ_REVIEWS_ENABLED': False,
     }
+
+
+class DarazSmartwatchSpider(DarazSpider):
+    """Daraz's smart watch listings, matched to watches VEXTRO lists.
+
+    Like its tablets, Daraz's watches are mostly unbranded (the "C99 Ultra"
+    and its kin), with strap sets mixed in, so they only join watches
+    another marketplace catalogued.
+    """
+
+    name = "daraz_smartwatches"
+    catalog_category = "smart-watches"
+    match_only = True
+    parser_version = "daraz-smartwatches-v1"
+    CATALOG_PATH = "/smart-watches/"
+    start_urls = ["https://www.daraz.pk/smart-watches/?ajax=true"]
+
+    custom_settings = {
+        **DarazSpider.custom_settings,
+        'DARAZ_REVIEWS_ENABLED': False,
+    }

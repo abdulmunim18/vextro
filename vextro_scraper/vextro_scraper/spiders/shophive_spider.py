@@ -631,6 +631,15 @@ class ShophiveSpider(scrapy.Spider):
         return colours
 
     @staticmethod
+    def title_colour(name):
+        """The colour a product without colour options names in its title.
+
+        Phones are sold with colour options, so they name none.
+        """
+
+        return None
+
+    @staticmethod
     def with_surcharge(price, surcharge, surcharge_type):
         if price is None:
             return None
@@ -747,7 +756,7 @@ class ShophiveSpider(scrapy.Spider):
         if not colours:
             item = base
             item['external_id'] = str(product['sku'])
-            item['color'] = None
+            item['color'] = self.title_colour(product.get('name'))
             item['price'] = price
             item['original_price'] = (
                 regular_price
@@ -820,3 +829,32 @@ class ShophiveTabletSpider(ShophiveSpider):
         'tablets/tablet-accessories',
         'tablets/amazon-kindle',
     )
+
+
+# "46mm Jet Black Aluminium Case With Black Sports Band": the words before
+# the case (and its material) are the case's colour.
+WATCH_CASE_COLOUR = re.compile(
+    r'(?:^|[\s,])((?:[A-Za-z]+\s+){1,3}?)'
+    r'(?:(?:alumini?um|titanium|ceramic|stainless\s+steel)\s+)?case\b',
+    re.I,
+)
+
+
+class ShophiveSmartwatchSpider(ShophiveSpider):
+    """Shophive's smart watches: the Apple Watch store and smart-watches.
+
+    Each Apple Watch colour is a product of its own, its colour written in
+    the name ("Midnight Case With Midnight Sports Band"). WHOOP's
+    screen-less trackers have a subcategory of their own and are skipped.
+    """
+
+    name = 'shophive_smartwatches'
+    catalog_category = 'smart-watches'
+    parser_version = 'shophive-smartwatches-v1'
+    category_paths = ('apple/watch', 'smart-watches')
+    excluded_paths = ('smart-watches/whoop-bands',)
+
+    @staticmethod
+    def title_colour(name):
+        match = WATCH_CASE_COLOUR.search(str(name or ''))
+        return tidy_colour(match.group(1)) if match else None

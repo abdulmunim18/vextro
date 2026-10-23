@@ -208,12 +208,31 @@ def canonical_brand(value):
     return None
 
 
-def infer_brand(model, provided_brand=None):
+def brands_named(value):
+    """Return every manufacturer a piece of text names, in alias order."""
+
+    words = _brand_words(value)
+    if not words:
+        return []
+
+    normalized = f" {' '.join(words)} "
+    return [
+        canonical_name
+        for canonical_name, aliases in BRAND_ALIASES
+        if any(f' {alias} ' in normalized for alias in aliases)
+    ]
+
+
+def infer_brand(model, provided_brand=None, *, prefer_provided=False):
     """Return the manufacturer behind a listing, never the seller.
 
     The marketplace's own brand field is trusted only once it is recognised
     as a manufacturer; otherwise the title decides, and a value that merely
     names a shop is dropped instead of becoming a catalog brand.
+
+    ``prefer_provided`` trusts a store that catalogues its own goods: its
+    "Xinji" brand stands for the "Xinji Nothing N1", which the title alone
+    reads as a Nothing watch.
     """
 
     cleaned_brand = ' '.join(str(provided_brand or '').split())
@@ -223,8 +242,24 @@ def infer_brand(model, provided_brand=None):
         cleaned_brand = ''
 
     from_brand = canonical_brand(cleaned_brand)
+
+    if prefer_provided and from_brand is not None:
+        # Shophive files Mibro and Imilab watches under "Xiaomi" (and some
+        # titles say both, "Xiaomi Imilab"); a title naming another known
+        # maker names the product's own.
+        others = [brand for brand in brands_named(model) if brand != from_brand]
+        if len(others) == 1:
+            return others[0]
+
     if from_brand is not None:
         return from_brand
+
+    if (
+        prefer_provided
+        and cleaned_brand
+        and not set(_brand_words(cleaned_brand)) & BRAND_RESELLER_WORDS
+    ):
+        return cleaned_brand[:120]
 
     from_title = canonical_brand(model)
     if from_title is not None:
@@ -345,13 +380,45 @@ NOT_A_TABLET = re.compile(
 )
 
 
+# What a watch category also serves: straps and strap sets, chargers,
+# screen guards and bumper cases, and screen-less trackers (WHOOP, Fitbit
+# Air), which are subscriptions rather than watches. A "Smart Band" is a
+# wearable sold beside watches and is kept.
+NOT_A_WATCH = re.compile(
+    r'\b(?:'
+    r'straps?|strap\s+set|replacement\s+band|bands?\s+for|watch\s+band\s+for'
+    r'|charg(?:er|ing\s+(?:cable|dock|stand|base))|magnetic\s+cable'
+    r'|screen\s+protector|tempered\s+glass|protective\s+film'
+    r'|(?:case|cover|bumper)\s+for|screen-?less|whoop|fitbit\s+air'
+    r')\b',
+    re.I,
+)
+
+
+# What sellers write on copies of branded goods: "Samsung Logo Smart Watch
+# Ultra", "Super Master Copy". Phones have their own accessory rules.
+COPY_MARKERS = re.compile(
+    r'\b(?:logo|(?:super\s+|first\s+|high\s+|master\s+|aaa\s+)?copy'
+    r'|super\s+master|replica|clone'
+    # A listing kept up at an absurd price so nobody buys it.
+    r'|do\s+not\s+(?:buy|purchase|order)|not\s+for\s+sale)\b',
+    re.I,
+)
+
+
 def is_out_of_category(category, title):
     """Return whether a title names something its category does not sell."""
 
     if category == PHONE_CATEGORY:
         return is_accessory_title(title)
+    if COPY_MARKERS.search(title or ''):
+        return True
     if category == 'tablets':
         return bool(NOT_A_TABLET.search(title or ''))
+    if category == 'smart-watches':
+        # "... Smart Watch with 2 Straps" is a watch with a spare strap.
+        watch = re.sub(r'\bwith\b[^|,]{0,25}?\bstraps?\b', ' ', title or '', flags=re.I)
+        return bool(NOT_A_WATCH.search(watch))
     return False
 
 
@@ -544,6 +611,10 @@ class VextroCleaningPipeline:
         adapter['brand'] = infer_brand(
             adapter.get('model'),
             adapter.get('brand'),
+            # PriceOye and Shophive name their own goods; outside phones a
+            # model is often named after another brand's line.
+            prefer_provided=bool(adapter.get('exact_model_title'))
+            and category != PHONE_CATEGORY,
         )
 
         # Outside phones the catalogue holds only goods a manufacturer
@@ -1016,6 +1087,10 @@ class VextroApiIngestionPipeline:
 
         if payload.get('match_only'):
             match_payload['allow_new_product'] = False
+            # Lets the backend tell a copy wearing a product's name (a
+            # "Galaxy Watch Ultra" at a tenth of its price) from the product.
+            if payload.get('price'):
+                match_payload['listing_price'] = payload['price']
 
         return match_payload
 
@@ -1278,7 +1353,7 @@ class VextroApiIngestionPipeline:
                 'match_payload': {
                     key: value
                     for key, value in self._build_match_payload(payload).items()
-                    if key != 'allow_new_product'
+                    if key not in ('allow_new_product', 'listing_price')
                 },
                 'listing_payload': listing_payload,
                 'match_confidence': int(

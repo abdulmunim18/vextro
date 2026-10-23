@@ -80,6 +80,11 @@ CATEGORY_SPIDERS: dict[str, dict[str, TargetedSpider]] = {
         "daraz": TargetedSpider("daraz_tablets", "search_terms", "|"),
         "shophive": TargetedSpider("shophive_tablets", "product_urls"),
     },
+    "smart-watches": {
+        "priceoye": TargetedSpider("priceoye_smartwatches", "product_urls"),
+        "daraz": TargetedSpider("daraz_smartwatches", "search_terms", "|"),
+        "shophive": TargetedSpider("shophive_smartwatches", "product_urls"),
+    },
 }
 
 Launcher = Callable[[TargetedSpider, list[str]], object]

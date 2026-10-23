@@ -450,6 +450,155 @@ def test_a_match_only_listing_joins_a_catalogued_tablet_in_a_new_colour(
     assert variant(database_session, joined["product_variant_id"]).color == "Silver"
 
 
+def watch(**overrides):
+    payload = {
+        "brand": "Apple",
+        "category_slug": "smart-watches",
+        "exact_model_title": True,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_two_stores_apple_watch_is_one_product_with_its_colours(
+    client: TestClient,
+    database_session: Session,
+    discovered_products: list[int],  # noqa: F811
+) -> None:
+    token = uuid4().hex[:6]
+    priceoye = discover(
+        client,
+        discovered_products,
+        platform_code="priceoye",
+        external_id=f"AW-{token}-PO",
+        title=f"Apple Watch SE 3 Aw{token} 40mm GPS (2025)",
+        **watch(color="Midnight"),
+    )
+    shophive = discover(
+        client,
+        discovered_products,
+        platform_code="shophive",
+        external_id=f"AW-{token}-SH",
+        title=f"Apple Watch SE Gen 3 Aw{token} 40mm Starlight Case With Starlight Sports Band",
+        **watch(color="Starlight"),
+    )
+
+    assert shophive["canonical_product_id"] == priceoye["canonical_product_id"]
+    product = database_session.get(CanonicalProduct, int(priceoye["canonical_product_id"]))
+    assert "Case" not in product.name and "40mm" not in product.name
+
+
+def test_a_cellular_watch_is_another_variant_of_its_gps_model(
+    client: TestClient,
+    database_session: Session,
+    discovered_products: list[int],  # noqa: F811
+) -> None:
+    token = uuid4().hex[:6]
+    gps = discover(
+        client,
+        discovered_products,
+        platform_code="shophive",
+        external_id=f"CW-{token}-G",
+        title=f"Apple Watch Cw{token} 12 GPS 46mm Black Aluminum Case with Black Sport Band",
+        **watch(color="Black"),
+    )
+    cellular = discover(
+        client,
+        discovered_products,
+        platform_code="shophive",
+        external_id=f"CW-{token}-C",
+        title=f"Apple Watch Cw{token} 12 GPS + Cellular 46mm Black Titanium Case with Black Sport Band",
+        **watch(color="Black"),
+    )
+
+    assert cellular["canonical_product_id"] == gps["canonical_product_id"]
+    assert cellular["product_variant_id"] != gps["product_variant_id"]
+    assert variant(database_session, cellular["product_variant_id"]).configuration_key == (
+        "case_material=titanium|case_size_mm=46|connectivity=cellular"
+    )
+
+
+def test_a_seller_copy_priced_far_below_the_watch_does_not_join_it(
+    client: TestClient,
+    database_session: Session,
+    sync_context: dict[str, object],  # noqa: F811
+    discovered_products: list[int],  # noqa: F811
+) -> None:
+    token = uuid4().hex[:6]
+    real = discover(
+        client,
+        discovered_products,
+        platform_code="priceoye",
+        external_id=f"CP-{token}-PO",
+        title=f"Samsung Galaxy Watch Cp{token} Ultra 47mm",
+        **watch(brand="Samsung", color="Titanium Gray"),
+    )
+    ingest(
+        client,
+        listing_payload(
+            sync_context,
+            current_price=120000,
+            captured_at=FIRST_CAPTURE,
+            platform_code="priceoye",
+            product_variant_id=int(real["product_variant_id"]),
+            external_id=f"CP-{token}-PO",
+        ),
+    )
+
+    def seller(price, suffix):
+        return discover(
+            client,
+            discovered_products,
+            platform_code="daraz",
+            external_id=f"CP-{token}-{suffix}",
+            title=f"Samsung Galaxy Watch Cp{token} Ultra 47mm",
+            brand="Samsung",
+            color="Titanium Gray",
+            category_slug="smart-watches",
+            allow_new_product=False,
+            listing_price=price,
+        )
+
+    copy = seller(9500, "COPY")
+    placeholder = seller(999999, "HOLD")
+    genuine = seller(115000, "REAL")
+
+    assert copy["matched"] is False
+    assert "copy" in copy["reason"]
+    assert placeholder["matched"] is False
+    assert genuine["canonical_product_id"] == real["canonical_product_id"]
+
+
+def test_the_fuller_name_wins_when_a_title_contains_two(
+    client: TestClient,
+    discovered_products: list[int],  # noqa: F811
+) -> None:
+    token = uuid4().hex[:6]
+    for suffix, name in (("1", f"Nothing CMF Fn{token} Pro"), ("2", f"Nothing CMF Fn{token} 2 Pro")):
+        discover(
+            client,
+            discovered_products,
+            platform_code="priceoye",
+            external_id=f"FN-{token}-{suffix}",
+            title=name,
+            **watch(brand="Nothing", color="Black"),
+        )
+
+    seller = discover(
+        client,
+        discovered_products,
+        platform_code="daraz",
+        external_id=f"FN-{token}-DZ",
+        title=f"CMF Nothing Fn{token} Pro 2 Black",
+        brand="Nothing",
+        color="Black",
+        category_slug="smart-watches",
+        allow_new_product=False,
+    )
+
+    assert seller["product_name"].endswith("2 Pro")
+
+
 def test_an_unknown_category_is_refused(client: TestClient) -> None:
     response = client.post(
         RESOLVE_ENDPOINT,
@@ -588,6 +737,11 @@ def test_each_category_refreshes_with_its_own_spiders() -> None:
         "daraz": "daraz_tablets",
         "shophive": "shophive_tablets",
     }
+    assert {code: target.spider for code, target in CATEGORY_SPIDERS["smart-watches"].items()} == {
+        "priceoye": "priceoye_smartwatches",
+        "daraz": "daraz_smartwatches",
+        "shophive": "shophive_smartwatches",
+    }
 
 
 def test_a_category_without_refresh_spiders_waits_for_its_crawl(
@@ -605,19 +759,19 @@ def test_a_category_without_refresh_spiders_waits_for_its_crawl(
     monkeypatch.setattr(settings, "on_demand_refresh_enabled", True)
 
     token = uuid4().hex[:6]
-    watch = discover(
+    earbuds = discover(
         client,
         discovered_products,
         platform_code="priceoye",
-        external_id=f"WREF-{token}",
-        title=f"Samsung Galaxy Watch Wr{token} 44mm",
+        external_id=f"EREF-{token}",
+        title=f"Samsung Galaxy Buds Er{token}",
         brand="Samsung",
         color="Black",
-        category_slug="smart-watches",
+        category_slug="audio-and-earbuds",
         exact_model_title=True,
     )
 
-    client.post(f"/api/v1/products/{watch['canonical_product_id']}/refresh")
+    client.post(f"/api/v1/products/{earbuds['canonical_product_id']}/refresh")
 
     assert started == []
 
