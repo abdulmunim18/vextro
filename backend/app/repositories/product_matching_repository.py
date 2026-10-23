@@ -344,6 +344,56 @@ class ProductMatchingRepository:
             )
         )
 
+    def get_variant_stating_more(
+        self,
+        database_session: Session,
+        *,
+        canonical_product_id: int,
+        ram_gb: int | None,
+        storage_gb: int | None,
+        color: str | None,
+        condition: str = "new",
+        identity: dict[str, object] | None = None,
+    ) -> ProductVariant | None:
+        """Return the one variant a listing that states less belongs to.
+
+        A seller who writes "Redmi Pad 2 8GB RAM" states part of a
+        configuration the catalogue already holds in full ("8GB, 256GB,
+        Wi-Fi"). When exactly one variant of that colour and condition
+        agrees with everything the listing states, it is that variant;
+        with two or more it could be either, and none is returned.
+        """
+
+        stated = {
+            key: value
+            for key, value in variant_identity(
+                {IDENTITY: identity or {}},
+                ram_gb=ram_gb,
+                storage_gb=storage_gb,
+            ).items()
+            if value not in (None, "")
+        }
+
+        candidates = [
+            variant
+            for variant in database_session.scalars(
+                select(ProductVariant).where(
+                    ProductVariant.canonical_product_id == canonical_product_id,
+                    ProductVariant.condition == condition,
+                    ProductVariant.is_active.is_(True),
+                    ProductVariant.color.is_(None)
+                    if color is None
+                    else ProductVariant.color == color,
+                )
+            )
+            if all(
+                (variant.variant_attributes or {}).get(IDENTITY, {}).get(key) == value
+                for key, value in stated.items()
+            )
+        ]
+
+        return candidates[0] if len(candidates) == 1 else None
+
     def create_variant(
         self,
         database_session: Session,

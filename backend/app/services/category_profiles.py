@@ -23,6 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from app.services.smartphone_normalization import (
+    BRAND_ALIASES,
     extract_memory_capacities,
     normalize_specifications,
 )
@@ -58,7 +59,9 @@ class CategoryProfile:
     variant_words: tuple[re.Pattern, ...] = ()
     # One model spelled two ways by two stores, written one way: "8th
     # Generation M4 Chip" and "M4 8th Gen", "SM-X400" and "X400".
-    name_rewrites: tuple[tuple[re.Pattern, str], ...] = ()
+    name_rewrites: tuple[
+        tuple[re.Pattern, str | Callable[[re.Match], str]], ...
+    ] = ()
 
     def product_title(self, title: str | None) -> str:
         """Return the title without the words that name a variant."""
@@ -227,6 +230,82 @@ _WARRANTY_WORDS = re.compile(
 _MODEL_YEAR = re.compile(r"\(\s*20\d{2}\s*\)|\b20\d{2}\b")
 
 
+def _compact(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+# A brand written in two words ("VGO TEL", "One Plus") is the brand's own
+# name, not part of the model: written as the brand, so the name cleaner
+# does not keep both ("VGOTEL VGO TEL V Tab 2").
+_BRAND_SPELLINGS = tuple(
+    (
+        re.compile(
+            r"\b" + r"[\s-]+".join(map(re.escape, re.split(r"[\s-]+", alias))) + r"\b",
+            re.I,
+        ),
+        canonical,
+    )
+    for canonical, aliases in BRAND_ALIASES
+    for alias in aliases
+    if re.search(r"[\s-]", alias) and _compact(alias) == _compact(canonical)
+)
+
+
+def _ordinal(number: int) -> str:
+    if 10 <= number % 100 <= 20:
+        return f"{number}th"
+    return f"{number}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(number % 10, 'th') }"
+
+
+_STORAGE_SIZES = {16, 32, 64, 128, 256, 512, 1024}
+
+_TABLET_NAME_REWRITES = (
+    # "Redmi Pad 2 8/256": memory without units. Left in, its "8" reads as
+    # the model number of the "Pad 8". The listing states it separately.
+    (
+        re.compile(r"(?<![\d.])(\d{1,2})\s*(?:GB)?\s*[/+]\s*(\d{2,4})\s*(?:GB|TB)?(?![\d.])", re.I),
+        lambda match: (
+            " " if int(match.group(2)) in _STORAGE_SIZES else match.group(0)
+        ),
+    ),
+    # "iPad 11 (A16)", "Tab M10 HD (2nd Gen)": the bracket holds the model,
+    # and the name cleaner cuts a name at its first bracket. What else a
+    # bracket holds (a year, a warranty) is removed on its own below.
+    (re.compile(r"\(([^()]*)\)"), r" \1 "),
+    *_BRAND_SPELLINGS,
+    (re.compile(r"\bgeneration\b", re.I), "Gen"),
+    # "12Th Gen" from title-cased titles.
+    (
+        re.compile(r"\b(\d{1,2})(st|nd|rd|th)\b", re.I),
+        lambda match: match.group(1) + match.group(2).lower(),
+    ),
+    # Apple counts iPad generations; "iPad Air 7" is Shophive's "iPad Air
+    # 7th Gen". A figure followed by a unit is a screen size and is left.
+    (
+        re.compile(
+            r"\b(iPad(?:\s+(?:Air|Mini))?)\s+(\d{1,2})"
+            r"(?![\d.])(?!\s*(?:inch|\"|''|”|″|st\b|nd\b|rd\b|th\b))",
+            re.I,
+        ),
+        lambda match: f"{match.group(1)} {_ordinal(int(match.group(2)))} Gen",
+    ),
+    # Samsung names every tablet "Galaxy Tab"; stores drop or move it
+    # ("Samsung S11 Ultra", "Samsung Galaxy A11 Tab").
+    (
+        re.compile(r"\bSamsung\s+(?:Galaxy\s+)?(?:Tab\s+)?(?=[AS]\d)", re.I),
+        "Samsung Galaxy Tab ",
+    ),
+    (re.compile(r"(\bTab\b.*?)\s+\bTab\b", re.I), r"\1"),
+    (re.compile(r"\bchip\b", re.I), " "),
+    # The category's own noun says nothing about the model.
+    (re.compile(r"\btablets?\b", re.I), " "),
+    # Samsung's "SM-" model prefix, written by some stores only.
+    (re.compile(r"\bSM-(?=[a-z]\d)", re.I), ""),
+    # A Shophive typo on its Redmi Pad 2 listings.
+    (re.compile(r"\bSSD\b"), " "),
+)
+
+
 RAM = IdentityAttribute("ram_gb", "RAM", "GB", _ram_gb)
 STORAGE = IdentityAttribute("storage_gb", "Storage", "GB", _storage_gb)
 CONNECTIVITY = IdentityAttribute("connectivity", "Connectivity", None, _connectivity)
@@ -255,14 +334,7 @@ PROFILES: dict[str, CategoryProfile] = {
                 _WARRANTY_WORDS,
                 _MODEL_YEAR,
             ),
-            name_rewrites=(
-                (re.compile(r"\bgeneration\b", re.I), "Gen"),
-                (re.compile(r"\bchip\b", re.I), " "),
-                # Samsung's "SM-" model prefix, written by some stores only.
-                (re.compile(r"\bSM-(?=[a-z]\d)", re.I), ""),
-                # A Shophive typo on its Redmi Pad 2 listings.
-                (re.compile(r"\bSSD\b"), " "),
-            ),
+            name_rewrites=_TABLET_NAME_REWRITES,
         ),
         CategoryProfile(
             "smart-watches",

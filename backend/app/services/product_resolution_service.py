@@ -246,10 +246,13 @@ class ProductResolutionService:
         # Named as it was created: without the words that name a variant
         # ("11inch", "Wi-Fi"), which every variant's title would otherwise
         # take turns writing into the product's name.
-        name = clean_model_name(
-            profile_for(payload.category_slug).product_title(payload.title),
-            brand_name,
-        )
+        profile = profile_for(payload.category_slug)
+        product_title = profile.product_title(payload.title)
+        if profile.slug != "mobile-phones":
+            # Cleaned as a new product's name is, so a second offer does not
+            # rename the product to a longer spelling of the same model.
+            product_title = clean_product_display_name(product_title) or product_title
+        name = clean_model_name(product_title, brand_name)
 
         if (
             not name
@@ -579,6 +582,20 @@ class ProductResolutionService:
             color=color,
             identity=extra_identity,
         )
+
+        if variant is None and profile.slug != "mobile-phones":
+            # A seller title that states less than the catalogue knows
+            # ("8GB RAM", no storage) joins the one variant it describes
+            # instead of opening a half-described one beside it.
+            variant = self.repository.get_variant_stating_more(
+                database_session,
+                canonical_product_id=product.id,
+                ram_gb=ram_gb,
+                storage_gb=storage_gb,
+                color=color,
+                identity=extra_identity,
+            )
+
         variant_created = variant is None
 
         if variant is None:

@@ -319,6 +319,82 @@ def test_a_new_colour_from_another_store_finds_the_tablet_whatever_its_word_orde
     assert other_store["canonical_product_id"] == catalogued["canonical_product_id"]
 
 
+def test_a_cellular_seller_listing_becomes_a_variant_not_another_tablet(
+    client: TestClient,
+    database_session: Session,
+    discovered_products: list[int],  # noqa: F811
+) -> None:
+    """A Daraz "Redmi Pad 2 8/256 4G" joins the Wi-Fi-only Redmi Pad 2."""
+
+    token = uuid4().hex[:6]
+    pad = discover(
+        client,
+        discovered_products,
+        external_id=f"CV-{token}-PO",
+        title=f"Xiaomi Redmi Pd{token} 2 Wifi",
+        **tablet(brand="Xiaomi", specifications={"ram": "8GB", "storage_capacity": "256GB"}),
+    )
+    discover(
+        client,
+        discovered_products,
+        external_id=f"CV-{token}-P8",
+        title=f"Xiaomi Pd{token} 8",
+        **tablet(brand="Xiaomi", specifications={"ram": "8GB", "storage_capacity": "256GB"}),
+    )
+    seller = discover(
+        client,
+        discovered_products,
+        platform_code="daraz",
+        external_id=f"CV-{token}-DZ",
+        title=f"Xiaomi Redmi Pd{token} 2 8/256 4G",
+        **{
+            key: value
+            for key, value in tablet(
+                brand="Xiaomi",
+                specifications={"ram": "8GB", "storage_capacity": "256GB"},
+            ).items()
+            if key not in ("platform_code", "exact_model_title")
+        },
+        allow_new_product=False,
+    )
+
+    assert seller["canonical_product_id"] == pad["canonical_product_id"]
+    assert variant(database_session, seller["product_variant_id"]).configuration_key == (
+        "connectivity=cellular|ram_gb=8|storage_gb=256"
+    )
+
+
+def test_a_seller_listing_stating_less_joins_the_variant_it_describes(
+    client: TestClient,
+    database_session: Session,
+    discovered_products: list[int],  # noqa: F811
+) -> None:
+    token = uuid4().hex[:6]
+    full = discover(
+        client,
+        discovered_products,
+        external_id=f"SL-{token}-PO",
+        title=f"Xiaomi Pad Sl{token} 8 Wifi",
+        **tablet(brand="Xiaomi", color=None, specifications={"ram": "8GB", "storage_capacity": "256GB"}),
+    )
+    vague = discover(
+        client,
+        discovered_products,
+        platform_code="daraz",
+        external_id=f"SL-{token}-DZ",
+        title=f"Xiaomi Pad Sl{token} 8 8GB RAM",
+        **{
+            key: value
+            for key, value in tablet(brand="Xiaomi", color=None, specifications={"ram": "8GB"}).items()
+            if key not in ("platform_code", "exact_model_title")
+        },
+        allow_new_product=False,
+    )
+
+    assert vague["canonical_product_id"] == full["canonical_product_id"]
+    assert vague["product_variant_id"] == full["product_variant_id"]
+
+
 def test_a_match_only_listing_never_adds_a_tablet(
     client: TestClient,
     database_session: Session,

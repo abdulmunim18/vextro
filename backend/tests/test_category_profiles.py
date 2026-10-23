@@ -125,6 +125,53 @@ def test_a_tablets_name_leaves_out_its_variant_and_warranty(title, expected):
     assert profile_for("tablets").product_title(title) == expected
 
 
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        # PriceOye drops "Galaxy Tab"; Shophive writes it.
+        ("Samsung S11 Ultra Wifi", 'Samsung Galaxy Tab S11 Ultra 14.6" Wifi'),
+        ("Samsung Galaxy A11 Wifi Tab", 'Samsung Galaxy Tab A11 8.7" WiFi'),
+        # Shophive writes one iPad Air both ways.
+        ('Apple iPad Air 7 11" M3 Wi-Fi', 'Apple iPad Air M3 7th Gen 13" Wi-Fi'),
+        ("Apple iPad 11 (A16)", 'Apple iPad 11 A16 11" Wifi (2025)'),
+        # A brand written in two words.
+        ("VGO TEL V Tab 2", "Vgotel V Tab 2 3G"),
+    ],
+)
+def test_two_stores_spellings_of_one_tablet_read_the_same(first, second):
+    def words(title):
+        return sorted(profile_for("tablets").product_title(title).lower().split())
+
+    assert words(first) == words(second)
+
+
+def test_a_tablets_name_keeps_its_generation_and_drops_the_category_noun():
+    profile = profile_for("tablets")
+
+    assert profile.product_title("Lenovo Tab M10 HD (2nd Gen)") == "Lenovo Tab M10 HD 2nd Gen"
+    assert profile.product_title("Amazon Fire HD 8 12Th Gen Tablet") == "Amazon Fire HD 8 12th Gen"
+    # A figure with a unit is a screen size, not a generation.
+    assert profile.product_title('Apple iPad Mini 6 8.3" WIFI') == "Apple iPad Mini 6th Gen"
+    assert profile.product_title("Apple iPad 10.2 2021") == "Apple iPad 10.2"
+
+
+def test_unit_less_memory_is_not_read_as_a_model_number():
+    """ "Redmi Pad 2 8/256" once matched the "Pad 8" on its "8"."""
+
+    profile = profile_for("tablets")
+
+    assert profile.product_title("Xiaomi Redmi Pad 2 8/256 4G") == "Xiaomi Redmi Pad 2"
+    assert profile.product_title("Xiaomi Pad 7 8GB + 256GB") == "Xiaomi Pad 7"
+    # Not memory: the second figure is no storage size.
+    assert profile.product_title("Lenovo Tab 6 4/46") == "Lenovo Tab 6 4/46"
+
+
+def test_phone_titles_are_not_rewritten():
+    assert profile_for("mobile-phones").product_title("Samsung Galaxy A17 (2025) 5G") == (
+        "Samsung Galaxy A17 (2025) 5G"
+    )
+
+
 # --------------------------------------------------------------------------
 # Smart watches and earbuds
 # --------------------------------------------------------------------------

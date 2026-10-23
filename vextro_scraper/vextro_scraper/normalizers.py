@@ -332,6 +332,16 @@ BRAND_ALIASES = (
     ('Sharp', ('sharp', 'aquos')),
     ('ZTE', ('zte', 'nubia')),
     ('VGOTEL', ('vgotel', 'vgo tel')),
+    # Tablet makers. Daraz sellers leave the brand field "No Brand", so
+    # the title is the only place the manufacturer is named.
+    ('Lenovo', ('lenovo',)),
+    ('Amazon', ('amazon fire', 'kindle')),
+    ('TCL', ('tcl',)),
+    ('Alcatel', ('alcatel',)),
+    ('Black Shark', ('black shark',)),
+    ('Microsoft', ('microsoft', 'surface pro')),
+    ('Asus', ('asus',)),
+    ('Acer', ('acer',)),
 )
 
 

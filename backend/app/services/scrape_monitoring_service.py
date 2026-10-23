@@ -224,6 +224,13 @@ class ScrapeMonitoringService:
 
             if not payload.crawl_succeeded:
                 run_status = "failed"
+            elif not payload.items_discovered and run.trigger_type == "on_demand":
+                # A lookup for one product that the marketplace does not
+                # sell has found the answer: it is not listed there.
+                run_status = "completed"
+                error_summary = error_summary or (
+                    "The marketplace lists nothing for this product."
+                )
             elif not payload.items_discovered:
                 # A marketplace crawl that discovered nothing has not
                 # succeeded: the catalog page changed shape or the request

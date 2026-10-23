@@ -13,8 +13,12 @@ from test_api_ingestion_pipeline import (
 from vextro_scraper.pipelines import (
     NonSmartphoneItemError,
     NotInCatalogueError,
+    ReviewsOfTurnedAwayListingError,
+    UnbrandedItemError,
     VextroApiIngestionPipeline,
     VextroCleaningPipeline,
+    infer_brand,
+    infer_title_specifications,
     is_out_of_category,
 )
 from vextro_scraper.scheduler import DEFAULT_SPIDERS
@@ -165,6 +169,71 @@ def test_drawing_pads_and_accessories_are_not_tablets(title):
 )
 def test_tablets_are_tablets(title):
     assert not is_out_of_category('tablets', title)
+
+
+def test_unit_less_memory_is_read_on_tablets_only():
+    title = 'Samsung S11 Ultra 12/256 Wifi'
+
+    assert infer_title_specifications(title, bare_memory_pairs=True) == {
+        'ram': '12GB',
+        'storage_capacity': '256GB',
+    }
+    assert infer_title_specifications(title) == {}
+    # A date is not memory.
+    assert infer_title_specifications('Lenovo Tab 12/2025', bare_memory_pairs=True) == {}
+
+
+@pytest.mark.parametrize(
+    ('title', 'brand', 'expected'),
+    [
+        ('Lenovo Tab M8 Tablet | 8-inch Display', 'No Brand', 'Lenovo'),
+        ('Daraz Like New | Lenovo Yoga Tab Tablet', 'Daraz Like New', 'Lenovo'),
+        ('Amazon Fire HD 8 Tablet 12th Generation', 'No Brand', 'Amazon'),
+        ('Revvl Tab 2 Wifi 64GB', 'Assorted', None),
+        ('Zentality Pad9', 'Zentality', 'Zentality'),
+    ],
+)
+def test_a_tablets_maker_is_read_from_its_title_when_the_field_names_none(title, brand, expected):
+    assert infer_brand(title, brand) == expected
+
+
+def test_an_unbranded_tablet_is_not_catalogued():
+    item = {
+        **build_clean_item(),
+        'platform': 'PriceOye',
+        'model': 'Kids Learning Tablet A15 4GB 128GB',
+        'brand': 'Assorted',
+        'specifications': {},
+    }
+
+    with pytest.raises(UnbrandedItemError):
+        VextroCleaningPipeline().process_item(item, SimpleNamespace(catalog_category='tablets'))
+
+    assert UnbrandedItemError.outcome == 'rejected'
+
+
+def test_the_reviews_of_a_turned_away_listing_are_not_sent():
+    pipeline = VextroCleaningPipeline()
+    spider = SimpleNamespace(catalog_category='tablets')
+    unbranded = {
+        **build_clean_item(),
+        'external_id': 'kids-tab--blue--64gb',
+        'model': 'Kids Learning Tablet A15 4GB 128GB',
+        'brand': 'Assorted',
+        'specifications': {},
+    }
+
+    with pytest.raises(UnbrandedItemError):
+        pipeline.process_item(unbranded, spider)
+
+    with pytest.raises(ReviewsOfTurnedAwayListingError):
+        pipeline.process_item(
+            {'external_listing_id': 'kids-tab--blue--64gb', 'reviews': [{}]},
+            spider,
+        )
+
+    other = {'external_listing_id': 'xiaomi-pad-7--grey', 'reviews': [{}]}
+    assert pipeline.process_item(other, spider) is other
 
 
 def test_the_cleaning_pipeline_drops_what_a_tablet_listing_is_not():

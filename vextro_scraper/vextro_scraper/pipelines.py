@@ -44,6 +44,22 @@ class NonSmartphoneItemError(DropItem):
     outcome = 'rejected'
 
 
+class ReviewsOfTurnedAwayListingError(DropItem):
+    """Pass over the reviews of a listing this run turned away."""
+
+    error_type = 'review_of_turned_away_listing'
+    error_stage = 'validation'
+    outcome = 'rejected'
+
+
+class UnbrandedItemError(DropItem):
+    """Pass over a non-phone listing that names no manufacturer."""
+
+    error_type = 'unbranded_item'
+    error_stage = 'validation'
+    outcome = 'rejected'
+
+
 # The matcher's MEDIUM tier: close enough for an administrator to confirm.
 MATCH_ONLY_REVIEW_CONFIDENCE = 75
 
@@ -160,7 +176,12 @@ BRAND_RESELLER_WORDS = frozenset(
 )
 
 BRAND_PLACEHOLDERS = frozenset(
-    {'n/a', 'na', 'none', 'no brand', 'nobrand', 'unbranded', 'unknown', ''}
+    {
+        'n/a', 'na', 'none', 'no brand', 'nobrand', 'unbranded', 'unknown',
+        # PriceOye's brand for unbranded goods, and Daraz's refurbished
+        # programme, which is a seller, not a maker.
+        'assorted', 'generic', 'daraz like new', '',
+    }
 )
 
 
@@ -218,8 +239,12 @@ def infer_brand(model, provided_brand=None):
     return cleaned_brand[:120]
 
 
-def infer_title_specifications(model, specifications=None):
-    """Fill common smartphone specifications encoded in listing titles."""
+def infer_title_specifications(model, specifications=None, *, bare_memory_pairs=False):
+    """Fill common smartphone specifications encoded in listing titles.
+
+    ``bare_memory_pairs`` also reads "12/256" (no unit) as RAM and storage,
+    when the second figure is a storage size a device is sold in.
+    """
 
     title = str(model or '')
     inferred = dict(specifications or {})
@@ -259,6 +284,19 @@ def infer_title_specifications(model, specifications=None):
         title,
         re.I,
     )
+    if capacity_pair is None and bare_memory_pairs:
+        capacity_pair = next(
+            (
+                match
+                for match in re.finditer(
+                    r'(?<![\d.])(\d{1,2})\s*[/+]\s*(\d{2,4})(?![\d.])',
+                    title,
+                )
+                if int(match.group(1)) <= 24
+                and int(match.group(2)) in {16, 32, 64, 128, 256, 512}
+            ),
+            None,
+        )
     if capacity_pair:
         inferred.setdefault('ram', f'{capacity_pair.group(1)}GB')
         inferred.setdefault(
@@ -318,12 +356,28 @@ def is_out_of_category(category, title):
 
 
 class VextroCleaningPipeline:
+    def __init__(self):
+        # Listings this run turned away. A spider asks for a listing's
+        # reviews as it reads the listing, so their reviews still arrive
+        # and would be sent for a listing the catalogue never received.
+        self.turned_away = set()
+
+    def turn_away(self, adapter, error):
+        external_id = adapter.get('external_id')
+        if external_id:
+            self.turned_away.add(str(external_id))
+        raise error
+
     def process_item(self, item, spider):
         adapter = ItemAdapter(item)
 
         # Review batches use the dedicated backend review contract and do not
         # contain listing prices.
         if adapter.get('reviews') is not None:
+            if str(adapter.get('external_listing_id')) in self.turned_away:
+                raise ReviewsOfTurnedAwayListingError(
+                    'Reviews of a listing this run did not deliver.'
+                )
             return item
 
         # Community opinions describe a phone, not an offer: there is no
@@ -446,10 +500,10 @@ class VextroCleaningPipeline:
                 category,
                 cleaned_title[:200],
             )
-            raise NonSmartphoneItemError(
+            self.turn_away(adapter, NonSmartphoneItemError(
                 f'Marketplace item is not sold as {category} '
                 f'(platform={platform} external_id={external_id}).'
-            )
+            ))
 
         # 3. Clean Availability: Convert 'In Stock' to Boolean (True/False)
         avail = adapter.get('availability', '')
@@ -492,11 +546,31 @@ class VextroCleaningPipeline:
             adapter.get('brand'),
         )
 
+        # Outside phones the catalogue holds only goods a manufacturer
+        # stands behind: PriceOye files unbranded kids' tablets under
+        # "Assorted", Daraz under "No Brand". Phones keep their own handling.
+        if category != PHONE_CATEGORY and not adapter['brand']:
+            logging.info(
+                'Dropped an unbranded marketplace item: platform=%s '
+                'external_id=%s category=%s title=%r',
+                str(adapter.get('platform') or 'unknown').lower(),
+                str(adapter.get('external_id') or 'unknown'),
+                category,
+                cleaned_title[:200],
+            )
+            self.turn_away(adapter, UnbrandedItemError(
+                f'Marketplace item names no manufacturer ({category}).'
+            ))
+
         # 6. Keep API-safe, consistently named specification pairs.
         normalized_specifications = {}
         source_specifications = infer_title_specifications(
             adapter.get('model'),
             adapter.get('specifications'),
+            # "12/256" names RAM and storage on tablets; on phones the
+            # crawlers already state memory and the matcher was tuned
+            # without it.
+            bare_memory_pairs=category != PHONE_CATEGORY,
         )
         for label, value in source_specifications.items():
             normalized_label = re.sub(

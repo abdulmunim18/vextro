@@ -42,6 +42,16 @@ BRAND_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Sharp", ("sharp", "aquos")),
     ("ZTE", ("zte", "nubia")),
     ("VGOTEL", ("vgotel", "vgo tel")),
+    # Tablet makers. Daraz sellers leave the brand field "No Brand", so
+    # the title is the only place the manufacturer is named.
+    ("Lenovo", ("lenovo",)),
+    ("Amazon", ("amazon fire", "kindle")),
+    ("TCL", ("tcl",)),
+    ("Alcatel", ("alcatel",)),
+    ("Black Shark", ("black shark",)),
+    ("Microsoft", ("microsoft", "surface pro")),
+    ("Asus", ("asus",)),
+    ("Acer", ("acer",)),
 )
 
 
@@ -106,6 +116,11 @@ PLACEHOLDER_VALUES = frozenset(
         "not specified",
         "no brand",
         "unbranded",
+        # PriceOye's brand for unbranded goods, and Daraz's refurbished
+        # programme, which is a seller, not a maker.
+        "assorted",
+        "generic",
+        "daraz like new",
         "standard",
         "tbd",
         "?",
