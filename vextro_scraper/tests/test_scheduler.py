@@ -52,6 +52,9 @@ def test_defaults_match_the_documented_behaviour():
         "priceoye_smartwatches",
         "shophive_smartwatches",
         "daraz_smartwatches",
+        "priceoye_audio",
+        "shophive_audio",
+        "daraz_audio",
         "whatmobile_opinions",
     )
 

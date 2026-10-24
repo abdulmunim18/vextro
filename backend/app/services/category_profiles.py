@@ -392,6 +392,26 @@ _WATCH_NAME_REWRITES = (
 )
 
 
+_AUDIO_NAME_REWRITES = (
+    (re.compile(r"\(([^()]*)\)"), r" \1 "),
+    *_BRAND_SPELLINGS,
+    (
+        re.compile(r"\b(\d{1,2})(st|nd|rd|th)\b", re.I),
+        lambda match: match.group(1) + match.group(2).lower(),
+    ),
+    # "AirPods 4 Active Noise Cancellation" is the "AirPods 4 ANC": a model
+    # of its own, written two ways.
+    (re.compile(r"\bactive\s+noise\s+cancel+(?:ation|ing)\b", re.I), "ANC"),
+    (re.compile(r"\bSamsung\s+(?:Galaxy\s+)?Buds\b", re.I), "Samsung Galaxy Buds"),
+    # Anker's SKU ("A3953P11", "D1200H11") and Apple's part number
+    # ("MKFW4LL/A") name a stock unit, not the model, and one store only
+    # writes them. "Soundcore" is Anker's line, written or not.
+    (re.compile(r"\b[A-D]\d{4}[A-Z0-9]{2,3}\b"), " "),
+    (re.compile(r"\bM[A-Z0-9]{3,6}(?:LL|ZA|ZM|AM)(?:/A)?\b"), " "),
+    (re.compile(r"\bsoundcore\b", re.I), " "),
+)
+
+
 RAM = IdentityAttribute("ram_gb", "RAM", "GB", _ram_gb)
 STORAGE = IdentityAttribute("storage_gb", "Storage", "GB", _storage_gb)
 CONNECTIVITY = IdentityAttribute("connectivity", "Connectivity", None, _connectivity)
@@ -462,8 +482,39 @@ PROFILES: dict[str, CategoryProfile] = {
             ),
             name_rewrites=_WATCH_NAME_REWRITES,
         ),
-        # Earbuds come in colours only; the model name is the product.
-        CategoryProfile("audio-and-earbuds", "Audio and Earbuds", ()),
+        # Earbuds and headphones come in colours only; the model name is
+        # the product, and what titles add around it is removed.
+        CategoryProfile(
+            "audio-and-earbuds",
+            "Audio and Earbuds",
+            (),
+            variant_words=(
+                # "with Charging Case", "with ENC Mic": the box and its
+                # selling points.
+                re.compile(r"\s+with\b.*$", re.I),
+                # The category's own nouns, which stores add or leave out.
+                re.compile(
+                    r"\b(?:true\s+)?wireless\b|\btws\b|\bbluetooth\b|\bear\s*buds?\b"
+                    r"|\bearphones?\b|\bheadphones?\b|\bheadsets?\b|\bhandsfree\b"
+                    r"|\bstereo\b|\bin-?ear\b",
+                    re.I,
+                ),
+                # "Bluetooth 5.3", "40H Playtime", "IPX5", "ENC".
+                re.compile(r"\b(?:v|bt)?\s?5\.\d\b", re.I),
+                re.compile(r"\b\d+\s*(?:h|hrs?|hours?)\b(?:\s+playtime)?", re.I),
+                re.compile(r"\bipx?\d\b|\benc\b|\bplaytime\b|\bgaming\b|\boriginal\b", re.I),
+                # A feature; "Active Noise Cancellation" was written "ANC" above.
+                re.compile(r"\bnoise[\s-]+cancel+(?:ation|ing)\b", re.I),
+                # How it sits on the ear, which one store writes and one not.
+                re.compile(
+                    r"\b(?:on|over|open)[\s-]?ear\b|\bclip[\s-]?on\b|\bcomfortable\b|\btruly\b",
+                    re.I,
+                ),
+                _WARRANTY_WORDS,
+                _MODEL_YEAR,
+            ),
+            name_rewrites=_AUDIO_NAME_REWRITES,
+        ),
     )
 }
 
