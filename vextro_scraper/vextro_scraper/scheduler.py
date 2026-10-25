@@ -54,6 +54,9 @@ DEFAULT_SPIDERS = (
     "priceoye_audio",
     "shophive_audio",
     "daraz_audio",
+    "priceoye_laptops",
+    "shophive_laptops",
+    "daraz_laptops",
     # Last: it looks up the phones the marketplace crawls just listed.
     "whatmobile_opinions",
 )

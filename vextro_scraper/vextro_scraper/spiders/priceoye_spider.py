@@ -1120,3 +1120,19 @@ class PriceoyeAudioSpider(PriceoyeSpider):
     start_urls = ["https://priceoye.pk/wireless-earbuds"]
     PRODUCT_URL_PREFIX = "https://priceoye.pk/wireless-earbuds/"
     unbranded_slugs = ('assorted',)
+
+
+class PriceoyeLaptopSpider(PriceoyeSpider):
+    """PriceOye's laptop catalogue.
+
+    A page names one model and processor; its options are memory and
+    storage ("512gb - 16gb ram"), read as a phone's are.
+    """
+
+    name = "priceoye_laptops"
+    catalog_category = "laptops"
+    parser_version = "priceoye-laptops-v1"
+    catalog_path = "/laptops"
+    start_urls = ["https://priceoye.pk/laptops"]
+    PRODUCT_URL_PREFIX = "https://priceoye.pk/laptops/"
+    unbranded_slugs = ('assorted',)

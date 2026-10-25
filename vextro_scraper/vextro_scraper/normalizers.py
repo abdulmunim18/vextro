@@ -358,6 +358,11 @@ BRAND_ALIASES = (
     ('Awei', ('awei',)),
     ('Oraimo', ('oraimo',)),
     ('Haylou', ('haylou',)),
+    # Laptop makers.
+    ('HP', ('hp',)),
+    ('Dell', ('dell',)),
+    ('MSI', ('msi',)),
+    ('Dahua', ('dahua',)),
 )
 
 

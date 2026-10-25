@@ -198,6 +198,7 @@ function buildSpecifications(productData) {
     "connectivity",
     "display",
     "processor",
+    "graphics",
     "battery_capacity",
     "battery",
     "front_camera",

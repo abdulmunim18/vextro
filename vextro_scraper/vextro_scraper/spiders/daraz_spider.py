@@ -1030,3 +1030,23 @@ class DarazAudioSpider(DarazSpider):
         **DarazSpider.custom_settings,
         'DARAZ_REVIEWS_ENABLED': False,
     }
+
+
+class DarazLaptopSpider(DarazSpider):
+    """Daraz's laptops, matched to laptops VEXTRO lists.
+
+    Mixed with used and refurbished machines and with bags, so its listings
+    only join laptops another marketplace catalogued.
+    """
+
+    name = "daraz_laptops"
+    catalog_category = "laptops"
+    match_only = True
+    parser_version = "daraz-laptops-v1"
+    CATALOG_PATH = "/laptops/"
+    start_urls = ["https://www.daraz.pk/laptops/?ajax=true"]
+
+    custom_settings = {
+        **DarazSpider.custom_settings,
+        'DARAZ_REVIEWS_ENABLED': False,
+    }

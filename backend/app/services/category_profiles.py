@@ -63,6 +63,21 @@ class CategoryProfile:
     name_rewrites: tuple[
         tuple[re.Pattern, str | Callable[[re.Match], str]], ...
     ] = ()
+    # RAM and storage are read with this profile's own extractors instead
+    # of the phone reading: a laptop title also states its graphics card's
+    # memory ("RTX5090 24GB"), which a phone reading takes for RAM.
+    reads_own_memory: bool = False
+
+    def memory_from(
+        self,
+        *,
+        title: str | None,
+        specifications: dict[str, object] | None = None,
+    ) -> tuple[int | None, int | None]:
+        """Return ``(ram_gb, storage_gb)`` as this profile reads them."""
+
+        identity = self.identity_from(title=title, specifications=specifications)
+        return identity.get("ram_gb"), identity.get("storage_gb")
 
     def product_title(self, title: str | None) -> str:
         """Return the title without the words that name a variant."""
@@ -392,6 +407,302 @@ _WATCH_NAME_REWRITES = (
 )
 
 
+# --- Laptops -----------------------------------------------------------------
+#
+# One laptop model ("HP ProBook 460 G11") is sold with several processors,
+# memory sizes and graphics cards, at as many prices. The model is the
+# product; the processor, graphics card and screen are, with RAM and
+# storage, what tells its variants apart.
+
+_PROCESSORS = (
+    # Apple silicon: "M5", "M4 Pro Chip".
+    (
+        re.compile(r"\b(?:apple\s+)?m([1-6])(?:\s+(pro|max|ultra))?\b", re.I),
+        lambda m: " ".join(part for part in (f"m{m.group(1)}", m.group(2)) if part).lower(),
+    ),
+    # Apple's phone chips in the MacBook Neo: "A18 Pro Chip".
+    (
+        re.compile(r"\b(?:apple\s+)?a(1[5-9])(?:\s+(pro))?\s+chip\b", re.I),
+        lambda m: " ".join(part for part in (f"a{m.group(1)}", m.group(2)) if part).lower(),
+    ),
+    # Intel Core Ultra: "Core Ultra 7 155U", "Ultra 9 275HX", "Ultra X7 358H".
+    (
+        re.compile(
+            r"\b(?:intel\s+)?(?:core\s+)?ultra\s*x?([579])(?:\s+(?:processor\s+)?(\d{3}[a-z]{0,2}))?\b",
+            re.I,
+        ),
+        lambda m: " ".join(part for part in ("ultra", m.group(1), m.group(2)) if part).lower(),
+    ),
+    # Intel Core i: "i7-13620H", "Ci7-13620H", "Core i5 13th Gen", "i3-N305".
+    (
+        re.compile(
+            r"\b(?:intel\s+)?(?:core[\s-]*)?c?i([3579])"
+            r"(?:[\s-]+(?:(n?\d{3,5}[a-z]{0,2}\d?)\b|(\d{1,2})(?:st|nd|rd|th)\s*gen))?",
+            re.I,
+        ),
+        lambda m: (
+            f"i{m.group(1)}-{m.group(2)}" if m.group(2)
+            else f"i{m.group(1)} {m.group(3)}th gen" if m.group(3)
+            else f"i{m.group(1)}"
+        ).lower(),
+    ),
+    # Intel Core 3/5/7/9 without "i" or "Ultra": "Core 5 120U", "7-150U",
+    # "Core 9 270H", and "14th Gen Core 7" with no number.
+    (
+        re.compile(
+            r"\b(?:intel\s+)?(?:core\s+([3579])(?:\s+(\d{3}[a-z]{0,2}))?|([3579])-(\d{3}[uhp]))\b",
+            re.I,
+        ),
+        lambda m: " ".join(
+            part for part in ("core", m.group(1) or m.group(3), m.group(2) or m.group(4)) if part
+        ).lower(),
+    ),
+    # AMD: "Ryzen 7 8845HS", "Ryzen AI 9 HX 370", "Ryzen AI Max+ 395", "Ryzen".
+    (
+        re.compile(
+            r"\b(?:amd\s+)?ryzen\s*(ai\s*)?(max\+?\s*)?(?:pro\s*)?([3579])?"
+            r"(?:\s*(?:pro\s*|hx\s*)?(\d{3,4}[a-z]{0,2}))?\b",
+            re.I,
+        ),
+        lambda m: " ".join(
+            part
+            for part in (
+                "ryzen",
+                "ai" if m.group(1) else None,
+                "max" if m.group(2) else None,
+                m.group(3),
+                m.group(4),
+            )
+            if part
+        ).lower(),
+    ),
+    # Qualcomm: "Snapdragon X Elite", "Snapdragon X X1-26-100", "X1-26-100".
+    (
+        re.compile(
+            r"\bsnapdragon\s*x\d?(?:\s*(elite|plus))?(?:\s*extreme)?(?:\s+x\d[a-z]?[\s-]\d{2}[\s-]\d{3})?\b"
+            r"|\bx\d[a-z]?[\s-]\d{2}[\s-]\d{3}\b",
+            re.I,
+        ),
+        lambda m: " ".join(part for part in ("snapdragon x", m.group(1)) if part).lower(),
+    ),
+    (re.compile(r"\b(?:intel\s+)?(?:processor\s+)?(n(?:100|150|200|300|305))\b", re.I), lambda m: m.group(1).lower()),
+    (re.compile(r"\bceleron\s*(n?\d{4})?\b", re.I), lambda m: f"celeron {m.group(1) or ''}".strip().lower()),
+    # A chip's number on its own: "1165G7", "7445H", "155U", "HX370".
+    (
+        re.compile(r"\b(?:hx)?(\d{3,5}(?:g\d|hx|hs|h|u|v|p))\b", re.I),
+        lambda m: m.group(1).lower(),
+    ),
+)
+
+
+def _processor(text: str, specifications: dict[str, str], title: str) -> str | None:
+    """The chip a title names, written one way: "ultra 5 125u", "m5"."""
+
+    found = []
+    for pattern, normalize in _PROCESSORS:
+        match = pattern.search(text)
+        if match is not None:
+            found.append((match.start(), normalize(match)))
+    return min(found)[1] if found else None
+
+
+_GRAPHICS = re.compile(
+    r"\b(?:nvidia\s+)?(?:geforce\s+)?(rtx|gtx|mx)[\s™-]*(\d{3,4})(\s*ti)?\b"
+    r"|\bradeon\s+(rx\s*\d{4}[a-z]?)\b"
+    # An RTX number on its own: "Legion 5 5070", "Victus 15 4050".
+    r"|\b()([2345]0[5-9]0)(\s*ti)?\b",
+    re.I,
+)
+
+
+def _graphics(text: str, specifications: dict[str, str], title: str) -> str | None:
+    """A dedicated graphics card: the RTX 4050 and 4060 Nitro are two prices."""
+
+    match = _GRAPHICS.search(text)
+    if match is None:
+        return None
+    if match.group(4):
+        return match.group(4).lower().replace(" ", "")
+    family, number, ti = (match.group(1), match.group(2), match.group(3)) if match.group(2) else (
+        "rtx", match.group(6), match.group(7),
+    )
+    return f"{family} {number}{' ti' if ti else ''}".lower()
+
+
+# A graphics card's own memory: "RTX5090 24GB", "8GB GDDR6 Graphics".
+_GRAPHICS_MEMORY = re.compile(
+    # "RTX 5050 16GB RAM" names the card, then the laptop's RAM.
+    r"\b(?:(?:rtx|gtx|mx)\s*-?\d{3,4}(?:\s*ti)?|radeon\s+rx\s*\d{4}[a-z]?)\s*\d{1,2}\s*gb\b(?!\s*(?:ddr\d\w*\s*)?ram)"
+    r"|\b\d{1,2}\s*gb\s+(?:gddr\d\s+)?(?:graphics|gc|vram)\b",
+    re.I,
+)
+_LAPTOP_RAM_SIZES = {4, 8, 12, 16, 18, 24, 32, 36, 48, 64, 96, 128, 192}
+
+
+def _laptop_memory(text: str, specifications: dict[str, str]) -> tuple[int | None, int | None]:
+    """RAM and storage of a laptop, never its graphics card's memory.
+
+    "64GB 2TB SSD RTX5090 24GB" is 64 GB of RAM: a phone reading takes the
+    graphics card's 24 GB for it. The specification sheet comes first, as
+    for phones.
+    """
+
+    ram_gb, storage_gb = extract_memory_capacities(specifications=specifications, title="")
+    text = _GRAPHICS_MEMORY.sub(" ", text)
+
+    # "16GB-512GB", "16GB RAM 512GB", "8-512GB", "8GB/512GB".
+    pair = next(
+        (
+            match
+            for match in re.finditer(
+                r"\b(\d{1,3})\s*(?:gb\s*)?(?:ram\s*)?(?:[-/+,]\s*|\s+)(\d{1,4})\s*(gb|tb)\b", text, re.I,
+            )
+            if int(match.group(1)) in _LAPTOP_RAM_SIZES
+        ),
+        None,
+    )
+    if pair:
+        ram_gb = ram_gb or int(pair.group(1))
+        storage_gb = storage_gb or int(pair.group(2)) * (1024 if pair.group(3).lower() == "tb" else 1)
+
+    if ram_gb is None:
+        stated = re.search(r"\b(\d{1,3})\s*gb\s*(?:ddr\d\w*\s*|lpddr\d\w*\s*)?ram\b", text, re.I)
+        if stated:
+            ram_gb = int(stated.group(1))
+    if storage_gb is None:
+        stated = re.search(r"\b(\d{1,4})\s*(gb|tb)\s*(?:ssd|hdd|nvme|storage)\b", text, re.I)
+        if stated:
+            storage_gb = int(stated.group(1)) * (1024 if stated.group(2).lower() == "tb" else 1)
+
+    return ram_gb, storage_gb
+
+
+def _laptop_ram_gb(text: str, specifications: dict[str, str], title: str) -> int | None:
+    return _laptop_memory(text, specifications)[0]
+
+
+def _laptop_storage_gb(text: str, specifications: dict[str, str], title: str) -> int | None:
+    return _laptop_memory(text, specifications)[1]
+
+
+def _laptop_screen_inches(text: str, specifications: dict[str, str], title: str) -> int | float | None:
+    """A laptop's screen as the title states it: the 13.6" and 15.3" Air."""
+
+    for match in [*_SCREEN_SIZE.finditer(text), *_BARE_LAPTOP_SCREEN.finditer(text)]:
+        size = float(match.group(1))
+        if 11 <= size <= 18.5:
+            return int(size) if size.is_integer() else round(size, 1)
+    return None
+
+
+# "15.6 FHD": a laptop screen written without its unit.
+_BARE_LAPTOP_SCREEN = re.compile(
+    r"\b(1[1-8]\.\d)\b(?!\s*-?\s*(?:\"|''|”|″|inch|gb|tb|ghz|kg|mm|hours?))",
+    re.I,
+)
+
+
+def _drop_stock_code(match: re.Match) -> str:
+    """Drop a configuration's stock code ("15IAN8", "FA506NCG-HN16GW").
+
+    Six characters or more with two letters and two figures in them: the
+    code one store prints for one build. Model names ("G11", "XL442",
+    "Book4") are shorter or plainer and stay.
+    """
+
+    word = match.group(0)
+    # "13-inch" is the screen, read as identity and removed with it.
+    if re.fullmatch(r"\d{1,2}(?:\.\d)?-inch(?:es)?", word, re.I):
+        return word
+    letters = sum(character.isalpha() for character in word)
+    figures = sum(character.isdigit() for character in word)
+    plain = word.replace("-", "")
+    if not (len(plain) >= 6 and letters >= 2 and figures >= 1):
+        return word
+    # "15-FD0229NIA", "15s-fq5317tu", "F15-FX507VV": the series before the
+    # code stays.
+    series = word.split("-", 1)[0]
+    if "-" in word and len(series) <= 3 and any(character.isdigit() for character in series):
+        return f" {series} "
+    return " "
+
+
+_LAPTOP_NAME_REWRITES = (
+    (re.compile(r"[™®©‎‏]"), " "),
+    (re.compile(r"\(([^()]*)\)"), r" \1 "),
+    *_BRAND_SPELLINGS,
+    # "ThinkBook16", "15G2": a model written without its spaces.
+    (re.compile(r"\b([A-Za-z]{5,})(\d{2})\b"), r"\1 \2"),
+    (re.compile(r"\b(\d{2})(G\d{1,2})\b"), r"\1 \2"),
+    # The processor's generation and code name, before "Gen 2" is read as
+    # the laptop's own generation below.
+    (re.compile(r"\b\d{1,2}\s*(?:st|nd|rd|th)\s*gen(?:eration)?\b", re.I), " "),
+    (re.compile(r"\b\d{1,2}\s*(?:st|nd|rd|th)\b|\b\d{1,2}gen\b", re.I), " "),
+    (
+        re.compile(
+            r"\b(?:raptor|alder|panther|arrow|lunar|meteor|tiger|comet|ice|kaby|coffee)\s+lake(?:\s+refresh)?\b",
+            re.I,
+        ),
+        " ",
+    ),
+    # A laptop's own generation: Lenovo writes "Gen 2" and "G2" alike.
+    (re.compile(r"\bgen(?:eration)?\s*(\d{1,2})\b", re.I), r"G\1"),
+    (re.compile(r"\b[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+\b|\b[A-Za-z0-9]{6,}\b"), _drop_stock_code),
+    # Shorter stock codes: Apple's ("MDE44", "MRXW3", "A2918"), MSI's
+    # ("A2WH", "B2RVE") and Lenovo's platform ("IAL", "IRL", "ABP").
+    (re.compile(r"\bM[A-Z]{2,4}\d{1,2}(?:LL|ZA|ZM|AM)?(?:/A)?\b|\bA2\d{3}\b"), " "),
+    (re.compile(r"\b[A-C]\d[A-Z]{2,4}\b"), " "),
+    (re.compile(r"\b(?:IAL|IRL|IRH|IAH|IAP|IAU|IAX|IMH|IRU|ABP|ARP|ARH|AHP|AKP|APH|ASP)\d*\b"), " "),
+    (re.compile(r"\bmac\s*book\b", re.I), "MacBook"),
+)
+
+_LAPTOP_VARIANT_WORDS = (
+    re.compile(r"\s+with\b.*$", re.I),
+    # "1 Year Acer Official Warranty": the maker's name may sit inside.
+    re.compile(
+        r"\b(?:\d{1,2}|one|two|three)\s*(?:years?|yrs?|months?)\s+(?:[A-Za-z]+\s+){0,2}warranty\b"
+        r"|\b(?:international|local)\b(?:\s+warranty)?",
+        re.I,
+    ),
+    re.compile(r"\b\d{1,2}-core\b|\b\d{1,2}\s*-\s*\d{3,4}\s*(?:gb|tb)\b|\bd[o0]s\b", re.I),
+    _BARE_LAPTOP_SCREEN,
+    # The chip, the graphics card, memory and screen are read as identity.
+    *(pattern for pattern, _ in _PROCESSORS),
+    _GRAPHICS,
+    re.compile(r"\b\d{1,2}\s*gb\s+(?:gddr\d\s+)?(?:graphics|gc|vram)\b|\b(?:graphics|gc)\b", re.I),
+    re.compile(r"\b\d{1,4}\s*(?:gb|tb)\b(?:\s*(?:ram|ssd|hdd|nvme|storage|ddr\d\w*|lpddr\d\w*))?", re.I),
+    re.compile(r"\b(?:ram|ssd|hdd|nvme)\b", re.I),
+    _SCREEN_SIZE,
+    # What every title says around the model.
+    re.compile(r"\bcopilot\+?\s*pc\b|\bnext\s+gen\s+ai\b|\bai\s+(?:laptop|pc)\b", re.I),
+    re.compile(r"\b(?:notebook\s+pc|notebook|laptops?|gaming|2\s*in\s*1|2-in-1)\b", re.I),
+    re.compile(r"\b(?:windows\s*1[01](?:\s*(?:home|pro))?|win\s*1[01]|free\s*dos|dos|chrome\s*os)\b", re.I),
+    re.compile(r"\b(?:intel|amd|nvidia|core|processor|cpu|series\s*\d?|chip|gen|rtx|gtx|ti)\b", re.I),
+    re.compile(r"\bcopilot\+?\b", re.I),
+    # The finish is the variant's colour; the build options are its own.
+    re.compile(
+        r"\b(?:space\s+black|space\s+gr[ae]y|pike\s+silver|arctic(?:\s+gr[ae]y)?|sky\s+blue"
+        r"|silver|black|grey|gray|gold|blue|white|midnight|starlight|alumini?um)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:backlit\s+keyboard|keyboard|touch(?:screen)?|oled|fhd|qhd|uhd|ips|home"
+        r"|dual|octa|vpro|pen|m\.2|pcie|premium|year|pc)\b|\b\d\s*y\b",
+        re.I,
+    ),
+    # Memory left without its unit: "512", "GB".
+    re.compile(r"\b(?:128|256|512|1024)\b|\bgb\b", re.I),
+    _WARRANTY_WORDS,
+    _MODEL_YEAR,
+)
+
+LAPTOP_RAM = IdentityAttribute("ram_gb", "RAM", "GB", _laptop_ram_gb)
+LAPTOP_STORAGE = IdentityAttribute("storage_gb", "Storage", "GB", _laptop_storage_gb)
+PROCESSOR = IdentityAttribute("processor", "Processor", None, _processor)
+GRAPHICS = IdentityAttribute("graphics", "Graphics", None, _graphics)
+LAPTOP_SCREEN = IdentityAttribute("screen_in", "Screen", "inch", _laptop_screen_inches)
+
+
 _AUDIO_NAME_REWRITES = (
     (re.compile(r"\(([^()]*)\)"), r" \1 "),
     *_BRAND_SPELLINGS,
@@ -481,6 +792,14 @@ PROFILES: dict[str, CategoryProfile] = {
                 _MODEL_YEAR,
             ),
             name_rewrites=_WATCH_NAME_REWRITES,
+        ),
+        CategoryProfile(
+            "laptops",
+            "Laptops",
+            (LAPTOP_RAM, LAPTOP_STORAGE, PROCESSOR, GRAPHICS, LAPTOP_SCREEN),
+            variant_words=_LAPTOP_VARIANT_WORDS,
+            name_rewrites=_LAPTOP_NAME_REWRITES,
+            reads_own_memory=True,
         ),
         # Earbuds and headphones come in colours only; the model name is
         # the product, and what titles add around it is removed.

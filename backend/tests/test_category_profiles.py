@@ -270,6 +270,88 @@ def test_earbuds_are_told_apart_by_colour_alone():
     assert not profile.uses_memory
 
 
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        (
+            "Acer Nitro V15 Ci7-13620H (16GB-512GB SSD) RTX 5050 8GB",
+            {"ram_gb": 16, "storage_gb": 512, "processor": "i7-13620h", "graphics": "rtx 5050"},
+        ),
+        (
+            "HP ProBook 460 G11 Notebook PC Intel Core Ultra 7 Processor 155U (8GB-512GB)",
+            {"ram_gb": 8, "storage_gb": 512, "processor": "ultra 7 155u"},
+        ),
+        # The graphics card's 24 GB is not the laptop's RAM.
+        (
+            "MSI Raider 18 HX AI A2XWJG Ultra 9 275HX 64GB 2TB SSD RTX5090 24GB Graphics Gaming Laptop",
+            {"ram_gb": 64, "storage_gb": 2048, "processor": "ultra 9 275hx", "graphics": "rtx 5090"},
+        ),
+        (
+            'Lenovo LOQ 15 Essential 15.6" Intel Core i5-13450HX RTX 5050 16GB RAM 512GB SSD',
+            {"ram_gb": 16, "storage_gb": 512, "processor": "i5-13450hx", "graphics": "rtx 5050", "screen_in": 15.6},
+        ),
+        (
+            'Apple Macbook Air 2026 M5 15.3" 24GB 1TB SSD',
+            {"ram_gb": 24, "storage_gb": 1024, "processor": "m5", "screen_in": 15.3},
+        ),
+        (
+            "Asus Zenbook 14 UM3405GA Copilot+ PC AMD Ryzen AI 9 465 16GB RAM 512GB SSD Laptop",
+            {"ram_gb": 16, "storage_gb": 512, "processor": "ryzen ai 9 465"},
+        ),
+    ],
+)
+def test_a_laptop_is_identified_by_its_chip_memory_graphics_and_screen(title, expected):
+    assert identity("laptops", title) == expected
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (
+            "HP ProBook 460 G11 Notebook PC Intel Core Ultra 7 Processor 155U (8GB-512GB)",
+            "HP ProBook 460 G11 Intel Core Ultra 5 125U 16GB RAM 512GB SSD",
+        ),
+        ("Lenovo ThinkPad E16 Gen 2 - Intel Core Ultra 5 (8GB-512GB)", "Lenovo ThinkPad E16 G2 Ultra 7 255H"),
+        ("Lenovo IdeaPad Slim 3 Core i5 13th Gen", "Lenovo Ideapad Slim 3 15IAN8 i3-N305 8GB RAM 256GB SSD"),
+        ('Apple Macbook Air 2026 M5 15.3" 24GB 1TB SSD', "Apple MacBook Air M4 13-inch 16GB 256GB"),
+    ],
+)
+def test_two_configurations_of_one_laptop_share_its_name(first, second):
+    profile = profile_for("laptops")
+
+    assert profile.product_title(first).lower() == profile.product_title(second).lower()
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        # Glued, coded and generation-marked names.
+        ("Lenovo ThinkBook16 - Ci5-1335U (8GB 512GB)", "Lenovo ThinkBook 16"),
+        ("Lenovo Thinkbook 15G2 11th Gen Core I7 D0S", "Lenovo Thinkbook 15 G2"),
+        ("HP 15-FD0647TU Ci5-1334U (8GB-512GB SSD)", "HP 15"),
+        ("ASUS TUF GAMING F15-FX507VV Ci7-13620H (16GB-512GB SSD) RTX 4060 8GB", "ASUS TUF F15"),
+        # Chips with no family word, and graphics with no "RTX".
+        ("Lenovo Thinkbook 14 G2 1165G7 (8GB-512GB)", "Lenovo Thinkbook 14 G2"),
+        ("Acer Nitro V 16S ANV16S Copilot + PC 16\" Intel Core 9 270H 5070 SSD Gaming Laptop", "Acer Nitro V 16S"),
+        # Apple's and MSI's stock codes, colours and warranty with a maker inside.
+        ("Apple MacBook Pro Space Black MDE04 M5 Pro 24GB 1TB", "Apple MacBook Pro"),
+        ("MSI Raider 18 Max HX A2WH Ultra 9 275HX 32GB 1TB SSD", "MSI Raider 18 Max HX"),
+        ("Acer Aspire Go 15 AG15-72P-71MA Intel Core 7-150U, 1 Year Acer Official Warranty", "Acer Aspire Go 15"),
+    ],
+)
+def test_a_laptops_name_is_its_model_alone(title, expected):
+    profile = profile_for("laptops")
+
+    assert profile.product_title(title) == expected
+
+
+def test_a_laptop_chip_written_alone_is_still_its_processor():
+    assert identity("laptops", "Lenovo Thinkbook 14 G2 1165G7 (8GB-512GB)")["processor"] == "1165g7"
+    assert identity("laptops", "Acer Nitro V 16S Intel Core 9 270H 5070")["processor"] == "core 9 270h"
+    assert identity("laptops", "Acer Nitro V 16S Intel Core 9 270H 5070")["graphics"] == "rtx 5070"
+    assert identity("laptops", "Apple MACBOOK AIR 13.6” M2 CHIP MLY43 8-512GB")["ram_gb"] == 8
+
+
 def test_memory_does_not_tell_watches_apart():
     assert profile_for("mobile-phones").uses_memory
     assert profile_for("tablets").uses_memory

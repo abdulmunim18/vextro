@@ -876,3 +876,21 @@ class ShophiveAudioSpider(ShophiveSpider):
         'audio/neckband',
         'apple/airpod',
     )
+
+
+class ShophiveLaptopSpider(ShophiveSpider):
+    """Shophive's laptops and its MacBooks.
+
+    Bags, chargers and desktops (iMac, Mac mini, Mac Studio) have
+    categories of their own and are not read.
+    """
+
+    name = 'shophive_laptops'
+    catalog_category = 'laptops'
+    parser_version = 'shophive-laptops-v1'
+    category_paths = (
+        'laptops-computers/laptops',
+        'apple/mac/macbook-air',
+        'apple/mac/macbook-pro',
+        'apple/mac/macbook-neo',
+    )
