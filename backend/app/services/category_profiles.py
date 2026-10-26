@@ -67,6 +67,24 @@ class CategoryProfile:
     # of the phone reading: a laptop title also states its graphics card's
     # memory ("RTX5090 24GB"), which a phone reading takes for RAM.
     reads_own_memory: bool = False
+    # Appliances carry their maker's model code ("HSU-19HFAB", "55C6K"),
+    # which names the product exactly where names are written every which
+    # way. A profile that reads one matches on the code alone.
+    model_code: Callable[[str], str | None] | None = None
+
+    def model_code_from(self, title: str | None) -> str | None:
+        """Return the model code a title states, as the catalogue keys it.
+
+        Stores write one code with and without hyphens and spaces
+        ("GS-18FITH1", "GS18FITH1"), so only its letters and digits count.
+        """
+
+        if self.model_code is None or not title:
+            return None
+        code = self.model_code(html.unescape(str(title)))
+        if not code:
+            return None
+        return re.sub(r"[^A-Z0-9]", "", code.upper()) or None
 
     def memory_from(
         self,
@@ -733,6 +751,88 @@ CASE_MATERIAL = IdentityAttribute("case_material", "Case", None, _case_material)
 
 
 # ---------------------------------------------------------------------------
+# Appliances
+# ---------------------------------------------------------------------------
+
+# Where a store points at the code: "(GS18FITH1W)", "Model HSU-19HFAB W".
+_STATED_CODE = re.compile(
+    r"\(\s*([A-Z0-9][A-Z0-9/-]{3,24})\s*\)"
+    r"|\bmodel\s*(?:no\.?|#|:)?\s*([A-Z0-9][A-Z0-9/-]{3,24})",
+    re.I,
+)
+# A word of letters and digits together, five or more long: "55P635".
+_CODE_WORD = re.compile(
+    r"(?<![\w.])(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])[A-Z0-9][A-Z0-9-]{4,24}\b",
+    re.I,
+)
+# Letters and digits that are not a code: "4K-UHD", "120Hz", "R410A" gas.
+_NOT_A_CODE = re.compile(
+    r"^\d+(?:ton|inch|in|kg|ltr|l|w|hz|k|cuft|gb|tb|mm|cm|hp|mah)\b"
+    r"|^R\d{2,3}A?$|^[A-Z]\d$",
+    re.I,
+)
+
+
+def _is_model_code(word: str) -> bool:
+    return (
+        any(character.isdigit() for character in word)
+        and any(character.isalpha() for character in word)
+        and not _NOT_A_CODE.search(word)
+    )
+
+
+def stated_model_code(title: str) -> str | None:
+    """Return the model code a title states, as written there.
+
+    The code a store points at (in brackets, after "Model") wins; otherwise
+    the first word that looks like one.
+    """
+
+    for match in _STATED_CODE.finditer(title):
+        code = match.group(1) or match.group(2)
+        if _is_model_code(code):
+            return code
+    for match in _CODE_WORD.finditer(title):
+        if _is_model_code(match.group(0)):
+            return match.group(0)
+    return None
+
+
+# Short words appliance titles write in capitals whatever the case around them.
+_APPLIANCE_ACRONYMS = frozenset(
+    {"AC", "DC", "TV", "LED", "QLED", "OLED", "UHD", "FHD", "HD", "HDR", "LG", "TCL", "PEL", "INV"}
+)
+
+
+def appliance_name(title: str, brand_name: str) -> str:
+    """Return an appliance's catalogue name from its title.
+
+    Some stores write every title in capitals ("HAIER 1.5 TON T3 INVERTER
+    AC"); the catalogue writes words as words and the brand as the brand
+    is written, leaving codes and acronyms as they are.
+    """
+
+    words = title.split()
+    # In capitals but for the odd word ("... INVERTER AC Model HSU-19HFAB").
+    letters = [character for character in title if character.isalpha()]
+    shouted = bool(letters) and sum(map(str.islower, letters)) <= len(letters) // 5
+
+    def written(word: str) -> str:
+        if word.lower() == brand_name.lower():
+            return brand_name
+        if not shouted or any(character.isdigit() for character in word):
+            return word
+        if word.upper() in _APPLIANCE_ACRONYMS or len(word) == 1:
+            return word
+        return word.capitalize()
+
+    name = " ".join(written(word) for word in words)
+    if not name.lower().startswith(brand_name.lower()):
+        name = f"{brand_name} {name}"
+    return name
+
+
+# ---------------------------------------------------------------------------
 # Profiles
 # ---------------------------------------------------------------------------
 
@@ -834,6 +934,23 @@ PROFILES: dict[str, CategoryProfile] = {
             ),
             name_rewrites=_AUDIO_NAME_REWRITES,
         ),
+        # Appliances are matched on their model code. What tells their
+        # variants apart (an AC's tonnage, a TV's screen size) arrives with
+        # each appliance's own phase.
+        CategoryProfile(
+            "air-conditioners",
+            "Air Conditioners",
+            (),
+            variant_words=(_WARRANTY_WORDS,),
+            model_code=stated_model_code,
+        ),
+        CategoryProfile(
+            "televisions",
+            "Televisions",
+            (),
+            variant_words=(_WARRANTY_WORDS,),
+            model_code=stated_model_code,
+        ),
     )
 }
 
@@ -860,10 +977,12 @@ def profile_for(slug: str | None) -> CategoryProfile:
 __all__ = [
     "ALIASES",
     "DEFAULT_CATEGORY",
+    "appliance_name",
     "PROFILES",
     "CategoryProfile",
     "IdentityAttribute",
     "UnknownCategoryError",
     "configuration_key",
     "profile_for",
+    "stated_model_code",
 ]

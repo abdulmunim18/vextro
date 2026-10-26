@@ -191,6 +191,46 @@ def test_list_products_supports_pagination_search_and_filters(
     assert filtered_body["items"][0]["primary_image_url"] == (
         "https://example.com/images/alpha-phone-x.jpg"
     )
+
+
+def test_a_parent_category_lists_the_products_of_its_children(
+    client: TestClient,
+    database_session: Session,
+) -> None:
+    """Home Appliances holds no products itself; its children do."""
+
+    parent, brand, _platform = create_reference_data(database_session)
+    first_child = Category(
+        parent_id=parent.id,
+        name=unique_value("Air Conditioners"),
+        slug=unique_value("air-conditioners").lower(),
+    )
+    second_child = Category(
+        parent_id=parent.id,
+        name=unique_value("Televisions"),
+        slug=unique_value("televisions").lower(),
+    )
+    elsewhere = Category(
+        name=unique_value("Phones"),
+        slug=unique_value("phones").lower(),
+    )
+    database_session.add_all([first_child, second_child, elsewhere])
+    database_session.flush()
+
+    create_product(database_session, category=first_child, brand=brand, name="Cool Air 18")
+    create_product(database_session, category=second_child, brand=brand, name="Vision 55")
+    create_product(database_session, category=elsewhere, brand=brand, name="Phone 9")
+    database_session.commit()
+
+    def names(slug: str) -> set[str]:
+        response = client.get("/api/v1/products", params={"category_slug": slug})
+        assert response.status_code == 200
+        return {item["name"] for item in response.json()["items"]}
+
+    assert names(parent.slug) == {"Cool Air 18", "Vision 55"}
+    assert names(first_child.slug) == {"Cool Air 18"}
+
+
 def test_get_product_detail_includes_variants_and_images(
     client: TestClient,
     database_session: Session,
