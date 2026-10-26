@@ -2,6 +2,18 @@
 // "smartphones" slug, whose products live under mobile-phones.
 export const HIDDEN_CATEGORY_SLUGS = new Set(["electronics", "smartphones"]);
 
+// Categories whose products have no RAM or storage to state.
+const WITHOUT_MEMORY = new Set([
+  "smart-watches",
+  "audio-and-earbuds",
+  "air-conditioners",
+  "televisions",
+]);
+
+export function statesMemory(categorySlug) {
+  return !WITHOUT_MEMORY.has(categorySlug);
+}
+
 // Shown categories in filter order: each one whose parent is shown sits
 // under it (Air Conditioners under Home Appliances); the rest stand alone.
 export function nestCategories(categories) {

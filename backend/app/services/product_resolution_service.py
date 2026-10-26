@@ -764,13 +764,15 @@ class ProductResolutionService:
         """
 
         title = clean_marketplace_title(payload.title, payload.seller_name)
-        code = profile.model_code_from(title)
+        code = profile.model_key_from(title)
 
         def unmatched(reason: str) -> ProductResolveResponse:
             return ProductResolveResponse(matched=False, confidence=0, reason=reason)
 
         if code is None:
-            return unmatched("The listing states no model code to match it by.")
+            return unmatched(
+                "The listing states no model code, nor a model name, to match it by."
+            )
 
         brand_name = infer_brand_name(
             title,
@@ -819,6 +821,12 @@ class ProductResolutionService:
             )
 
         color = normalize_color(payload.color)
+        if color is None and profile.code_colour is not None:
+            color = normalize_color(profile.code_colour(title))
+        if color is not None:
+            # One store's "GREY" is another's "GRAY". Phones keep the
+            # spellings their variants were created with.
+            color = re.sub(r"\bGray\b", "Grey", color)
         identity = profile.identity_from(
             title=title,
             specifications=payload.specifications,
@@ -928,7 +936,9 @@ class ProductResolutionService:
             model=code,
             specifications=normalize_specifications(
                 merge_specifications(
-                    infer_title_specifications(title),
+                    profile.title_specifications(title)
+                    if profile.title_specifications
+                    else infer_title_specifications(title),
                     payload.specifications,
                 )
             ),

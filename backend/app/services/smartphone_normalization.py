@@ -73,6 +73,28 @@ BRAND_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Dell", ("dell",)),
     ("MSI", ("msi",)),
     ("Dahua", ("dahua",)),
+    # Home appliances.
+    ("Haier", ("haier",)),
+    ("Gree", ("gree",)),
+    ("Dawlance", ("dawlance",)),
+    ("Orient", ("orient",)),
+    ("PEL", ("pel",)),
+    ("Kenwood", ("kenwood",)),
+    ("Midea", ("midea",)),
+    ("EcoStar", ("ecostar", "eco star")),
+    ("Changhong Ruba", ("changhong ruba", "changhong")),
+    ("Aeris", ("aeris",)),
+    ("Skywood", ("skywood",)),
+    ("Hisense", ("hisense",)),
+    ("Mitsubishi", ("mitsubishi",)),
+    ("Panasonic", ("panasonic",)),
+    ("Daikin", ("daikin",)),
+    ("Homage", ("homage",)),
+    ("Inverex", ("inverex",)),
+    ("Fujitsu", ("fujitsu",)),
+    ("Electrolux", ("electrolux",)),
+    ("American General", ("american general",)),
+    ("Hitachi", ("hitachi",)),
 )
 
 

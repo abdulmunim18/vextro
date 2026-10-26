@@ -84,6 +84,26 @@ def test_each_colour_is_a_listing_of_its_own():
     assert items[1]['product_url'].endswith('?variant=12')
 
 
+def test_a_series_sold_as_one_product_names_each_model_in_its_listing():
+    spider = StoreSpider()
+    items = read(spider, [product(
+        title='Kenwood Glory Pro DC Inverter Split Air Conditioner with Official Warranty',
+        options=[{'name': 'Model', 'position': 1, 'values': ['KGP-12C01S - 1.0 Ton', 'KGP-18C01S - 1.5 Ton']}],
+        variants=[
+            {'id': 21, 'title': 'KGP-12C01S  -  1.0 Ton', 'option1': 'KGP-12C01S - 1.0 Ton',
+             'price': '116999', 'available': True},
+            {'id': 22, 'title': 'KGP-18C01S - 1.5 Ton', 'option1': 'KGP-18C01S - 1.5 Ton',
+             'price': '143499', 'available': True},
+        ],
+    )])
+
+    assert [item['model'] for item in items] == [
+        'Kenwood Glory Pro DC Inverter Split Air Conditioner with Official Warranty KGP-12C01S - 1.0 Ton',
+        'Kenwood Glory Pro DC Inverter Split Air Conditioner with Official Warranty KGP-18C01S - 1.5 Ton',
+    ]
+    assert [item['color'] for item in items] == [None, None]
+
+
 def test_a_variant_at_rs_0_is_not_an_offer():
     spider = StoreSpider()
     items = read(spider, [product(variants=[

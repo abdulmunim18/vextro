@@ -182,6 +182,8 @@ BRAND_PLACEHOLDERS = frozenset(
         # PriceOye's brand for unbranded goods, and Daraz's refurbished
         # programme, which is a seller, not a maker.
         'assorted', 'generic', 'daraz like new', '',
+        # Appliance stores that put their own name where a brand goes.
+        'telemart', 'jalal electronics',
     }
 )
 
@@ -456,6 +458,19 @@ NOT_A_LAPTOP = re.compile(
 )
 
 
+# What an AC category also serves: covers, stands and pipe kits, air
+# coolers and fans, and at a marketplace, whatever a seller filed there.
+NOT_AN_AC = re.compile(
+    r'\b(?:'
+    r'covers?|stands?|brackets?|copper|pipe|installation|remote|stabili[sz]ers?'
+    r'|air\s*coolers?|coolers?|fans?|purifiers?|dehumidifiers?'
+    r'|pumps?|shoes?|sandals?|for\s+(?:women|men|girls|boys|kids)'
+    r'|used|refurbished|second\s*hand'
+    r')\b',
+    re.I,
+)
+
+
 def is_out_of_category(category, title):
     """Return whether a title names something its category does not sell."""
 
@@ -467,6 +482,11 @@ def is_out_of_category(category, title):
         return bool(NOT_A_TABLET.search(title or ''))
     if category == 'laptops':
         return bool(NOT_A_LAPTOP.search(title or ''))
+    if category == 'air-conditioners':
+        # "... AC with Official Warranty" and "with Free Installation" are
+        # the offer, not what is sold.
+        sold = re.split(r'\bwith\b', title or '', maxsplit=1, flags=re.I)[0]
+        return bool(NOT_AN_AC.search(sold))
     if category == 'audio-and-earbuds':
         # What follows "with" lists features ("with Dual Speaker Drivers",
         # "with Mic"), not what is sold.

@@ -1136,3 +1136,20 @@ class PriceoyeLaptopSpider(PriceoyeSpider):
     start_urls = ["https://priceoye.pk/laptops"]
     PRODUCT_URL_PREFIX = "https://priceoye.pk/laptops/"
     unbranded_slugs = ('assorted',)
+
+
+class PriceoyeAirConditionerSpider(PriceoyeSpider):
+    """PriceOye's air conditioners.
+
+    Every title ends in the maker's model code in brackets ("Gree 1.5 Ton
+    Fairy Series Split Inverter AC (GS18FITH1W)"), which the catalogue
+    matches on.
+    """
+
+    name = "priceoye_acs"
+    catalog_category = "air-conditioners"
+    parser_version = "priceoye-acs-v1"
+    catalog_path = "/ac"
+    start_urls = ["https://priceoye.pk/ac"]
+    PRODUCT_URL_PREFIX = "https://priceoye.pk/ac/"
+    unbranded_slugs = ('assorted',)

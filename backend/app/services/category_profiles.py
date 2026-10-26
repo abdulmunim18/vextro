@@ -71,6 +71,16 @@ class CategoryProfile:
     # which names the product exactly where names are written every which
     # way. A profile that reads one matches on the code alone.
     model_code: Callable[[str], str | None] | None = None
+    # Some makers name a model in words ("Orient 18G Lunar Grace"). Where a
+    # title states no code, this reads such a name as a key that only the
+    # same words, in any order, share.
+    model_name_key: Callable[[str], str | None] | None = None
+    # The colour a model code names, for a listing that names none in words:
+    # "HSU-19HFS-W" is the white one.
+    code_colour: Callable[[str], str | None] | None = None
+    # What a title says about the product that is not its identity: an AC's
+    # tonnage, whether it heats. Kept with the product's specifications.
+    title_specifications: Callable[[str], dict[str, str]] | None = None
 
     def model_code_from(self, title: str | None) -> str | None:
         """Return the model code a title states, as the catalogue keys it.
@@ -85,6 +95,14 @@ class CategoryProfile:
         if not code:
             return None
         return re.sub(r"[^A-Z0-9]", "", code.upper()) or None
+
+    def model_key_from(self, title: str | None) -> str | None:
+        """Return the key a title files under: its code, or its model name."""
+
+        code = self.model_code_from(title)
+        if code is not None or self.model_name_key is None or not title:
+            return code
+        return self.model_name_key(html.unescape(str(title)))
 
     def memory_from(
         self,
@@ -798,6 +816,153 @@ def stated_model_code(title: str) -> str | None:
     return None
 
 
+# ---- Air conditioners ------------------------------------------------------
+
+# The letters an AC code ends in to name its colour: "HSU-19HFS-W" white,
+# "-S" silver, "-DG" dark grey, "HSU-20HFTEX OW" off-white.
+_AC_FINISHES = {
+    # "G" is Haier's grey on one model and its gold on another
+    # ("HSU-19HFS (G) GOLDEN"), so it names no colour.
+    "W": "White", "B": "Black", "BK": "Black", "S": "Silver", "G": None,
+    "DG": "Dark Grey", "OW": "Off White", "GD": "Gold", "SW": "Snow White",
+}
+_AC_FINISH = "|".join(sorted(_AC_FINISHES, key=len, reverse=True))
+_AC_CODE_FINISH = re.compile(rf"-({_AC_FINISH})$", re.I)
+# The finish written after the code: " W", "(W)", or past an outdoor unit's
+# code: "HSU-19HFS/023WDC(W)".
+_AC_FINISH_AFTER = re.compile(
+    rf"^(?:/[A-Z0-9-]+)?\s*\(?\s*({_AC_FINISH})\s*\)?(?=[\s,|-]|$)", re.I
+)
+
+
+def _ac_code_parts(title: str) -> tuple[str, str | None] | None:
+    """Return an AC's model code without what stores add to it, and its finish.
+
+    * Jalal adds the climate rating: "GS-12AITH21W-T3".
+    * A split AC's outdoor unit has a code of its own, after a slash:
+      "HSU-19HFCM/013USDC"; an indoor unit ending "I" pairs with one
+      ending "O": "AEW12QC01HCI/AEW12QC01HCO".
+    * A colour is written after a hyphen or a space: "HSU-19HFS-W".
+    """
+
+    written = stated_model_code(title)
+    if written is None:
+        return None
+
+    indoor, _, outdoor = written.partition("/")
+    if not outdoor and (
+        match := re.match(r"\s*/\s*([A-Z0-9-]+)", title[title.find(written) + len(written):], re.I)
+    ):
+        outdoor = match.group(1)
+    if (
+        outdoor
+        and indoor[-1:].upper() == "I"
+        and outdoor.upper() == indoor[:-1].upper() + "O"
+    ):
+        indoor = indoor[:-1]
+    code = re.sub(r"-T3$", "", indoor, flags=re.I)
+
+    finish = None
+    if (match := _AC_CODE_FINISH.search(code)) is not None:
+        finish = match.group(1).upper()
+        code = code[: match.start()]
+    else:
+        after = title[title.find(written) + len(written):]
+        if (match := _AC_FINISH_AFTER.match(after)) is not None:
+            finish = match.group(1).upper()
+
+    return code, finish
+
+
+def ac_model_code(title: str) -> str | None:
+    parts = _ac_code_parts(title)
+    return parts[0] if parts else None
+
+
+def ac_code_colour(title: str) -> str | None:
+    """Return the colour an AC's code names ("HSU-19HFS-W"), if it names one."""
+
+    parts = _ac_code_parts(title)
+    return _AC_FINISHES.get(parts[1]) if parts and parts[1] else None
+
+
+_AC_TONNAGE = re.compile(r"\b(\d(?:\.\d)?)\s*-?\s*tons?\b", re.I)
+
+
+def _ac_tonnage(title: str) -> str | None:
+    match = _AC_TONNAGE.search(title)
+    if match is None:
+        return None
+    tons = float(match.group(1))
+    return f"{tons:g} Ton"
+
+
+def ac_specifications(title: str) -> dict[str, str]:
+    """Return the tonnage, compressor and heating an AC title states."""
+
+    specifications = {}
+    if (tonnage := _ac_tonnage(title)) is not None:
+        specifications["capacity"] = tonnage
+    if re.search(r"\binverter\b", title, re.I):
+        specifications["compressor"] = "Inverter"
+    if re.search(r"\bheat\s*(?:&|and|/|n)\s*cool\b|\bh\s*&\s*c\b|\bhot\s*(?:&|and)\s*cold\b", title, re.I):
+        specifications["heating"] = "Heat & Cool"
+    elif re.search(r"\bcool\s+only\b", title, re.I):
+        specifications["heating"] = "Cool only"
+    return specifications
+
+
+# Words every AC title may carry or leave out: they say what an AC is, not
+# which one.
+_AC_GENERIC_WORDS = re.compile(
+    r"\b(?:split|air\s+cond\w*|ac|inverter|dc|t[13]|r410a?|r32|hot"
+    r"|heat\s*(?:&|and|/|n)?\s*cool|h\s*&\s*c|hot\s*(?:&|and)\s*cold|cool\s+only|cool"
+    r"|model|series|unit|self[\s-]+clean(?:ing)?|wi-?fi|smart|energy\s+saver"
+    r"|official|warranty|new|latest|20\d{2})\b",
+    re.I,
+)
+_AC_COLOURS = re.compile(
+    r"\b(?:(?:pearl|silk|mirror|marble|matte?|pure|super|snow|off)\s+)?"
+    r"(?:white|black|golden|gold|silver|grey|gray)\b",
+    re.I,
+)
+
+
+def ac_model_name_key(title: str) -> str | None:
+    """Return the key of an AC named in words, or ``None`` if too vague.
+
+    "ORIENT 1.5 TON ULTRON DC INVERTER AC Model 18G LUNAR GRACE BLACK" keys
+    as "1.5T 18G GRACE LUNAR ORIENT ULTRON": its tonnage and the words that
+    name the model, without colour and the words every AC title carries.
+    A title left with nothing but its tonnage, or one bare word, names no
+    model.
+    """
+
+    text = re.split(r"\bwith\b", title, maxsplit=1, flags=re.I)[0]
+    tonnage = _ac_tonnage(text)
+    text = _AC_TONNAGE.sub(" ", text)
+    text = re.sub(r"\b\d(?:\.\d)?\s*hp\b", " ", text, flags=re.I)
+    text = _AC_GENERIC_WORDS.sub(" ", text)
+    text = _AC_COLOURS.sub(" ", text)
+    words = sorted({word.upper() for word in re.findall(r"[A-Za-z0-9]+", text)})
+    # The brand is one word of it; on its own it names nothing.
+    model_words = [word for word in words if not _BRAND_WORD.fullmatch(word)]
+
+    if not model_words or (
+        len(model_words) == 1 and not any(character.isdigit() for character in model_words[0])
+    ):
+        return None
+
+    key = " ".join(model_words)
+    return f"{tonnage.replace(' Ton', 'T')} {key}" if tonnage else key
+
+
+_BRAND_WORD = re.compile(
+    "|".join(re.escape(alias.upper()) for _name, aliases in BRAND_ALIASES for alias in aliases)
+)
+
+
+
 # Short words appliance titles write in capitals whatever the case around them.
 _APPLIANCE_ACRONYMS = frozenset(
     {"AC", "DC", "TV", "LED", "QLED", "OLED", "UHD", "FHD", "HD", "HDR", "LG", "TCL", "PEL", "INV"}
@@ -824,7 +989,8 @@ def appliance_name(title: str, brand_name: str) -> str:
             return word
         if word.upper() in _APPLIANCE_ACRONYMS or len(word) == 1:
             return word
-        return word.capitalize()
+        # Each part of "HEAT/COOL" is a word of its own.
+        return re.sub(r"[A-Za-z]+", lambda part: part.group(0).capitalize(), word)
 
     name = " ".join(written(word) for word in words)
     if not name.lower().startswith(brand_name.lower()):
@@ -940,9 +1106,25 @@ PROFILES: dict[str, CategoryProfile] = {
         CategoryProfile(
             "air-conditioners",
             "Air Conditioners",
+            # One code is one AC; its colours are its variants.
             (),
-            variant_words=(_WARRANTY_WORDS,),
-            model_code=stated_model_code,
+            variant_words=(
+                re.compile(r"\s+with\b.*$", re.I),
+                _WARRANTY_WORDS,
+                # The colour, in words or as the code's letters ("... HSU-19HFS
+                # S"), names a variant; a store's broken dash ("�") nothing.
+                _AC_COLOURS,
+                re.compile(r"(?<=\s)\(?(?:W|S|G|B|OW|DG|GD)\)?(?=\s|$)"),
+                re.compile("�"),
+            ),
+            # Written so the clean-up of a lone "&" leaves it whole.
+            name_rewrites=(
+                (re.compile(r"\bheat\s*(?:&|and|/|n)\s*cool\b", re.I), "Heat/Cool"),
+            ),
+            model_code=ac_model_code,
+            model_name_key=ac_model_name_key,
+            code_colour=ac_code_colour,
+            title_specifications=ac_specifications,
         ),
         CategoryProfile(
             "televisions",

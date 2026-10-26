@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { nestCategories } from "./categories";
+import { nestCategories, statesMemory } from "./categories";
 
 const categories = [
   { id: 1, parent_id: null, slug: "electronics", name: "Electronics" },
@@ -31,5 +31,14 @@ describe("nestCategories", () => {
 
     expect(slugs).not.toContain("electronics");
     expect(slugs).not.toContain("smartphones");
+  });
+});
+
+describe("statesMemory", () => {
+  it("leaves RAM and storage to the categories that have them", () => {
+    expect(statesMemory("mobile-phones")).toBe(true);
+    expect(statesMemory("laptops")).toBe(true);
+    expect(statesMemory("air-conditioners")).toBe(false);
+    expect(statesMemory("audio-and-earbuds")).toBe(false);
   });
 });

@@ -44,6 +44,7 @@ import {
 } from "../utils/productDisplay";
 import { getMarketplaceDestination } from "../utils/marketplaceDestination";
 import { isMarketplace, sellsCategory } from "../utils/marketplaces";
+import { statesMemory } from "../utils/categories";
 
 function extractItems(responseData) {
   if (Array.isArray(responseData)) {
@@ -995,6 +996,7 @@ function ProductDetailPage() {
                   <div className="flex items-center justify-between gap-4">
                     <strong className="text-sm font-black text-vextro-ink">
                       {variant.sku ||
+                        variant.color ||
                         `Variant ${variant.id}`}
                     </strong>
 
@@ -1130,6 +1132,7 @@ function ProductDetailPage() {
                     key={listing.id}
                     listing={listing}
                     productName={product.name}
+                    showsMemory={statesMemory(productCategorySlug)}
                     platformName={
                       platformNames.get(
                         listing.platform_id,

@@ -236,14 +236,21 @@ class ShopifyStoreSpider(scrapy.Spider):
                 continue
             self.emitted_ids.add(external_id)
 
-            option_title = str(variant.get('title') or '').strip()
+            option_title = ' '.join(str(variant.get('title') or '').split())
             original = parse_price(variant.get('compare_at_price'))
 
             item = SmartphoneItem()
             item['platform'] = self.platform_code
             item['exact_model_title'] = not self.match_only
             item['external_id'] = external_id
-            item['model'] = title
+            # Telemart sells a series as one product whose variants are its
+            # models ("Kenwood Glory Pro ..." in "KGP-12C01S - 1.0 Ton"), so
+            # a variant's name is part of what the listing sells.
+            item['model'] = (
+                f'{title} {option_title}'
+                if several and option_title.lower() != DEFAULT_VARIANT
+                else title
+            )
             item['brand'] = vendor if self.vendor_is_brand else None
             item['variant'] = (
                 option_title if option_title.lower() != DEFAULT_VARIANT else None
@@ -283,3 +290,54 @@ class ShopifyStoreSpider(scrapy.Spider):
             len(self.collections),
             self.full_crawl_completed,
         )
+
+
+# ---------------------------------------------------------------------------
+# Stores
+# ---------------------------------------------------------------------------
+
+
+class FriendsHomeStore(ShopifyStoreSpider):
+    """Friends Home: appliances only, each title ending "Model <code>"."""
+
+    platform_code = 'friendshome'
+    base_url = 'https://friendshome.pk'
+    allowed_domains = ['friendshome.pk']
+
+
+class JalalStore(ShopifyStoreSpider):
+    """Jalal Electronics, whose feed names the store, not the brand, as vendor."""
+
+    platform_code = 'jalal'
+    base_url = 'https://jalalelectronics.com'
+    allowed_domains = ['jalalelectronics.com']
+    vendor_is_brand = False
+
+
+class TelemartStore(ShopifyStoreSpider):
+    """Telemart, a marketplace whose sellers write their own titles."""
+
+    platform_code = 'telemart'
+    base_url = 'https://telemart.pk'
+    allowed_domains = ['telemart.pk']
+    match_only = True
+
+
+class FriendsHomeAirConditionerSpider(FriendsHomeStore):
+    name = 'friendshome_acs'
+    catalog_category = 'air-conditioners'
+    # Its narrower AC collections (by tonnage, by brand) hold nothing this
+    # one does not.
+    collections = ('air-conditioners-ac-in-pakistan',)
+
+
+class JalalAirConditionerSpider(JalalStore):
+    name = 'jalal_acs'
+    catalog_category = 'air-conditioners'
+    collections = ('air-conditioners',)
+
+
+class TelemartAirConditionerSpider(TelemartStore):
+    name = 'telemart_acs'
+    catalog_category = 'air-conditioners'
+    collections = ('air-conditioners',)

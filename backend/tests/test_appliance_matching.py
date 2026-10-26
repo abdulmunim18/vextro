@@ -196,3 +196,126 @@ def test_a_listing_stating_no_code_is_left_alone(
     assert result["matched"] is False
     assert result["product_created"] is False
     assert "model code" in result["reason"]
+
+
+# --------------------------------------------------------------------------
+# Air conditioners
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("title", "code"),
+    [
+        # Jalal adds the climate rating to Gree's code.
+        ("GREE SPLIT AC 1 TON GS-12ZITH1W-T3 ZENO SERIES", "GS12ZITH1W"),
+        # A split AC's outdoor unit has a code of its own.
+        ("HAIER SPLIT AC INVERTER 1.6 TON HSU-19HFCM/013USDC HEAT & COOL", "HSU19HFCM"),
+        ("HAIER SPLIT AC INVERTER 1.5 TON HSU-19HFS/023WDC(W)-T3 Pro WHITE", "HSU19HFS"),
+        # An indoor unit ending "I" pairs with an outdoor one ending "O".
+        ("AERIS SPLIT AC INVERTER 1.0TON AEW12QC01HCI/AEW12QC01HCO T3", "AEW12QC01HC"),
+        # A colour written after the code is not part of it.
+        ("HAIER 1.5 TON T3 INVERTER AC Model HSU-19HFS-W", "HSU19HFS"),
+        ("HAIER 1.5 TON T3 INVERTER AC Model HSU-20HFTEX-DG", "HSU20HFTEX"),
+        # TCL's own code holds a T3 of its own.
+        ("TCL FLOOR STANDING AC 4.0 TON TAC-48T3-FH", "TAC48T3FH"),
+    ],
+)
+def test_an_ac_code_is_read_without_what_stores_add_to_it(title, code):
+    assert profile_for("air-conditioners").model_key_from(title) == code
+
+
+@pytest.mark.parametrize(
+    ("title", "colour"),
+    [
+        ("HAIER 1.5 TON T3 INVERTER AC Model HSU-19HFS-W", "White"),
+        ("HAIER 1.5 TON T3 INVERTER AC Model HSU-20HFTEX OW", "Off White"),
+        # "G" is grey on one Haier and gold on another.
+        ("HAIER 1.0 TON T3 INVERTER AC Model HSU-13HFAB G", None),
+        ("HAIER SPLIT AC 1.1 TON INVERTER HSU-13HFS/013WDC(S)-T3 PRO SILVER", "Silver"),
+        ("GREE 1.5 TON T3 INVERTER AC Model GS-18ZITH1W", None),
+    ],
+)
+def test_the_colour_an_ac_code_names_is_read(title, colour):
+    from app.services.category_profiles import ac_code_colour
+
+    assert ac_code_colour(title) == colour
+
+
+@pytest.mark.parametrize(
+    ("title", "key"),
+    [
+        ("ORIENT 1.5 TON ULTRON DC INVERTER AC Model 18G LUNAR FLORAL BLACK", "1.5T 18G FLORAL LUNAR ULTRON"),
+        ("PEL 1.0 TON SAVER T3 INVERTER AC Model 12K SAVER T3", "1T 12K SAVER"),
+        ("DAWLANCE SPLIT AC INVERTER 1.5 TON EXCEL INVERTER 30 WHITE HEAT & COOL", "1.5T 30 EXCEL"),
+        # One AC as another store writes it: the same key.
+        ("Dawlance Excel 30 Heat & Cool Inverter Split Air Condition 1.5 Ton With Official Warranty", "1.5T 30 EXCEL"),
+    ],
+)
+def test_an_ac_named_in_words_keys_on_its_name_and_tonnage(title, key):
+    assert profile_for("air-conditioners").model_key_from(title) == key
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Dawlance Magna Inverter Split AC 1.5 Ton With Official Warranty",
+        "Haier Inverter AC 1.5 Ton",
+    ],
+)
+def test_an_ac_title_naming_no_model_has_no_key(title):
+    assert profile_for("air-conditioners").model_key_from(title) is None
+
+
+def test_an_ac_title_states_its_tonnage_compressor_and_heating():
+    from app.services.category_profiles import ac_specifications
+
+    assert ac_specifications("HAIER SPLIT AC INVERTER 1.5 TON HSU-19HFS HEAT/COOL") == {
+        "capacity": "1.5 Ton",
+        "compressor": "Inverter",
+        "heating": "Heat & Cool",
+    }
+    assert ac_specifications("Gree T-Fresh Cool Only Floor Standing 4 Ton") == {
+        "capacity": "4 Ton",
+        "heating": "Cool only",
+    }
+
+
+def test_one_ac_from_two_stores_lands_on_one_colour_variant(
+    client: TestClient,
+    discovered_products: list[int],  # noqa: F811
+) -> None:
+    token = uuid4().hex[:4].upper()
+    friends_home = discover(
+        client,
+        discovered_products,
+        external_id=f"FH-{token}",
+        title=f"SAMSUNG 1.5 TON T3 INVERTER AC Model AR-19{token}-W",
+        **ac(),
+    )
+    jalal = discover(
+        client,
+        discovered_products,
+        external_id=f"JL-{token}",
+        title=f"SAMSUNG SPLIT AC INVERTER 1.5 TON AR-19{token}/013USDC(W)-T3 WHITE HEAT/COOL",
+        **ac(platform_code="jalal", brand=None),
+    )
+    grey = discover(
+        client,
+        discovered_products,
+        external_id=f"FH-{token}-G",
+        title=f"SAMSUNG 1.5 TON T3 INVERTER AC Model AR-19{token} GREY",
+        **ac(),
+    )
+    gray = discover(
+        client,
+        discovered_products,
+        external_id=f"JL-{token}-G",
+        title=f"SAMSUNG SPLIT AC INVERTER 1.5 TON AR-19{token}/013USDC GRAY T3",
+        **ac(platform_code="jalal", brand=None),
+    )
+
+    assert jalal["canonical_product_id"] == friends_home["canonical_product_id"]
+    assert jalal["product_variant_id"] == friends_home["product_variant_id"]
+    assert friends_home["color"] == "White"
+    assert gray["product_variant_id"] == grey["product_variant_id"]
+    assert grey["product_variant_id"] != friends_home["product_variant_id"]
