@@ -75,6 +75,10 @@ class CategoryProfile:
     # title states no code, this reads such a name as a key that only the
     # same words, in any order, share.
     model_name_key: Callable[[str], str | None] | None = None
+    # Whether a code may name a catalogued one by its beginning: a store
+    # writing a fridge's "HRF-398" for the "HRF-398IDBA" another catalogued.
+    # Only ever where exactly one catalogued code begins so.
+    model_code_prefixes: bool = False
     # The colour a model code names, for a listing that names none in words:
     # "HSU-19HFS-W" is the white one.
     code_colour: Callable[[str], str | None] | None = None
@@ -1074,6 +1078,61 @@ def _tv_series_in_name(title: str) -> str:
 TV_SCREEN = IdentityAttribute("screen_in", "Screen", "inch", _tv_screen_inches)
 
 
+# ---- Refrigerators and freezers ---------------------------------------------
+
+# A model named by its number alone, as Dawlance and PEL do: "9173 WB",
+# "9101 SD", "6370". Not a year, and not a capacity ("345 LTR", "16 CFT").
+_FRIDGE_NUMBER_CODE = re.compile(
+    r"(?<![\w.-])(?!(?:19|20)\d\d\b)(\d{4,5})(?:\s?([A-Z]{1,3}))?\b"
+    r"(?!\s*(?:ltrs?|litres?|liters?|l\b|cft|cu\.?\s*ft|cubic|kg|w\b|watts?))",
+    re.I,
+)
+
+
+_FRIDGE_SPACED_CODE = re.compile(
+    r"\b([A-Z]{2,4})[\s-](\d{3,4})(?:\s?([A-Z]{1,2}))?\b"
+    r"(?!\s*(?:ltrs?|litres?|liters?|l\b|cft|cu\.?\s*ft|cubic|kg))"
+)
+
+
+def fridge_model_code(title: str) -> str | None:
+    """Return a fridge's model code, or the number a maker names it by.
+
+    Friends Home writes Dawlance's "9101SD" as "REF-9101SD"; the "REF-"
+    is the store's.
+    """
+
+    code = stated_model_code(title)
+    if code is not None:
+        return re.sub(r"^REF-", "", code.split("/")[0], flags=re.I)
+    # Letters and a number written apart: Jalal's "HDF 405 SD" for the
+    # "HDF-405SD" others write, Telemart's "DFD 900".
+    if (match := _FRIDGE_SPACED_CODE.search(title)) is not None:
+        return "".join(part for part in match.groups() if part)
+    if (match := _FRIDGE_NUMBER_CODE.search(title)) is not None:
+        return match.group(1) + (match.group(2) or "")
+    return None
+
+
+_FRIDGE_CAPACITY = re.compile(
+    r"\b(\d{1,4}(?:\.\d)?)\s*(cft|cu\.?\s*ft|cubic\s+f(?:ee|oo)?t|ltrs?|litres?|liters?)\b", re.I
+)
+
+
+def fridge_specifications(title: str) -> dict[str, str]:
+    """Return the capacity and compressor a fridge title states."""
+
+    specifications = {}
+    if (match := _FRIDGE_CAPACITY.search(title)) is not None:
+        unit = "litres" if match.group(2).lower().startswith("l") else "cu ft"
+        specifications["capacity"] = f"{match.group(1)} {unit}"
+    if re.search(r"\bnon[\s-]*inverter\b", title, re.I):
+        specifications["compressor"] = "Non-inverter"
+    elif re.search(r"\binverter\b", title, re.I):
+        specifications["compressor"] = "Inverter"
+    return specifications
+
+
 # Short words appliance titles write in capitals whatever the case around them.
 _APPLIANCE_ACRONYMS = frozenset(
     {"AC", "DC", "TV", "LED", "QLED", "OLED", "QNED", "QD", "UHD", "FHD", "HD", "HDR", "LG", "TCL", "PEL", "INV"}
@@ -1266,6 +1325,21 @@ PROFILES: dict[str, CategoryProfile] = {
             ),
             model_code=tv_model_code,
             model_name_key=tv_model_name_key,
+        ),
+        # A fridge or freezer is its model code; its colours are variants.
+        CategoryProfile(
+            "refrigerators",
+            "Refrigerators & Freezers",
+            (),
+            variant_words=(
+                re.compile(r"\s+with\b.*$", re.I),
+                _WARRANTY_WORDS,
+                _AC_COLOURS,
+                re.compile("�"),
+            ),
+            model_code=fridge_model_code,
+            model_code_prefixes=True,
+            title_specifications=fridge_specifications,
         ),
     )
 }

@@ -1090,3 +1090,32 @@ class DarazTelevisionSpider(DarazSpider):
         **DarazSpider.custom_settings,
         'DARAZ_REVIEWS_ENABLED': False,
     }
+
+
+class DarazRefrigeratorSpider(DarazSpider):
+    """Daraz's refrigerators, matched to fridges VEXTRO lists.
+
+    Mixed with mini coolers, stabilizers and spare parts, and written by
+    sellers, so a listing only joins a fridge another store catalogued.
+    """
+
+    name = "daraz_fridges"
+    catalog_category = "refrigerators"
+    match_only = True
+    parser_version = "daraz-fridges-v1"
+    CATALOG_PATH = "/refrigerators/"
+    start_urls = ["https://www.daraz.pk/refrigerators/?ajax=true"]
+
+    custom_settings = {
+        **DarazSpider.custom_settings,
+        'DARAZ_REVIEWS_ENABLED': False,
+    }
+
+
+class DarazFreezerSpider(DarazRefrigeratorSpider):
+    """Daraz's freezers, which it files apart from its refrigerators."""
+
+    name = "daraz_freezers"
+    parser_version = "daraz-freezers-v1"
+    CATALOG_PATH = "/freezers/"
+    start_urls = ["https://www.daraz.pk/freezers/?ajax=true"]

@@ -398,3 +398,136 @@ def test_each_size_of_a_tv_series_is_a_variant_of_one_product(
     assert sixty_five["canonical_product_id"] == fifty_five["canonical_product_id"]
     assert sixty_five["product_variant_id"] != fifty_five["product_variant_id"]
     assert jalal["product_variant_id"] == fifty_five["product_variant_id"]
+
+
+# --------------------------------------------------------------------------
+# Refrigerators and freezers
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("title", "code"),
+    [
+        ("HAIER TWIN INVERTER + REFRIGERATOR Model HRF-538TIFRA", "HRF538TIFRA"),
+        ("LG REFRIGERATORGR GN-B472PQMB", "GNB472PQMB"),
+        # A model named by its number, with or without its series letters.
+        ("Dawlance 9173 WB Avante GD Refrigerator 12 CFT With Official Warranty", "9173WB"),
+        ("DAWLANCE REFRIGERATOR 9101 SD BLACK & SILVER", "9101SD"),
+        ("PEL DIGITRON ULTRA INVERTER REFRIGERATOR Model 6370 SILVER STR", "6370"),
+        # Friends Home's "REF-" is the store's, not Dawlance's.
+        ("DAWLANCE SINGLE DOOR REFRIGERATOR Model REF-9101SD METALLIC GREY", "9101SD"),
+        # Letters and number written apart.
+        ("HAIER DEEP FREEZER HDF 405 SD", "HDF405SD"),
+        ("Dawlance DFD 900 Glass Door Inverter Multi Door Refrigerator", "DFD900"),
+    ],
+)
+def test_a_fridge_is_read_by_its_code_or_its_number(title, code):
+    assert profile_for("refrigerators").model_key_from(title) == code
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        # A capacity and a year are not a model number.
+        "Haier Inverter Refrigerator 2025 Model 345 LTR",
+        "Kenwood Smart Inverter Refrigerator 16 Cubic feet",
+    ],
+)
+def test_a_fridge_title_naming_no_model_has_no_key(title):
+    assert profile_for("refrigerators").model_key_from(title) is None
+
+
+def test_a_fridge_title_states_its_capacity_and_compressor():
+    from app.services.category_profiles import fridge_specifications
+
+    assert fridge_specifications("Dawlance 9173 WB Avante Inverter Refrigerator 12 CFT") == {
+        "capacity": "12 cu ft",
+        "compressor": "Inverter",
+    }
+    assert fridge_specifications("SAMSUNG REFRIGERATOR RT35CG5404S9AE NON INVERTER 345 LTR") == {
+        "capacity": "345 litres",
+        "compressor": "Non-inverter",
+    }
+
+
+def fridge(**overrides):
+    payload = {
+        "platform_code": "friendshome",
+        "brand": "Samsung",
+        "category_slug": "refrigerators",
+        "exact_model_title": True,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_a_code_left_short_joins_the_one_fridge_it_begins(
+    client: TestClient,
+    discovered_products: list[int],  # noqa: F811
+) -> None:
+    number = str(uuid4().int)[:4]
+    catalogued = discover(
+        client,
+        discovered_products,
+        external_id=f"FH-{number}",
+        title=f"SAMSUNG REFRIGERATOR Model RT-{number}IDBA",
+        **fridge(),
+    )
+    short = resolve(
+        client,
+        external_id=f"TM-{number}",
+        title=f"Samsung RT-{number} Inverter Refrigerator",
+        **fridge(platform_code="telemart", allow_new_product=False, exact_model_title=False),
+    )
+
+    assert short["matched"] is True
+    assert short["canonical_product_id"] == catalogued["canonical_product_id"]
+
+
+def test_a_code_left_short_joins_nothing_when_two_fridges_begin_so(
+    client: TestClient,
+    discovered_products: list[int],  # noqa: F811
+) -> None:
+    number = str(uuid4().int)[:4]
+    for finish in ("IFRA", "IFGA"):
+        discover(
+            client,
+            discovered_products,
+            external_id=f"FH-{number}-{finish}",
+            title=f"SAMSUNG REFRIGERATOR Model RT-{number}{finish}",
+            **fridge(),
+        )
+    short = resolve(
+        client,
+        external_id=f"TM-{number}",
+        title=f"Samsung RT-{number} Inverter Refrigerator",
+        **fridge(platform_code="telemart", allow_new_product=False, exact_model_title=False),
+    )
+
+    assert short["matched"] is False
+
+
+def test_a_longer_code_from_a_store_that_catalogues_is_a_fridge_of_its_own(
+    client: TestClient,
+    discovered_products: list[int],  # noqa: F811
+) -> None:
+    """One store's "RT-1234" first, then its "RT-1234TIF": two fridges."""
+
+    number = str(uuid4().int)[:4]
+    base = discover(
+        client,
+        discovered_products,
+        external_id=f"FH-{number}",
+        title=f"SAMSUNG REFRIGERATOR Model RT-{number}",
+        **fridge(),
+    )
+    longer = discover(
+        client,
+        discovered_products,
+        external_id=f"FH-{number}-TIF",
+        title=f"SAMSUNG REFRIGERATOR Model RT-{number}TIF",
+        **fridge(),
+    )
+
+    assert longer["product_created"] is True
+    assert longer["canonical_product_id"] != base["canonical_product_id"]

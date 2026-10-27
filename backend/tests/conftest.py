@@ -191,6 +191,13 @@ def prepare_test_database() -> Generator[None, None, None]:
                 slug="televisions",
                 is_active=True,
             ),
+            # As migration c6f2d8a41b93 seeds it.
+            Category(
+                parent_id=home_appliances.id,
+                name="Refrigerators & Freezers",
+                slug="refrigerators",
+                is_active=True,
+            ),
         ]
 
         brand_names = [

@@ -11,6 +11,7 @@ export const MARKETPLACE_CODES = [...ELECTRONICS_STORES, ...APPLIANCE_STORES];
 const CATEGORY_MARKETPLACES = {
   "air-conditioners": ["daraz", "priceoye", ...APPLIANCE_STORES],
   televisions: [...ELECTRONICS_STORES, ...APPLIANCE_STORES],
+  refrigerators: ["daraz", "priceoye", ...APPLIANCE_STORES],
 };
 
 export function isMarketplace(platform) {

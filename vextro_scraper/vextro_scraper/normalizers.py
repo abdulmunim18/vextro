@@ -387,6 +387,8 @@ BRAND_ALIASES = (
     ('Hitachi', ('hitachi',)),
     ('Nobel', ('nobel',)),
     ('Multynet', ('multynet',)),
+    ('Gaba National', ('gaba national', 'gaba')),
+    ('Teka', ('teka',)),
 )
 
 

@@ -361,3 +361,22 @@ class TelemartTelevisionSpider(TelemartStore):
     # Its TVs are spread over these; they also hold monitors and lamps,
     # which the pipeline turns away.
     collections = ('tv-video', 'smart-leds', '4k-ultra-leds', 'led-tvs')
+
+
+class FriendsHomeRefrigeratorSpider(FriendsHomeStore):
+    name = 'friendshome_fridges'
+    catalog_category = 'refrigerators'
+    # Holds its fridges and its freezers both.
+    collections = ('refrigerators-freezers',)
+
+
+class JalalRefrigeratorSpider(JalalStore):
+    name = 'jalal_fridges'
+    catalog_category = 'refrigerators'
+    collections = ('refrigerators', 'deep-freezers')
+
+
+class TelemartRefrigeratorSpider(TelemartStore):
+    name = 'telemart_fridges'
+    catalog_category = 'refrigerators'
+    collections = ('refrigerators', 'deep-freezers')

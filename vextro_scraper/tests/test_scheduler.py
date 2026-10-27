@@ -69,6 +69,12 @@ def test_defaults_match_the_documented_behaviour():
         "shophive_tvs",
         "telemart_tvs",
         "daraz_tvs",
+        "friendshome_fridges",
+        "jalal_fridges",
+        "priceoye_fridges",
+        "telemart_fridges",
+        "daraz_fridges",
+        "daraz_freezers",
         "whatmobile_opinions",
     )
 

@@ -97,6 +97,8 @@ BRAND_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Hitachi", ("hitachi",)),
     ("Nobel", ("nobel",)),
     ("Multynet", ("multynet",)),
+    ("Gaba National", ("gaba national", "gaba")),
+    ("Teka", ("teka",)),
 )
 
 

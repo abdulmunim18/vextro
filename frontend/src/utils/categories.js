@@ -8,6 +8,7 @@ const WITHOUT_MEMORY = new Set([
   "audio-and-earbuds",
   "air-conditioners",
   "televisions",
+  "refrigerators",
 ]);
 
 export function statesMemory(categorySlug) {

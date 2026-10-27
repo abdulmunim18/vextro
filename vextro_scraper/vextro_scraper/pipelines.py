@@ -487,6 +487,19 @@ NOT_A_TV = re.compile(
 )
 
 
+# What a fridge category also serves: trays, stabilizers and spare parts,
+# shop display chillers and water dispensers, and at a marketplace,
+# whatever a seller filed there.
+NOT_A_FRIDGE = re.compile(
+    r'\b(?:'
+    r'trays?|stabili[sz]ers?|gaskets?|thermostats?|spare|parts?|covers?|stands?|organi[sz]ers?'
+    r'|visi[\s-]*(?:chiller|cooler)|bottle\s+cooler|mini\s+cooler|cooler\s+bag'
+    r'|for\s+(?:women|men|girls|boys|kids)|used|refurbished|second\s*hand'
+    r')\b',
+    re.I,
+)
+
+
 def is_out_of_category(category, title):
     """Return whether a title names something its category does not sell."""
 
@@ -506,6 +519,18 @@ def is_out_of_category(category, title):
     if category == 'televisions':
         sold = re.split(r'\bwith\b', title or '', maxsplit=1, flags=re.I)[0]
         return bool(NOT_A_TV.search(sold))
+    if category == 'refrigerators':
+        # "with Water Dispenser" is a feature of the fridge sold.
+        sold = re.split(r'\bwith\b', title or '', maxsplit=1, flags=re.I)[0]
+        # A side-by-side's "WATER DISPENSER DOOR IN DOOR" is a fridge; a
+        # dispenser or ice maker on its own is not.
+        names_a_fridge = re.search(r'\b(?:refrigerators?|fridges?|freezers?)\b', sold, re.I)
+        sells_other_cold_goods = re.search(
+            r'\b(?:water\s+(?:dispenser|cooler)|dispensers?|ice\s+maker)\b', sold, re.I
+        )
+        return bool(NOT_A_FRIDGE.search(sold)) or bool(
+            sells_other_cold_goods and not names_a_fridge
+        )
     if category == 'audio-and-earbuds':
         # What follows "with" lists features ("with Dual Speaker Drivers",
         # "with Mic"), not what is sold.

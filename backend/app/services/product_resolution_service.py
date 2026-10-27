@@ -803,6 +803,14 @@ class ProductResolutionService:
             model=code,
             category_id=category.id,
         )
+        if product is None and profile.model_code_prefixes:
+            product = self._product_by_code_prefix(
+                database_session,
+                brand_id=brand.id,
+                category_id=category.id,
+                code=code,
+                may_shorten=not (payload.allow_create and payload.allow_new_product),
+            )
         product_created = product is None
 
         if product is None:
@@ -901,6 +909,57 @@ class ProductResolutionService:
                 else f"Matched the catalog product by model code {code}."
             ),
         )
+
+    # A code shorter than this names a family, not a model.
+    MIN_PREFIX_CODE = 5
+    # What one store adds to another's code: a finish ("EBS"), a series
+    # and colour ("TIFG1U1").
+    MAX_CODE_ADDITION = 8
+
+    def _product_by_code_prefix(
+        self,
+        database_session: Session,
+        *,
+        brand_id: int,
+        category_id: int,
+        code: str,
+        may_shorten: bool,
+    ) -> CanonicalProduct | None:
+        """Return the one catalogued product whose code and this one share a start.
+
+        One store writes "HRF-398", another "HRF-398IDBA": the shorter is
+        the longer with its finish left off. What one adds must start with
+        a letter (a "9101" is not the "91016"), and if two catalogued codes
+        start so, neither is chosen.
+
+        A listing's longer code joins a shorter catalogued one only where
+        the listing may not create (``may_shorten``): a store that catalogues
+        "HRF-458TIF..." and "HRF-458IPR..." sells two fridges, which a
+        shorter "HRF-458" catalogued first must not swallow.
+        """
+
+        def extends(longer: str, shorter: str) -> bool:
+            addition = longer[len(shorter):]
+            return (
+                len(shorter) >= self.MIN_PREFIX_CODE
+                and longer.startswith(shorter)
+                and 0 < len(addition) <= self.MAX_CODE_ADDITION
+                and addition[0].isalpha()
+            )
+
+        candidates = [
+            product
+            for product in database_session.scalars(
+                select(CanonicalProduct).where(
+                    CanonicalProduct.is_active.is_(True),
+                    CanonicalProduct.brand_id == brand_id,
+                    CanonicalProduct.category_id == category_id,
+                )
+            )
+            if extends(product.model, code)
+            or (may_shorten and extends(code, product.model))
+        ]
+        return candidates[0] if len(candidates) == 1 else None
 
     def _create_model_code_product(
         self,

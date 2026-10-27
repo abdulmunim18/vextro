@@ -1165,3 +1165,15 @@ class PriceoyeTelevisionSpider(PriceoyeSpider):
     start_urls = ["https://priceoye.pk/led-tv"]
     PRODUCT_URL_PREFIX = "https://priceoye.pk/led-tv/"
     unbranded_slugs = ('assorted',)
+
+
+class PriceoyeRefrigeratorSpider(PriceoyeSpider):
+    """PriceOye's refrigerators; each title ends in the model code in brackets."""
+
+    name = "priceoye_fridges"
+    catalog_category = "refrigerators"
+    parser_version = "priceoye-fridges-v1"
+    catalog_path = "/refrigerators"
+    start_urls = ["https://priceoye.pk/refrigerators"]
+    PRODUCT_URL_PREFIX = "https://priceoye.pk/refrigerators/"
+    unbranded_slugs = ('assorted',)
