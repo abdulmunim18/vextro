@@ -1050,3 +1050,43 @@ class DarazLaptopSpider(DarazSpider):
         **DarazSpider.custom_settings,
         'DARAZ_REVIEWS_ENABLED': False,
     }
+
+
+class DarazAirConditionerSpider(DarazSpider):
+    """Daraz's air conditioners, matched to ACs VEXTRO lists.
+
+    Sellers mix in stands, covers and pipe kits and write their own titles,
+    so a listing only joins an AC whose model code another store catalogued.
+    """
+
+    name = "daraz_acs"
+    catalog_category = "air-conditioners"
+    match_only = True
+    parser_version = "daraz-acs-v1"
+    CATALOG_PATH = "/air-conditioners/"
+    start_urls = ["https://www.daraz.pk/air-conditioners/?ajax=true"]
+
+    custom_settings = {
+        **DarazSpider.custom_settings,
+        'DARAZ_REVIEWS_ENABLED': False,
+    }
+
+
+class DarazTelevisionSpider(DarazSpider):
+    """Daraz's televisions, matched to TVs VEXTRO lists.
+
+    Mixed with wall mounts, remotes and TV boxes, and with unbranded sets,
+    so a listing only joins a TV whose model another store catalogued.
+    """
+
+    name = "daraz_tvs"
+    catalog_category = "televisions"
+    match_only = True
+    parser_version = "daraz-tvs-v1"
+    CATALOG_PATH = "/televisions/"
+    start_urls = ["https://www.daraz.pk/televisions/?ajax=true"]
+
+    custom_settings = {
+        **DarazSpider.custom_settings,
+        'DARAZ_REVIEWS_ENABLED': False,
+    }

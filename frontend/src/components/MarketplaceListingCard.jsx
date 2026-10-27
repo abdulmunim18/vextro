@@ -15,6 +15,7 @@ function MarketplaceListingCard({
   productName,
   platformName,
   isLowest,
+  showsMemory = true,
 }) {
   const currentPrice = toFiniteNumber(
     listing.current_price,
@@ -62,18 +63,23 @@ function MarketplaceListingCard({
       value: variant?.color || "",
       missing: "Not stated by seller",
     },
-    {
-      label: "Storage",
-      value: variant?.storage_gb
-        ? formatCapacity(variant.storage_gb)
-        : "",
-      missing: "Not stated",
-    },
-    {
-      label: "RAM",
-      value: variant?.ram_gb ? `${variant.ram_gb}GB` : "",
-      missing: "Not stated",
-    },
+    // An AC or a pair of earbuds has no memory to leave unstated.
+    ...(showsMemory
+      ? [
+          {
+            label: "Storage",
+            value: variant?.storage_gb
+              ? formatCapacity(variant.storage_gb)
+              : "",
+            missing: "Not stated",
+          },
+          {
+            label: "RAM",
+            value: variant?.ram_gb ? `${variant.ram_gb}GB` : "",
+            missing: "Not stated",
+          },
+        ]
+      : []),
     // A tablet's screen and Wi-Fi or cellular model, a watch's case size:
     // shown only where the category has them.
     ...variantIdentityDetails(variant)

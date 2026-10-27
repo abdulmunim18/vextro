@@ -35,7 +35,10 @@ def test_an_unknown_category_is_an_error_not_a_phone():
 
 
 def test_every_profile_names_a_seeded_category():
-    seeded = {"mobile-phones", "laptops", "tablets", "smart-watches", "audio-and-earbuds", "power-banks", "mobile-accessories"}
+    seeded = {
+        "mobile-phones", "laptops", "tablets", "smart-watches", "audio-and-earbuds",
+        "power-banks", "mobile-accessories", "air-conditioners", "televisions",
+    }
 
     assert set(PROFILES) <= seeded
 

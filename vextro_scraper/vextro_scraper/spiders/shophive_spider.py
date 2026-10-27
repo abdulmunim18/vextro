@@ -894,3 +894,16 @@ class ShophiveLaptopSpider(ShophiveSpider):
         'apple/mac/macbook-pro',
         'apple/mac/macbook-neo',
     )
+
+
+class ShophiveTelevisionSpider(ShophiveSpider):
+    """Shophive's televisions, under TV > LED by brand.
+
+    Projectors, TV boxes, mounts and trolleys have categories of their own
+    and are not read.
+    """
+
+    name = 'shophive_tvs'
+    catalog_category = 'televisions'
+    parser_version = 'shophive-tvs-v1'
+    category_paths = ('tv/led',)

@@ -57,6 +57,19 @@ DEFAULT_SPIDERS = (
     "priceoye_laptops",
     "shophive_laptops",
     "daraz_laptops",
+    "friendshome_acs",
+    "jalal_acs",
+    "priceoye_acs",
+    # Marketplaces whose sellers write their own titles, after the stores
+    # that catalogue the ACs they join.
+    "telemart_acs",
+    "daraz_acs",
+    "friendshome_tvs",
+    "jalal_tvs",
+    "priceoye_tvs",
+    "shophive_tvs",
+    "telemart_tvs",
+    "daraz_tvs",
     # Last: it looks up the phones the marketplace crawls just listed.
     "whatmobile_opinions",
 )

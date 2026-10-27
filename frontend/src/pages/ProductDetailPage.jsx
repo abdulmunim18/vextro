@@ -43,7 +43,8 @@ import {
   toFiniteNumber,
 } from "../utils/productDisplay";
 import { getMarketplaceDestination } from "../utils/marketplaceDestination";
-import { isMarketplace } from "../utils/marketplaces";
+import { isMarketplace, sellsCategory } from "../utils/marketplaces";
+import { statesMemory } from "../utils/categories";
 
 function extractItems(responseData) {
   if (Array.isArray(responseData)) {
@@ -531,25 +532,37 @@ function ProductDetailPage() {
     [platforms],
   );
 
+  const productCategorySlug = categories.find(
+    (category) => category.id === product?.category_id,
+  )?.slug;
+
+  // Stores that sell this kind of product; an AC store is not "missing"
+  // from a phone's page.
+  const comparedPlatforms = useMemo(
+    () =>
+      platforms.filter(
+        (platform) =>
+          isMarketplace(platform) && sellsCategory(platform, productCategorySlug),
+      ),
+    [platforms, productCategorySlug],
+  );
+
   const missingMarketplacePlatforms = useMemo(() => {
     const listingPlatformIds = new Set(
       listings.map((listing) => listing.platform_id),
     );
 
-    return platforms.filter(
-      (platform) =>
-        isMarketplace(platform) && !listingPlatformIds.has(platform.id),
+    return comparedPlatforms.filter(
+      (platform) => !listingPlatformIds.has(platform.id),
     );
-  }, [listings, platforms]);
+  }, [listings, comparedPlatforms]);
 
   // One entry per supported marketplace so the
   // stock summary strip renders even for platforms that have zero
   // listings for this product. The `status` value drives the chip
   // colour: "in_stock" | "out_of_stock" | "not_listed".
   const platformAvailability = useMemo(() => {
-    const supportedPlatforms = platforms.filter(isMarketplace);
-
-    return supportedPlatforms.map((platform) => {
+    return comparedPlatforms.map((platform) => {
       const platformListings = listings.filter(
         (listing) => listing.platform_id === platform.id,
       );
@@ -577,7 +590,7 @@ function ProductDetailPage() {
         totalCount: platformListings.length,
       };
     });
-  }, [listings, platforms]);
+  }, [listings, comparedPlatforms]);
 
   const brandName =
     brands.find(
@@ -983,6 +996,7 @@ function ProductDetailPage() {
                   <div className="flex items-center justify-between gap-4">
                     <strong className="text-sm font-black text-vextro-ink">
                       {variant.sku ||
+                        variant.color ||
                         `Variant ${variant.id}`}
                     </strong>
 
@@ -1118,6 +1132,7 @@ function ProductDetailPage() {
                     key={listing.id}
                     listing={listing}
                     productName={product.name}
+                    showsMemory={statesMemory(productCategorySlug)}
                     platformName={
                       platformNames.get(
                         listing.platform_id,

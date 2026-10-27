@@ -67,6 +67,42 @@ class CategoryProfile:
     # of the phone reading: a laptop title also states its graphics card's
     # memory ("RTX5090 24GB"), which a phone reading takes for RAM.
     reads_own_memory: bool = False
+    # Appliances carry their maker's model code ("HSU-19HFAB", "55C6K"),
+    # which names the product exactly where names are written every which
+    # way. A profile that reads one matches on the code alone.
+    model_code: Callable[[str], str | None] | None = None
+    # Some makers name a model in words ("Orient 18G Lunar Grace"). Where a
+    # title states no code, this reads such a name as a key that only the
+    # same words, in any order, share.
+    model_name_key: Callable[[str], str | None] | None = None
+    # The colour a model code names, for a listing that names none in words:
+    # "HSU-19HFS-W" is the white one.
+    code_colour: Callable[[str], str | None] | None = None
+    # What a title says about the product that is not its identity: an AC's
+    # tonnage, whether it heats. Kept with the product's specifications.
+    title_specifications: Callable[[str], dict[str, str]] | None = None
+
+    def model_code_from(self, title: str | None) -> str | None:
+        """Return the model code a title states, as the catalogue keys it.
+
+        Stores write one code with and without hyphens and spaces
+        ("GS-18FITH1", "GS18FITH1"), so only its letters and digits count.
+        """
+
+        if self.model_code is None or not title:
+            return None
+        code = self.model_code(html.unescape(str(title)))
+        if not code:
+            return None
+        return re.sub(r"[^A-Z0-9]", "", code.upper()) or None
+
+    def model_key_from(self, title: str | None) -> str | None:
+        """Return the key a title files under: its code, or its model name."""
+
+        code = self.model_code_from(title)
+        if code is not None or self.model_name_key is None or not title:
+            return code
+        return self.model_name_key(html.unescape(str(title)))
 
     def memory_from(
         self,
@@ -733,6 +769,351 @@ CASE_MATERIAL = IdentityAttribute("case_material", "Case", None, _case_material)
 
 
 # ---------------------------------------------------------------------------
+# Appliances
+# ---------------------------------------------------------------------------
+
+# Where a store points at the code: "(GS18FITH1W)", "Model HSU-19HFAB W".
+_STATED_CODE = re.compile(
+    r"\(\s*([A-Z0-9][A-Z0-9/-]{3,24})\s*\)"
+    r"|\bmodel\s*(?:no\.?|#|:)?\s*([A-Z0-9][A-Z0-9/-]{3,24})",
+    re.I,
+)
+# A word of letters and digits together, five or more long: "55P635".
+_CODE_WORD = re.compile(
+    r"(?<![\w.])(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])[A-Z0-9][A-Z0-9-]{4,24}\b",
+    re.I,
+)
+# Letters and digits that are not a code: "4K-UHD", "120Hz", "R410A" gas.
+_NOT_A_CODE = re.compile(
+    r"^\d+(?:ton|inch|in|kg|ltr|l|w|hz|k|cuft|gb|tb|mm|cm|hp|mah)\b"
+    r"|^R\d{2,3}A?$|^[A-Z]\d$",
+    re.I,
+)
+
+
+def _is_model_code(word: str) -> bool:
+    return (
+        any(character.isdigit() for character in word)
+        and any(character.isalpha() for character in word)
+        and not _NOT_A_CODE.search(word)
+    )
+
+
+def stated_model_code(title: str) -> str | None:
+    """Return the model code a title states, as written there.
+
+    The code a store points at (in brackets, after "Model") wins; otherwise
+    the first word that looks like one.
+    """
+
+    for match in _STATED_CODE.finditer(title):
+        code = match.group(1) or match.group(2)
+        if _is_model_code(code):
+            return code
+    for match in _CODE_WORD.finditer(title):
+        if _is_model_code(match.group(0)):
+            return match.group(0)
+    return None
+
+
+# ---- Air conditioners ------------------------------------------------------
+
+# The letters an AC code ends in to name its colour: "HSU-19HFS-W" white,
+# "-S" silver, "-DG" dark grey, "HSU-20HFTEX OW" off-white.
+_AC_FINISHES = {
+    # "G" is Haier's grey on one model and its gold on another
+    # ("HSU-19HFS (G) GOLDEN"), so it names no colour.
+    "W": "White", "B": "Black", "BK": "Black", "S": "Silver", "G": None,
+    "DG": "Dark Grey", "OW": "Off White", "GD": "Gold", "SW": "Snow White",
+}
+_AC_FINISH = "|".join(sorted(_AC_FINISHES, key=len, reverse=True))
+_AC_CODE_FINISH = re.compile(rf"-({_AC_FINISH})$", re.I)
+# The finish written after the code: " W", "(W)", or past an outdoor unit's
+# code: "HSU-19HFS/023WDC(W)".
+_AC_FINISH_AFTER = re.compile(
+    rf"^(?:/[A-Z0-9-]+)?\s*\(?\s*({_AC_FINISH})\s*\)?(?=[\s,|-]|$)", re.I
+)
+
+
+def _ac_code_parts(title: str) -> tuple[str, str | None] | None:
+    """Return an AC's model code without what stores add to it, and its finish.
+
+    * Jalal adds the climate rating: "GS-12AITH21W-T3".
+    * A split AC's outdoor unit has a code of its own, after a slash:
+      "HSU-19HFCM/013USDC"; an indoor unit ending "I" pairs with one
+      ending "O": "AEW12QC01HCI/AEW12QC01HCO".
+    * A colour is written after a hyphen or a space: "HSU-19HFS-W".
+    """
+
+    written = stated_model_code(title)
+    if written is None:
+        return None
+
+    indoor, _, outdoor = written.partition("/")
+    if not outdoor and (
+        match := re.match(r"\s*/\s*([A-Z0-9-]+)", title[title.find(written) + len(written):], re.I)
+    ):
+        outdoor = match.group(1)
+    if (
+        outdoor
+        and indoor[-1:].upper() == "I"
+        and outdoor.upper() == indoor[:-1].upper() + "O"
+    ):
+        indoor = indoor[:-1]
+    code = re.sub(r"-T3$", "", indoor, flags=re.I)
+
+    finish = None
+    if (match := _AC_CODE_FINISH.search(code)) is not None:
+        finish = match.group(1).upper()
+        code = code[: match.start()]
+    else:
+        after = title[title.find(written) + len(written):]
+        if (match := _AC_FINISH_AFTER.match(after)) is not None:
+            finish = match.group(1).upper()
+
+    return code, finish
+
+
+def ac_model_code(title: str) -> str | None:
+    parts = _ac_code_parts(title)
+    return parts[0] if parts else None
+
+
+def ac_code_colour(title: str) -> str | None:
+    """Return the colour an AC's code names ("HSU-19HFS-W"), if it names one."""
+
+    parts = _ac_code_parts(title)
+    return _AC_FINISHES.get(parts[1]) if parts and parts[1] else None
+
+
+_AC_TONNAGE = re.compile(r"\b(\d(?:\.\d)?)\s*-?\s*tons?\b", re.I)
+
+
+def _ac_tonnage(title: str) -> str | None:
+    match = _AC_TONNAGE.search(title)
+    if match is None:
+        return None
+    tons = float(match.group(1))
+    return f"{tons:g} Ton"
+
+
+def ac_specifications(title: str) -> dict[str, str]:
+    """Return the tonnage, compressor and heating an AC title states."""
+
+    specifications = {}
+    if (tonnage := _ac_tonnage(title)) is not None:
+        specifications["capacity"] = tonnage
+    if re.search(r"\binverter\b", title, re.I):
+        specifications["compressor"] = "Inverter"
+    if re.search(r"\bheat\s*(?:&|and|/|n)\s*cool\b|\bh\s*&\s*c\b|\bhot\s*(?:&|and)\s*cold\b", title, re.I):
+        specifications["heating"] = "Heat & Cool"
+    elif re.search(r"\bcool\s+only\b", title, re.I):
+        specifications["heating"] = "Cool only"
+    return specifications
+
+
+# Words every AC title may carry or leave out: they say what an AC is, not
+# which one.
+_AC_GENERIC_WORDS = re.compile(
+    r"\b(?:split|air\s+cond\w*|ac|inverter|dc|t[13]|r410a?|r32|hot"
+    r"|heat\s*(?:&|and|/|n)?\s*cool|h\s*&\s*c|hot\s*(?:&|and)\s*cold|cool\s+only|cool"
+    r"|model|series|unit|self[\s-]+clean(?:ing)?|wi-?fi|smart|energy\s+saver"
+    r"|official|warranty|new|latest|20\d{2})\b",
+    re.I,
+)
+_AC_COLOURS = re.compile(
+    r"\b(?:(?:pearl|silk|mirror|marble|matte?|pure|super|snow|off)\s+)?"
+    r"(?:white|black|golden|gold|silver|grey|gray)\b",
+    re.I,
+)
+
+
+def ac_model_name_key(title: str) -> str | None:
+    """Return the key of an AC named in words, or ``None`` if too vague.
+
+    "ORIENT 1.5 TON ULTRON DC INVERTER AC Model 18G LUNAR GRACE BLACK" keys
+    as "1.5T 18G GRACE LUNAR ORIENT ULTRON": its tonnage and the words that
+    name the model, without colour and the words every AC title carries.
+    A title left with nothing but its tonnage, or one bare word, names no
+    model.
+    """
+
+    text = re.split(r"\bwith\b", title, maxsplit=1, flags=re.I)[0]
+    tonnage = _ac_tonnage(text)
+    text = _AC_TONNAGE.sub(" ", text)
+    text = re.sub(r"\b\d(?:\.\d)?\s*hp\b", " ", text, flags=re.I)
+    text = _AC_GENERIC_WORDS.sub(" ", text)
+    text = _AC_COLOURS.sub(" ", text)
+    words = sorted({word.upper() for word in re.findall(r"[A-Za-z0-9]+", text)})
+    # The brand is one word of it; on its own it names nothing.
+    model_words = [word for word in words if not _BRAND_WORD.fullmatch(word)]
+
+    if not model_words or (
+        len(model_words) == 1 and not any(character.isdigit() for character in model_words[0])
+    ):
+        return None
+
+    key = " ".join(model_words)
+    return f"{tonnage.replace(' Ton', 'T')} {key}" if tonnage else key
+
+
+_BRAND_WORD = re.compile(
+    "|".join(re.escape(alias.upper()) for _name, aliases in BRAND_ALIASES for alias in aliases)
+)
+
+
+
+# ---- Televisions -----------------------------------------------------------
+
+# Screen sizes TVs are sold in, in inches.
+_TV_SIZES = frozenset(
+    {19, 22, 24, 28, 32, 39, 40, 42, 43, 48, 49, 50, 55, 58, 60, 65, 70, 75, 77, 82, 83, 85, 86, 98, 100, 115}
+)
+# A code that starts with its size, after the maker's letters: "75P6L",
+# "UA55U8000F", "H55S81EUX", "CX-40Q874", "KDL49W800G", "TH-65MX740M".
+_TV_LEADING_SIZE = re.compile(r"^[A-Z]{0,4}-?(\d{2,3})(?=[A-Z])")
+# ... or ends with it, after a hyphen: "PRISMAX-65". Without one the
+# number belongs to the series: LG's "QNED86".
+_TV_TRAILING_SIZE = re.compile(r"^([A-Z][A-Z0-9]*?)-(\d{2,3})$")
+# The market a Samsung or LG set was made for: "UA55U8000FUSMM",
+# "86UA8450PSA". Not part of the model.
+_TV_REGION = re.compile(r"(?<=[A-Z0-9]{4})(?:A?USMM|UXLY|USWK|UXZN|UXMM|KXPK|AKXX[A-Z]?|PSA|PVA|PTA)$")
+# Samsung's letters after the year letter, which stores keep or leave out:
+# "Q7FAA" and "Q7F".
+_TV_SAMSUNG_TAIL = re.compile(r"(?<=\d[A-Z])A{1,2}$")
+_TV_INCHES = re.compile(r"\b(\d{2,3})\s*(?:\"|''|”|″|-?\s*inch(?:es)?)", re.I)
+
+
+def _tv_code_parts(title: str) -> tuple[str, str, int | None] | None:
+    """Return a TV's code as written, its series and the size the code states.
+
+    A maker gives each size of a set a code of its own, the size written
+    into it; the series is what is left: "55C6K" is the 55-inch C6K.
+    """
+
+    written = stated_model_code(title)
+    if written is None:
+        return None
+    code = re.sub(r"[^A-Z0-9-]", "", written.split("/")[0].upper())
+
+    size = None
+    if (
+        (match := _TV_LEADING_SIZE.match(code))
+        and int(match.group(1)) in _TV_SIZES
+        # A series has a number of its own ("C6K", "U8000F"); in "QN70F",
+        # Samsung's Neo QLED, the 70 is the series's.
+        and any(character.isdigit() for character in code[match.end():])
+    ):
+        size = int(match.group(1))
+        series = code[match.end():]
+    elif (match := _TV_TRAILING_SIZE.match(code)) and int(match.group(2)) in _TV_SIZES:
+        size = int(match.group(2))
+        series = match.group(1)
+    else:
+        series = code
+    series = _TV_SAMSUNG_TAIL.sub("", _TV_REGION.sub("", series.replace("-", "")))
+    return written, series, size
+
+
+def tv_model_code(title: str) -> str | None:
+    parts = _tv_code_parts(title)
+    return parts[1] if parts and len(parts[1]) >= 3 else None
+
+
+def _tv_screen_inches(text: str, specifications: dict[str, str], title: str) -> int | None:
+    """Return the screen size: as the code states it, else as the title does."""
+
+    parts = _tv_code_parts(title)
+    if parts and parts[2] is not None:
+        return parts[2]
+    for match in _TV_INCHES.finditer(text):
+        if int(match.group(1)) in _TV_SIZES:
+            return int(match.group(1))
+    # "Xiaomi TV A Pro 65 2026": a size standing on its own.
+    for match in re.finditer(r"(?<![\w.])(\d{2,3})(?![\w.])", text):
+        if int(match.group(1)) in _TV_SIZES and int(match.group(1)) >= 24:
+            return int(match.group(1))
+    return None
+
+
+# Words every TV title may carry or leave out.
+_TV_GENERIC_WORDS = re.compile(
+    r"\b(?:led|lcd|q?led|oled|qned|mini\s*led|qd|tv|television|smart|google|android|webos|tizen"
+    r"|full\s+hd|fhd|uhd|ultra\s+hd|hd|[248]k|hdr\d*|dolby|vision|atmos|frameless|bezel\s*less"
+    r"|series|model|inch(?:es)?|official|warranty|new|latest|20\d{2})\b",
+    re.I,
+)
+
+
+def tv_model_name_key(title: str) -> str | None:
+    """Return the key of a TV named in words ("Dawlance Kore", "Orient Falcon")."""
+
+    text = re.split(r"\bwith\b", title, maxsplit=1, flags=re.I)[0]
+    text = _TV_INCHES.sub(" ", text)
+    text = _TV_GENERIC_WORDS.sub(" ", text)
+    words = sorted({
+        word.upper() for word in re.findall(r"[A-Za-z0-9]+", text)
+        if not (word.isdigit() and int(word) in _TV_SIZES)
+    })
+    model_words = [word for word in words if not _BRAND_WORD.fullmatch(word)]
+    if not model_words or (len(model_words) == 1 and len(model_words[0]) < 3):
+        return None
+    return " ".join(model_words)
+
+
+def _tv_series_in_name(title: str) -> str:
+    """Write the series where the title writes the sized code: "55C6K" -> "C6K"."""
+
+    parts = _tv_code_parts(title)
+    if not parts or parts[2] is None:
+        return title
+    written, series, _size = parts
+    return title.replace(written, series, 1)
+
+
+TV_SCREEN = IdentityAttribute("screen_in", "Screen", "inch", _tv_screen_inches)
+
+
+# Short words appliance titles write in capitals whatever the case around them.
+_APPLIANCE_ACRONYMS = frozenset(
+    {"AC", "DC", "TV", "LED", "QLED", "OLED", "QNED", "QD", "UHD", "FHD", "HD", "HDR", "LG", "TCL", "PEL", "INV"}
+)
+# Words with a spelling of their own.
+_APPLIANCE_SPELLINGS = {"MINILED": "MiniLED", "NANOCELL": "NanoCell", "ECOSTAR": "EcoStar"}
+
+
+def appliance_name(title: str, brand_name: str) -> str:
+    """Return an appliance's catalogue name from its title.
+
+    Some stores write every title in capitals ("HAIER 1.5 TON T3 INVERTER
+    AC"); the catalogue writes words as words and the brand as the brand
+    is written, leaving codes and acronyms as they are.
+    """
+
+    words = title.split()
+    # In capitals but for the odd word ("... INVERTER AC Model HSU-19HFAB").
+    letters = [character for character in title if character.isalpha()]
+    shouted = bool(letters) and sum(map(str.islower, letters)) <= len(letters) // 5
+
+    def written(word: str) -> str:
+        if word.lower() == brand_name.lower():
+            return brand_name
+        if not shouted or any(character.isdigit() for character in word):
+            return word
+        if word.upper() in _APPLIANCE_SPELLINGS:
+            return _APPLIANCE_SPELLINGS[word.upper()]
+        if word.upper() in _APPLIANCE_ACRONYMS or len(word) == 1:
+            return word
+        # Each part of "HEAT/COOL" is a word of its own.
+        return re.sub(r"[A-Za-z]+", lambda part: part.group(0).capitalize(), word)
+
+    name = " ".join(written(word) for word in words)
+    if not name.lower().startswith(brand_name.lower()):
+        name = f"{brand_name} {name}"
+    return name
+
+
+# ---------------------------------------------------------------------------
 # Profiles
 # ---------------------------------------------------------------------------
 
@@ -834,6 +1215,58 @@ PROFILES: dict[str, CategoryProfile] = {
             ),
             name_rewrites=_AUDIO_NAME_REWRITES,
         ),
+        # Appliances are matched on their model code. What tells their
+        # variants apart (an AC's tonnage, a TV's screen size) arrives with
+        # each appliance's own phase.
+        CategoryProfile(
+            "air-conditioners",
+            "Air Conditioners",
+            # One code is one AC; its colours are its variants.
+            (),
+            variant_words=(
+                re.compile(r"\s+with\b.*$", re.I),
+                _WARRANTY_WORDS,
+                # The colour, in words or as the code's letters ("... HSU-19HFS
+                # S"), names a variant; a store's broken dash ("�") nothing.
+                _AC_COLOURS,
+                re.compile(r"(?<=\s)\(?(?:W|S|G|B|OW|DG|GD)\)?(?=\s|$)"),
+                re.compile("�"),
+            ),
+            # Written so the clean-up of a lone "&" leaves it whole.
+            name_rewrites=(
+                (re.compile(r"\bheat\s*(?:&|and|/|n)\s*cool\b", re.I), "Heat/Cool"),
+            ),
+            model_code=ac_model_code,
+            model_name_key=ac_model_name_key,
+            code_colour=ac_code_colour,
+            title_specifications=ac_specifications,
+        ),
+        # A TV series is the product; its screen sizes are its variants.
+        CategoryProfile(
+            "televisions",
+            "Televisions",
+            (TV_SCREEN,),
+            variant_words=(
+                re.compile(r"\s+with\b.*$", re.I),
+                _WARRANTY_WORDS,
+                _TV_INCHES,
+                re.compile(r"\b\d{2,3}\s*-?\s*(?:cm)\b", re.I),
+                # Philips's market after the code: "65PQT8169/98".
+                re.compile(r"(?<=[A-Z0-9])/\d{2}\b"),
+                # A size standing on its own: "Xiaomi TV A Pro 65 2026".
+                re.compile(
+                    r"(?<![\w.])(?:"
+                    + "|".join(str(size) for size in sorted(_TV_SIZES, reverse=True) if size >= 24)
+                    + r")(?![\w.])"
+                ),
+                re.compile("�"),
+            ),
+            name_rewrites=(
+                (re.compile(r"^.*$", re.S), lambda match: _tv_series_in_name(match.group(0))),
+            ),
+            model_code=tv_model_code,
+            model_name_key=tv_model_name_key,
+        ),
     )
 }
 
@@ -860,10 +1293,12 @@ def profile_for(slug: str | None) -> CategoryProfile:
 __all__ = [
     "ALIASES",
     "DEFAULT_CATEGORY",
+    "appliance_name",
     "PROFILES",
     "CategoryProfile",
     "IdentityAttribute",
     "UnknownCategoryError",
     "configuration_key",
     "profile_for",
+    "stated_model_code",
 ]

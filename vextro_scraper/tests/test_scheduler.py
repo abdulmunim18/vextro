@@ -58,6 +58,17 @@ def test_defaults_match_the_documented_behaviour():
         "priceoye_laptops",
         "shophive_laptops",
         "daraz_laptops",
+        "friendshome_acs",
+        "jalal_acs",
+        "priceoye_acs",
+        "telemart_acs",
+        "daraz_acs",
+        "friendshome_tvs",
+        "jalal_tvs",
+        "priceoye_tvs",
+        "shophive_tvs",
+        "telemart_tvs",
+        "daraz_tvs",
         "whatmobile_opinions",
     )
 

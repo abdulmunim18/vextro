@@ -30,7 +30,7 @@ from app.models.canonical_product import CanonicalProduct
 from app.models.platform import Platform
 from app.models.product_listing import ProductListing
 from app.models.product_variant import ProductVariant
-from app.services.category_profiles import profile_for
+from app.services.category_profiles import appliance_name, profile_for
 from app.services.variant_identity import IDENTITY, MEMORY_COLUMNS
 from app.repositories.product_matching_repository import (
     ProductMatchingRepository,
@@ -239,6 +239,10 @@ class ProductResolutionService:
         if settled is not None:
             return ProductResolveResponse(**settled.model_dump())
 
+        profile = profile_for(payload.category_slug)
+        if profile.model_code is not None:
+            return self._resolve_by_model_code(database_session, payload, profile)
+
         match = self.matching_service.match_product(
             database_session,
             payload,
@@ -316,11 +320,15 @@ class ProductResolutionService:
         ):
             return
 
+        profile = profile_for(payload.category_slug)
+        if profile.model_code is not None:
+            # Keyed on its model code; the name it was created with stays.
+            return
+
         brand_name = response.brand_name
         # Named as it was created: without the words that name a variant
         # ("11inch", "Wi-Fi"), which every variant's title would otherwise
         # take turns writing into the product's name.
-        profile = profile_for(payload.category_slug)
         product_title = profile.product_title(payload.title)
         if profile.slug != "mobile-phones":
             # Cleaned as a new product's name is, so a second offer does not
@@ -738,6 +746,201 @@ class ProductResolutionService:
                 "New marketplace smartphone registered in the catalog."
                 if product_created
                 else "New marketplace configuration registered as a variant."
+            ),
+        )
+
+    def _resolve_by_model_code(
+        self,
+        database_session: Session,
+        payload: ProductResolveRequest,
+        profile,
+    ) -> ProductResolveResponse:
+        """File an appliance under the product its model code names.
+
+        Stores agree on an appliance's code far more than on its name, so
+        the code alone decides the product: the same code from two stores
+        is one product, two codes are two. A listing stating no code is not
+        guessed at.
+        """
+
+        title = clean_marketplace_title(payload.title, payload.seller_name)
+        code = profile.model_key_from(title)
+
+        def unmatched(reason: str) -> ProductResolveResponse:
+            return ProductResolveResponse(matched=False, confidence=0, reason=reason)
+
+        if code is None:
+            return unmatched(
+                "The listing states no model code, nor a model name, to match it by."
+            )
+
+        brand_name = infer_brand_name(
+            title,
+            payload.brand,
+            prefer_provided=payload.exact_model_title,
+        )
+        if not brand_name:
+            return unmatched("The listing names no brand.")
+
+        category = self.repository.get_category(database_session, profile.slug)
+        if category is None:
+            logger.error(
+                "Cannot file appliances: the %s category does not exist in the catalog.",
+                profile.slug,
+            )
+            return unmatched(f"The {profile.slug} category does not exist.")
+
+        if payload.allow_create and payload.allow_new_product:
+            brand = self._resolve_brand(database_session, brand_name)
+        else:
+            brand = self.repository.get_brand_by_name(database_session, brand_name)
+            if brand is None:
+                return unmatched(f"No {brand_name} product is in the catalogue.")
+
+        product = self.repository.get_canonical_product_by_model(
+            database_session,
+            brand_id=brand.id,
+            model=code,
+            category_id=category.id,
+        )
+        product_created = product is None
+
+        if product is None:
+            if not (payload.allow_create and payload.allow_new_product):
+                return unmatched(
+                    f"No catalogue product carries model code {code}."
+                )
+            product = self._create_model_code_product(
+                database_session,
+                payload=payload,
+                profile=profile,
+                title=title,
+                code=code,
+                brand=brand,
+                category_id=category.id,
+            )
+
+        color = normalize_color(payload.color)
+        if color is None and profile.code_colour is not None:
+            color = normalize_color(profile.code_colour(title))
+        if color is not None:
+            # One store's "GREY" is another's "GRAY". Phones keep the
+            # spellings their variants were created with.
+            color = re.sub(r"\bGray\b", "Grey", color)
+        identity = profile.identity_from(
+            title=title,
+            specifications=payload.specifications,
+        )
+        variant = self.repository.get_variant(
+            database_session,
+            canonical_product_id=product.id,
+            ram_gb=None,
+            storage_gb=None,
+            color=color,
+            identity=identity,
+        ) or self.repository.get_variant_stating_more(
+            database_session,
+            canonical_product_id=product.id,
+            ram_gb=None,
+            storage_gb=None,
+            color=color,
+            identity=identity,
+        )
+        variant_created = variant is None
+
+        if variant is None:
+            if not payload.allow_create:
+                return unmatched(
+                    f"Model {code} is catalogued, but not in the variant this listing states."
+                )
+            variant = self.repository.create_variant(
+                database_session,
+                canonical_product_id=product.id,
+                ram_gb=None,
+                storage_gb=None,
+                color=color,
+                identity=identity,
+                sku=self._available_sku(database_session, payload),
+                variant_attributes={
+                    key: value
+                    for key, value in (
+                        ("source_platform", payload.platform_code),
+                        ("source_external_id", payload.external_id),
+                    )
+                    if value
+                },
+            )
+
+        logger.info(
+            "Appliance filed by model code: platform=%s external_id=%s code=%s "
+            "product_id=%s product_created=%s variant_id=%s variant_created=%s",
+            payload.platform_code,
+            payload.external_id,
+            code,
+            product.id,
+            product_created,
+            variant.id,
+            variant_created,
+        )
+
+        return ProductResolveResponse(
+            matched=True,
+            confidence=100,
+            match_tier=TIER_EXACT,
+            product_variant_id=variant.id,
+            canonical_product_id=product.id,
+            product_name=product.name,
+            brand_name=brand.name,
+            model=product.model,
+            color=color,
+            product_created=product_created,
+            variant_created=variant_created,
+            reason=(
+                f"Registered model {code} in the catalog."
+                if product_created
+                else f"Matched the catalog product by model code {code}."
+            ),
+        )
+
+    def _create_model_code_product(
+        self,
+        database_session: Session,
+        *,
+        payload: ProductResolveRequest,
+        profile,
+        title: str,
+        code: str,
+        brand,
+        category_id: int,
+    ) -> CanonicalProduct:
+        """Register an appliance; its code is the model, its title the name."""
+
+        name = appliance_name(profile.product_title(title), brand.name)
+        slug_base = _slugify(
+            f"{brand.name} {name} {code}",
+            fallback=f"{payload.platform_code or 'marketplace'}-product",
+        )
+        slug = slug_base
+        suffix = 2
+
+        while self.repository.product_slug_exists(database_session, slug):
+            slug = f"{slug_base}-{suffix}"
+            suffix += 1
+
+        return self.repository.create_canonical_product(
+            database_session,
+            category_id=category_id,
+            brand_id=brand.id,
+            name=name[:255],
+            slug=slug,
+            model=code,
+            specifications=normalize_specifications(
+                merge_specifications(
+                    profile.title_specifications(title)
+                    if profile.title_specifications
+                    else infer_title_specifications(title),
+                    payload.specifications,
+                )
             ),
         )
 

@@ -98,7 +98,7 @@ def start_scrape_run(
     normalized_platform = next(
         (
             code
-            for code in ("priceoye", "daraz", "shophive")
+            for code in ("priceoye", "daraz", "shophive", "friendshome", "jalal", "telemart")
             if payload.platform.strip().lower().startswith(code)
         ),
         None,
@@ -106,7 +106,7 @@ def start_scrape_run(
     if normalized_platform is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Platform must be Daraz, PriceOye or Shophive.",
+            detail="Platform must be Daraz, PriceOye, Shophive, Friends Home, Jalal or Telemart.",
         )
 
     trigger_type = payload.triggered_by.strip().lower()
