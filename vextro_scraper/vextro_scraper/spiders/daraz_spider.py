@@ -1070,3 +1070,23 @@ class DarazAirConditionerSpider(DarazSpider):
         **DarazSpider.custom_settings,
         'DARAZ_REVIEWS_ENABLED': False,
     }
+
+
+class DarazTelevisionSpider(DarazSpider):
+    """Daraz's televisions, matched to TVs VEXTRO lists.
+
+    Mixed with wall mounts, remotes and TV boxes, and with unbranded sets,
+    so a listing only joins a TV whose model another store catalogued.
+    """
+
+    name = "daraz_tvs"
+    catalog_category = "televisions"
+    match_only = True
+    parser_version = "daraz-tvs-v1"
+    CATALOG_PATH = "/televisions/"
+    start_urls = ["https://www.daraz.pk/televisions/?ajax=true"]
+
+    custom_settings = {
+        **DarazSpider.custom_settings,
+        'DARAZ_REVIEWS_ENABLED': False,
+    }

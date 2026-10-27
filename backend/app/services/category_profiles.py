@@ -963,10 +963,123 @@ _BRAND_WORD = re.compile(
 
 
 
+# ---- Televisions -----------------------------------------------------------
+
+# Screen sizes TVs are sold in, in inches.
+_TV_SIZES = frozenset(
+    {19, 22, 24, 28, 32, 39, 40, 42, 43, 48, 49, 50, 55, 58, 60, 65, 70, 75, 77, 82, 83, 85, 86, 98, 100, 115}
+)
+# A code that starts with its size, after the maker's letters: "75P6L",
+# "UA55U8000F", "H55S81EUX", "CX-40Q874", "KDL49W800G", "TH-65MX740M".
+_TV_LEADING_SIZE = re.compile(r"^[A-Z]{0,4}-?(\d{2,3})(?=[A-Z])")
+# ... or ends with it, after a hyphen: "PRISMAX-65". Without one the
+# number belongs to the series: LG's "QNED86".
+_TV_TRAILING_SIZE = re.compile(r"^([A-Z][A-Z0-9]*?)-(\d{2,3})$")
+# The market a Samsung or LG set was made for: "UA55U8000FUSMM",
+# "86UA8450PSA". Not part of the model.
+_TV_REGION = re.compile(r"(?<=[A-Z0-9]{4})(?:A?USMM|UXLY|USWK|UXZN|UXMM|KXPK|AKXX[A-Z]?|PSA|PVA|PTA)$")
+# Samsung's letters after the year letter, which stores keep or leave out:
+# "Q7FAA" and "Q7F".
+_TV_SAMSUNG_TAIL = re.compile(r"(?<=\d[A-Z])A{1,2}$")
+_TV_INCHES = re.compile(r"\b(\d{2,3})\s*(?:\"|''|”|″|-?\s*inch(?:es)?)", re.I)
+
+
+def _tv_code_parts(title: str) -> tuple[str, str, int | None] | None:
+    """Return a TV's code as written, its series and the size the code states.
+
+    A maker gives each size of a set a code of its own, the size written
+    into it; the series is what is left: "55C6K" is the 55-inch C6K.
+    """
+
+    written = stated_model_code(title)
+    if written is None:
+        return None
+    code = re.sub(r"[^A-Z0-9-]", "", written.split("/")[0].upper())
+
+    size = None
+    if (
+        (match := _TV_LEADING_SIZE.match(code))
+        and int(match.group(1)) in _TV_SIZES
+        # A series has a number of its own ("C6K", "U8000F"); in "QN70F",
+        # Samsung's Neo QLED, the 70 is the series's.
+        and any(character.isdigit() for character in code[match.end():])
+    ):
+        size = int(match.group(1))
+        series = code[match.end():]
+    elif (match := _TV_TRAILING_SIZE.match(code)) and int(match.group(2)) in _TV_SIZES:
+        size = int(match.group(2))
+        series = match.group(1)
+    else:
+        series = code
+    series = _TV_SAMSUNG_TAIL.sub("", _TV_REGION.sub("", series.replace("-", "")))
+    return written, series, size
+
+
+def tv_model_code(title: str) -> str | None:
+    parts = _tv_code_parts(title)
+    return parts[1] if parts and len(parts[1]) >= 3 else None
+
+
+def _tv_screen_inches(text: str, specifications: dict[str, str], title: str) -> int | None:
+    """Return the screen size: as the code states it, else as the title does."""
+
+    parts = _tv_code_parts(title)
+    if parts and parts[2] is not None:
+        return parts[2]
+    for match in _TV_INCHES.finditer(text):
+        if int(match.group(1)) in _TV_SIZES:
+            return int(match.group(1))
+    # "Xiaomi TV A Pro 65 2026": a size standing on its own.
+    for match in re.finditer(r"(?<![\w.])(\d{2,3})(?![\w.])", text):
+        if int(match.group(1)) in _TV_SIZES and int(match.group(1)) >= 24:
+            return int(match.group(1))
+    return None
+
+
+# Words every TV title may carry or leave out.
+_TV_GENERIC_WORDS = re.compile(
+    r"\b(?:led|lcd|q?led|oled|qned|mini\s*led|qd|tv|television|smart|google|android|webos|tizen"
+    r"|full\s+hd|fhd|uhd|ultra\s+hd|hd|[248]k|hdr\d*|dolby|vision|atmos|frameless|bezel\s*less"
+    r"|series|model|inch(?:es)?|official|warranty|new|latest|20\d{2})\b",
+    re.I,
+)
+
+
+def tv_model_name_key(title: str) -> str | None:
+    """Return the key of a TV named in words ("Dawlance Kore", "Orient Falcon")."""
+
+    text = re.split(r"\bwith\b", title, maxsplit=1, flags=re.I)[0]
+    text = _TV_INCHES.sub(" ", text)
+    text = _TV_GENERIC_WORDS.sub(" ", text)
+    words = sorted({
+        word.upper() for word in re.findall(r"[A-Za-z0-9]+", text)
+        if not (word.isdigit() and int(word) in _TV_SIZES)
+    })
+    model_words = [word for word in words if not _BRAND_WORD.fullmatch(word)]
+    if not model_words or (len(model_words) == 1 and len(model_words[0]) < 3):
+        return None
+    return " ".join(model_words)
+
+
+def _tv_series_in_name(title: str) -> str:
+    """Write the series where the title writes the sized code: "55C6K" -> "C6K"."""
+
+    parts = _tv_code_parts(title)
+    if not parts or parts[2] is None:
+        return title
+    written, series, _size = parts
+    return title.replace(written, series, 1)
+
+
+TV_SCREEN = IdentityAttribute("screen_in", "Screen", "inch", _tv_screen_inches)
+
+
 # Short words appliance titles write in capitals whatever the case around them.
 _APPLIANCE_ACRONYMS = frozenset(
-    {"AC", "DC", "TV", "LED", "QLED", "OLED", "UHD", "FHD", "HD", "HDR", "LG", "TCL", "PEL", "INV"}
+    {"AC", "DC", "TV", "LED", "QLED", "OLED", "QNED", "QD", "UHD", "FHD", "HD", "HDR", "LG", "TCL", "PEL", "INV"}
 )
+# Words with a spelling of their own.
+_APPLIANCE_SPELLINGS = {"MINILED": "MiniLED", "NANOCELL": "NanoCell", "ECOSTAR": "EcoStar"}
 
 
 def appliance_name(title: str, brand_name: str) -> str:
@@ -987,6 +1100,8 @@ def appliance_name(title: str, brand_name: str) -> str:
             return brand_name
         if not shouted or any(character.isdigit() for character in word):
             return word
+        if word.upper() in _APPLIANCE_SPELLINGS:
+            return _APPLIANCE_SPELLINGS[word.upper()]
         if word.upper() in _APPLIANCE_ACRONYMS or len(word) == 1:
             return word
         # Each part of "HEAT/COOL" is a word of its own.
@@ -1126,12 +1241,31 @@ PROFILES: dict[str, CategoryProfile] = {
             code_colour=ac_code_colour,
             title_specifications=ac_specifications,
         ),
+        # A TV series is the product; its screen sizes are its variants.
         CategoryProfile(
             "televisions",
             "Televisions",
-            (),
-            variant_words=(_WARRANTY_WORDS,),
-            model_code=stated_model_code,
+            (TV_SCREEN,),
+            variant_words=(
+                re.compile(r"\s+with\b.*$", re.I),
+                _WARRANTY_WORDS,
+                _TV_INCHES,
+                re.compile(r"\b\d{2,3}\s*-?\s*(?:cm)\b", re.I),
+                # Philips's market after the code: "65PQT8169/98".
+                re.compile(r"(?<=[A-Z0-9])/\d{2}\b"),
+                # A size standing on its own: "Xiaomi TV A Pro 65 2026".
+                re.compile(
+                    r"(?<![\w.])(?:"
+                    + "|".join(str(size) for size in sorted(_TV_SIZES, reverse=True) if size >= 24)
+                    + r")(?![\w.])"
+                ),
+                re.compile("�"),
+            ),
+            name_rewrites=(
+                (re.compile(r"^.*$", re.S), lambda match: _tv_series_in_name(match.group(0))),
+            ),
+            model_code=tv_model_code,
+            model_name_key=tv_model_name_key,
         ),
     )
 }

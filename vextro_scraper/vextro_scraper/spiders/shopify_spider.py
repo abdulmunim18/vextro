@@ -341,3 +341,23 @@ class TelemartAirConditionerSpider(TelemartStore):
     name = 'telemart_acs'
     catalog_category = 'air-conditioners'
     collections = ('air-conditioners',)
+
+
+class FriendsHomeTelevisionSpider(FriendsHomeStore):
+    name = 'friendshome_tvs'
+    catalog_category = 'televisions'
+    collections = ('led-tv',)
+
+
+class JalalTelevisionSpider(JalalStore):
+    name = 'jalal_tvs'
+    catalog_category = 'televisions'
+    collections = ('led-tv',)
+
+
+class TelemartTelevisionSpider(TelemartStore):
+    name = 'telemart_tvs'
+    catalog_category = 'televisions'
+    # Its TVs are spread over these; they also hold monitors and lamps,
+    # which the pipeline turns away.
+    collections = ('tv-video', 'smart-leds', '4k-ultra-leds', 'led-tvs')

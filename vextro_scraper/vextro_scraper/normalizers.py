@@ -372,7 +372,7 @@ BRAND_ALIASES = (
     ('Kenwood', ('kenwood',)),
     ('Midea', ('midea',)),
     ('EcoStar', ('ecostar', 'eco star')),
-    ('Changhong Ruba', ('changhong ruba', 'changhong')),
+    ('Changhong Ruba', ('changhong ruba', 'changhongruba', 'changhong')),
     ('Aeris', ('aeris',)),
     ('Skywood', ('skywood',)),
     ('Hisense', ('hisense',)),
@@ -385,6 +385,8 @@ BRAND_ALIASES = (
     ('Electrolux', ('electrolux',)),
     ('American General', ('american general',)),
     ('Hitachi', ('hitachi',)),
+    ('Nobel', ('nobel',)),
+    ('Multynet', ('multynet',)),
 )
 
 

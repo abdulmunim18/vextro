@@ -471,6 +471,22 @@ NOT_AN_AC = re.compile(
 )
 
 
+# What a TV category also serves: mounts and stands, remotes, TV boxes and
+# sticks, cables, monitors, projectors and commercial displays, and at a
+# marketplace, whatever a seller filed there.
+NOT_A_TV = re.compile(
+    r'\b(?:'
+    r'mounts?|brackets?|stands?|trolley|remotes?|boxe?s?|sticks?|dongle|cables?|hdmi'
+    r'|mouse|keyboard|monitors?|projectors?|screen\s+protector|covers?|antenna|receiver'
+    r'|media\s+player|chromecast|fire\s+tv|easycap|commercial\s+display|viewboard'
+    r'|interactive|signage|portable\s+led|lamp|night\s+light|power\s+bank'
+    r'|bib|perfume|edp|for\s+(?:women|men|girls|boys|kids)'
+    r'|used|refurbished|second\s*hand'
+    r')\b',
+    re.I,
+)
+
+
 def is_out_of_category(category, title):
     """Return whether a title names something its category does not sell."""
 
@@ -487,6 +503,9 @@ def is_out_of_category(category, title):
         # the offer, not what is sold.
         sold = re.split(r'\bwith\b', title or '', maxsplit=1, flags=re.I)[0]
         return bool(NOT_AN_AC.search(sold))
+    if category == 'televisions':
+        sold = re.split(r'\bwith\b', title or '', maxsplit=1, flags=re.I)[0]
+        return bool(NOT_A_TV.search(sold))
     if category == 'audio-and-earbuds':
         # What follows "with" lists features ("with Dual Speaker Drivers",
         # "with Mic"), not what is sold.

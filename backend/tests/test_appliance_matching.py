@@ -135,17 +135,20 @@ def test_names_alike_but_codes_apart_are_two_products(
         client,
         discovered_products,
         external_id=f"FH-{token}-12",
-        title=f"SAMSUNG 1 TON INVERTER AC Model AR-12{token}",
+        # A letter inside, as in every real code: a dash and digits closing a
+        # title read as a Daraz stock code.
+        title=f"SAMSUNG 1 TON INVERTER AC Model AR-12X{token}",
         **ac(),
     )
     eighteen = discover(
         client,
         discovered_products,
         external_id=f"FH-{token}-18",
-        title=f"SAMSUNG 1 TON INVERTER AC Model AR-18{token}",
+        title=f"SAMSUNG 1 TON INVERTER AC Model AR-18X{token}",
         **ac(),
     )
 
+    assert twelve["product_created"] and eighteen["product_created"]
     assert twelve["canonical_product_id"] != eighteen["canonical_product_id"]
 
 
@@ -319,3 +322,79 @@ def test_one_ac_from_two_stores_lands_on_one_colour_variant(
     assert friends_home["color"] == "White"
     assert gray["product_variant_id"] == grey["product_variant_id"]
     assert grey["product_variant_id"] != friends_home["product_variant_id"]
+
+
+# --------------------------------------------------------------------------
+# Televisions
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("title", "series", "screen"),
+    [
+        # The size is written into each maker's code; the series is the rest.
+        ("TCL 55 INCH SMART & 4K QD MINILED TV Model 55C6K", "C6K", 55),
+        ("TCL LED 75P6L 4K SMART LED TV", "P6L", 75),
+        ("HAIER LED 43\" H43S80EUX 4K SMART QLED GOOGLE TV", "S80EUX", 43),
+        ("ECOSTAR 40 INCH SMART QLED TV Model CX-40Q874", "Q874", 40),
+        ("DAWLANCE LED 65\" PRISMAX-65 4K UHD QLED GOOGLE TV", "PRISMAX", 65),
+        # Samsung's market and trailing letters are not part of the model.
+        ("SAMSUNG LED 55\" UA55U8000FUSMM 4K UHD SMART TV C/O", "U8000F", 55),
+        ("SAMSUNG LED 55\" QA55Q7FAAUSMM QLED 4K UHD SMART TV", "Q7F", 55),
+        ("SAMSUNG 55 INCH SMART & 4K QLED TV Model 55Q7F", "Q7F", 55),
+        # A store naming the series alone states the size apart.
+        ("Samsung 43\" Crystal UHD U8000F 4K Smart TV (2025)", "U8000F", 43),
+        ("TCL S59K QLED Google TV With Official Warranty 32 Inch", "S59K", 32),
+        # A number in the series is not a size: Samsung's Neo QLED QN70F.
+        ("Samsung Neo QLED QN70F 4K Vision AI Smart TV 65Inches", "QN70F", 65),
+        ("Samsung 65\" Neo QLED QA65QN70FAUXZN", "QN70F", 65),
+        # A number closing the series without a hyphen is the series's own.
+        ("LG 55 inch QNED AI QNED86 4K Smart TV 2025 55QNED86AS", "QNED86", 55),
+        # A TV named in words.
+        ("Dawlance Kore 40\" 2K FHD Smart LED Google TV", "KORE", 40),
+    ],
+)
+def test_a_tv_keys_on_its_series_and_varies_by_screen(title, series, screen):
+    profile = profile_for("televisions")
+
+    assert profile.model_key_from(title) == series
+    assert profile.identity_from(title=title) == {"screen_in": screen}
+
+
+def test_a_tv_is_named_by_its_series_not_one_sized_code():
+    profile = profile_for("televisions")
+
+    assert appliance_name(
+        profile.product_title("TCL 55 INCH SMART & 4K QD MINILED TV Model 55C6K"), "TCL"
+    ) == "TCL Smart 4K QD MiniLED TV Model C6K"
+
+
+def test_each_size_of_a_tv_series_is_a_variant_of_one_product(
+    client: TestClient,
+    discovered_products: list[int],  # noqa: F811
+) -> None:
+    # Digits, as a Samsung series is: a model number and a year letter.
+    token = str(uuid4().int)[:4]
+
+    def tv(external_id, title, **overrides):
+        payload = {
+            "platform_code": "friendshome",
+            "brand": "Samsung",
+            "category_slug": "televisions",
+            "exact_model_title": True,
+        }
+        payload.update(overrides)
+        return discover(client, discovered_products, external_id=external_id, title=title, **payload)
+
+    fifty_five = tv(f"FH-{token}-55", f"SAMSUNG 55 INCH SMART & 4K QLED TV Model 55Q{token}F")
+    sixty_five = tv(f"FH-{token}-65", f"SAMSUNG 65 INCH SMART & 4K QLED TV Model 65Q{token}F")
+    jalal = tv(
+        f"JL-{token}-55",
+        f"SAMSUNG LED 55\" QA55Q{token}FAAUSMM QLED 4K UHD SMART TV",
+        platform_code="jalal",
+        brand=None,
+    )
+
+    assert sixty_five["canonical_product_id"] == fifty_five["canonical_product_id"]
+    assert sixty_five["product_variant_id"] != fifty_five["product_variant_id"]
+    assert jalal["product_variant_id"] == fifty_five["product_variant_id"]

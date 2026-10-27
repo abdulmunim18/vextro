@@ -1153,3 +1153,15 @@ class PriceoyeAirConditionerSpider(PriceoyeSpider):
     start_urls = ["https://priceoye.pk/ac"]
     PRODUCT_URL_PREFIX = "https://priceoye.pk/ac/"
     unbranded_slugs = ('assorted',)
+
+
+class PriceoyeTelevisionSpider(PriceoyeSpider):
+    """PriceOye's televisions; each title ends in the model code in brackets."""
+
+    name = "priceoye_tvs"
+    catalog_category = "televisions"
+    parser_version = "priceoye-tvs-v1"
+    catalog_path = "/led-tv"
+    start_urls = ["https://priceoye.pk/led-tv"]
+    PRODUCT_URL_PREFIX = "https://priceoye.pk/led-tv/"
+    unbranded_slugs = ('assorted',)

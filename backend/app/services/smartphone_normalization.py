@@ -82,7 +82,7 @@ BRAND_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Kenwood", ("kenwood",)),
     ("Midea", ("midea",)),
     ("EcoStar", ("ecostar", "eco star")),
-    ("Changhong Ruba", ("changhong ruba", "changhong")),
+    ("Changhong Ruba", ("changhong ruba", "changhongruba", "changhong")),
     ("Aeris", ("aeris",)),
     ("Skywood", ("skywood",)),
     ("Hisense", ("hisense",)),
@@ -95,6 +95,8 @@ BRAND_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Electrolux", ("electrolux",)),
     ("American General", ("american general",)),
     ("Hitachi", ("hitachi",)),
+    ("Nobel", ("nobel",)),
+    ("Multynet", ("multynet",)),
 )
 
 
