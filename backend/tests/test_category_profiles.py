@@ -240,6 +240,36 @@ def test_a_watchs_name_leaves_out_its_screen_band_and_selling_points(title, expe
     assert profile_for("smart-watches").product_title(title) == expected
 
 
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("Apple AirPods 4 Active Noise Cancellation", "Apple AirPods 4 ANC"),
+        ("Samsung Buds 3 Pro Wireless Earbuds", "Samsung Galaxy Buds 3 Pro"),
+        ("QCY T13 ANC 2 TWS Bluetooth 5.3 Earbuds 30H Playtime", "QCY T13 ANC 2"),
+        ("Apple AirPods Pro 3 with MagSafe Charging Case (USB-C)", "Apple AirPods Pro 3"),
+        ("Sony WH-1000XM5 Wireless Noise Cancelling Headphones", "Sony WH-1000XM5"),
+        # One store writes Anker's SKU, Apple's part number or the fit.
+        ("Anker Soundcore D1200H11 Liberty Buds", "Anker Soundcore Liberty Buds"),
+        ("Anker A3959H11 Soundcore R50i NC", "Anker Soundcore R50i NC"),
+        ("Apple AirPods 5 MKFW4LL/A", "Apple AirPods 5"),
+        ("Anker Soundcore AeroClip Open-Ear Clip-On", "Anker Soundcore AeroClip Open Ear"),
+        ("Audionic Hammer 110 Ultra On-Ear Headphone", "Audionic Hammer 110 Ultra"),
+        ("Sony WF-C510 Truly Wireless", "Sony WF-C510"),
+    ],
+)
+def test_two_stores_spellings_of_one_earbud_read_the_same(first, second):
+    profile = profile_for("audio-and-earbuds")
+
+    assert profile.product_title(first).lower() == profile.product_title(second).lower()
+
+
+def test_earbuds_are_told_apart_by_colour_alone():
+    profile = profile_for("audio-and-earbuds")
+
+    assert profile.keys == ()
+    assert not profile.uses_memory
+
+
 def test_memory_does_not_tell_watches_apart():
     assert profile_for("mobile-phones").uses_memory
     assert profile_for("tablets").uses_memory

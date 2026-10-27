@@ -1010,3 +1010,23 @@ class DarazSmartwatchSpider(DarazSpider):
         **DarazSpider.custom_settings,
         'DARAZ_REVIEWS_ENABLED': False,
     }
+
+
+class DarazAudioSpider(DarazSpider):
+    """Daraz's earbuds, matched to earbuds VEXTRO lists.
+
+    Mostly unbranded ("U39", "M10 TWS") and mixed with cases and cables, so
+    its listings only join earbuds another marketplace catalogued.
+    """
+
+    name = "daraz_audio"
+    catalog_category = "audio-and-earbuds"
+    match_only = True
+    parser_version = "daraz-audio-v1"
+    CATALOG_PATH = "/wireless-earbuds/"
+    start_urls = ["https://www.daraz.pk/wireless-earbuds/?ajax=true"]
+
+    custom_settings = {
+        **DarazSpider.custom_settings,
+        'DARAZ_REVIEWS_ENABLED': False,
+    }

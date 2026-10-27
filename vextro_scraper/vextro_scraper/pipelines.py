@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import re
 from datetime import datetime, timezone
@@ -365,6 +366,28 @@ def infer_title_specifications(model, specifications=None, *, bare_memory_pairs=
 
 PHONE_CATEGORY = 'mobile-phones'
 
+# The backend stores at most 150 characters of a listing's marketplace id.
+EXTERNAL_ID_LIMIT = 150
+
+
+def bounded_external_id(value):
+    """Return a listing id the backend can store, the same on every crawl.
+
+    PriceOye builds ids from page slugs, and a few slugs carry a whole
+    sales pitch ("xinji-stone-m2-...-for-men-and-women--black", 190
+    characters). Those keep their start and gain a short hash of the whole.
+    """
+
+    if value is None:
+        return None
+
+    text = str(value)
+    if len(text) <= EXTERNAL_ID_LIMIT:
+        return text
+
+    digest = hashlib.sha1(text.encode('utf-8')).hexdigest()[:12]
+    return f'{text[:100].rstrip("-")}--{digest}'
+
 # What a tablet category also serves: drawing pads and pen displays,
 # children's LCD writing boards, e-paper notebooks, and tablet accessories
 # and keyboard bundles, which are priced apart from the tablet itself.
@@ -406,6 +429,19 @@ COPY_MARKERS = re.compile(
 )
 
 
+# What an earbud category also serves: cases and covers for AirPods and
+# their kin, ear tips, cables and chargers, and the speakers, soundbars
+# and microphones some audio stores file beside earbuds.
+NOT_AUDIO = re.compile(
+    r'\b(?:'
+    r'(?:case|cover|skin|pouch|sleeve)\s+for|(?:silicone|protective|leather)\s+(?:case|cover)'
+    r'|ear\s*tips?|ear\s*hooks?|replacement|charging\s+cable|cable\s+for|charger|adapter'
+    r'|speakers?|sound\s*bar|amplifier|microphone|lavalier|karaoke'
+    r')\b',
+    re.I,
+)
+
+
 def is_out_of_category(category, title):
     """Return whether a title names something its category does not sell."""
 
@@ -415,6 +451,11 @@ def is_out_of_category(category, title):
         return True
     if category == 'tablets':
         return bool(NOT_A_TABLET.search(title or ''))
+    if category == 'audio-and-earbuds':
+        # What follows "with" lists features ("with Dual Speaker Drivers",
+        # "with Mic"), not what is sold.
+        sold = re.split(r'\bwith\b', title or '', maxsplit=1, flags=re.I)[0]
+        return bool(NOT_AUDIO.search(sold))
     if category == 'smart-watches':
         # "... Smart Watch with 2 Straps" is a watch with a spare strap.
         watch = re.sub(r'\bwith\b[^|,]{0,25}?\bstraps?\b', ' ', title or '', flags=re.I)
@@ -441,6 +482,9 @@ class VextroCleaningPipeline:
         # Review batches use the dedicated backend review contract and do not
         # contain listing prices.
         if adapter.get('reviews') is not None:
+            adapter['external_listing_id'] = bounded_external_id(
+                adapter.get('external_listing_id')
+            )
             if str(adapter.get('external_listing_id')) in self.turned_away:
                 raise ReviewsOfTurnedAwayListingError(
                     'Reviews of a listing this run did not deliver.'
@@ -581,6 +625,7 @@ class VextroCleaningPipeline:
         if url and not adapter.get('external_id'):
             # Example: grabs "xiaomi-redmi-note-14-pro" from the end of the URL
             adapter['external_id'] = url.rstrip('/').split('/')[-1]
+        adapter['external_id'] = bounded_external_id(adapter.get('external_id'))
 
         # 5. Normalize and deduplicate gallery URLs while preserving order.
         # A listing without a usable image reaches the catalog as a blank

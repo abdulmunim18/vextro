@@ -1104,3 +1104,19 @@ class PriceoyeSmartwatchSpider(PriceoyeSpider):
     start_urls = ["https://priceoye.pk/smart-watches"]
     PRODUCT_URL_PREFIX = "https://priceoye.pk/smart-watches/"
     unbranded_slugs = ('assorted',)
+
+
+class PriceoyeAudioSpider(PriceoyeSpider):
+    """PriceOye's wireless earbuds catalogue, which holds its headphones too.
+
+    A third of it is unbranded and filed under "Assorted"; those pages are
+    not requested.
+    """
+
+    name = "priceoye_audio"
+    catalog_category = "audio-and-earbuds"
+    parser_version = "priceoye-audio-v1"
+    catalog_path = "/wireless-earbuds"
+    start_urls = ["https://priceoye.pk/wireless-earbuds"]
+    PRODUCT_URL_PREFIX = "https://priceoye.pk/wireless-earbuds/"
+    unbranded_slugs = ('assorted',)

@@ -858,3 +858,21 @@ class ShophiveSmartwatchSpider(ShophiveSpider):
     def title_colour(name):
         match = WATCH_CASE_COLOUR.search(str(name or ''))
         return tidy_colour(match.group(1)) if match else None
+
+
+class ShophiveAudioSpider(ShophiveSpider):
+    """Shophive's earbuds, headphones and neckbands, and its AirPods.
+
+    Its audio store also sells speakers, soundbars and microphones, which
+    sit in subcategories of their own and are not read.
+    """
+
+    name = 'shophive_audio'
+    catalog_category = 'audio-and-earbuds'
+    parser_version = 'shophive-audio-v1'
+    category_paths = (
+        'audio/earbuds',
+        'audio/wireless-headphones',
+        'audio/neckband',
+        'apple/airpod',
+    )

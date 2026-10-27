@@ -742,6 +742,11 @@ def test_each_category_refreshes_with_its_own_spiders() -> None:
         "daraz": "daraz_smartwatches",
         "shophive": "shophive_smartwatches",
     }
+    assert {code: target.spider for code, target in CATEGORY_SPIDERS["audio-and-earbuds"].items()} == {
+        "priceoye": "priceoye_audio",
+        "daraz": "daraz_audio",
+        "shophive": "shophive_audio",
+    }
 
 
 def test_a_category_without_refresh_spiders_waits_for_its_crawl(
@@ -757,6 +762,8 @@ def test_a_category_without_refresh_spiders_waits_for_its_crawl(
     monkeypatch.setattr(listing_refresh_service, "_started_at", {})
     monkeypatch.setattr(listing_refresh_service, "_running", [])
     monkeypatch.setattr(settings, "on_demand_refresh_enabled", True)
+    # Every category has its spiders now; one without is made for the test.
+    monkeypatch.delitem(CATEGORY_SPIDERS, "audio-and-earbuds")
 
     token = uuid4().hex[:6]
     earbuds = discover(

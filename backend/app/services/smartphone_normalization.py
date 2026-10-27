@@ -55,6 +55,19 @@ BRAND_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Watch makers Shophive files under Xiaomi.
     ("Mibro", ("mibro",)),
     ("Imilab", ("imilab",)),
+    # Audio makers, named in Daraz titles whose brand field says nothing.
+    ("Audionic", ("audionic",)),
+    ("Anker", ("anker", "soundcore")),
+    ("Baseus", ("baseus",)),
+    ("QCY", ("qcy",)),
+    ("Ronin", ("ronin",)),
+    ("JBL", ("jbl",)),
+    ("Soundpeats", ("soundpeats",)),
+    ("Joyroom", ("joyroom",)),
+    ("Hoco", ("hoco",)),
+    ("Awei", ("awei",)),
+    ("Oraimo", ("oraimo",)),
+    ("Haylou", ("haylou",)),
 )
 
 
