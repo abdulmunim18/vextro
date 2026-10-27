@@ -38,7 +38,7 @@ def test_every_profile_names_a_seeded_category():
     seeded = {
         "mobile-phones", "laptops", "tablets", "smart-watches", "audio-and-earbuds",
         "power-banks", "mobile-accessories", "air-conditioners", "televisions",
-        "refrigerators",
+        "refrigerators", "washing-machines",
     }
 
     assert set(PROFILES) <= seeded

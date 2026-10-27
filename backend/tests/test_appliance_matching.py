@@ -531,3 +531,93 @@ def test_a_longer_code_from_a_store_that_catalogues_is_a_fridge_of_its_own(
 
     assert longer["product_created"] is True
     assert longer["canonical_product_id"] != base["canonical_product_id"]
+
+
+# --------------------------------------------------------------------------
+# Washing machines and dryers
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("title", "code"),
+    [
+        ("HAIER 10KG TWIN TUB WASHING MACHINE Model HTW100-196G", "HTW100196G"),
+        # Telemart writes the letters and the number apart.
+        ("Haier HWM 150-1708 15Kg Top Load Fully Automatic Washing Machine", "HWM1501708"),
+        ("Haier HTW 100-196 10Kg Top Load Twin Tub Semi Automatic Washing Machine", "HTW100196"),
+        ("Dawlance DWT 14470 ES 14KG Fully Automatic Top Load Washing Machine", "DWT14470ES"),
+        ("DAWLANCE WASHING MACHINE DWF95-1415 MG INVERTER F/L", "DWF951415"),
+        # A word after a model number is not its series letters.
+        ("MIDAS 4117 TOP LOAD WASHING MACHINE 17KG", "4117"),
+    ],
+)
+def test_a_washer_is_read_by_its_code_however_it_is_spaced(title, code):
+    assert profile_for("washing-machines").model_key_from(title) == code
+
+
+def test_a_washer_title_states_its_load_type_and_motor():
+    from app.services.category_profiles import washer_specifications
+
+    assert washer_specifications("LG 20KG/12KG WASHER DRYER AUTOMATIC FRONT LOAD") == {
+        "capacity": "20 kg wash / 12 kg dry",
+        "type": "Front load",
+    }
+    assert washer_specifications("DAWLANCE WASHING MACHINE DWF95-1415 MG INVERTER F/L") == {
+        "type": "Front load",
+        "motor": "Inverter",
+    }
+    assert washer_specifications("HAIER 10KG TWIN TUB WASHING MACHINE") == {
+        "capacity": "10 kg",
+        "type": "Twin tub",
+    }
+
+
+def test_a_washer_written_apart_joins_the_one_catalogued_with_its_finish(
+    client: TestClient,
+    discovered_products: list[int],  # noqa: F811
+) -> None:
+    number = str(uuid4().int)[:4]
+    catalogued = discover(
+        client,
+        discovered_products,
+        external_id=f"FH-{number}",
+        title=f"SAMSUNG 10KG TWIN TUB WASHING MACHINE Model HTW100-{number}G",
+        platform_code="friendshome",
+        brand="Samsung",
+        category_slug="washing-machines",
+        exact_model_title=True,
+    )
+    telemart = resolve(
+        client,
+        external_id=f"TM-{number}",
+        title=f"Samsung HTW 100-{number} 10Kg Twin Tub Washing Machine",
+        platform_code="telemart",
+        brand="Samsung",
+        category_slug="washing-machines",
+        allow_new_product=False,
+    )
+
+    assert telemart["matched"] is True
+    assert telemart["canonical_product_id"] == catalogued["canonical_product_id"]
+
+
+def test_a_store_naming_its_own_washer_keeps_the_number_ending_its_code(
+    client: TestClient,
+    discovered_products: list[int],  # noqa: F811
+) -> None:
+    """A Daraz stock code ends a title with a dash and digits; so does a model."""
+
+    number = str(uuid4().int)[:4]
+    result = discover(
+        client,
+        discovered_products,
+        external_id=f"FH-{number}",
+        title=f"SAMSUNG 22KG AUTOMATIC TOP LOAD WASHING MACHINE Model MI-WMTL-{number}",
+        platform_code="friendshome",
+        brand="Samsung",
+        category_slug="washing-machines",
+        exact_model_title=True,
+    )
+
+    assert result["product_created"] is True
+    assert result["model"] == f"MIWMTL{number}"

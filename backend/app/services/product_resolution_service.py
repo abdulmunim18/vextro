@@ -763,7 +763,13 @@ class ProductResolutionService:
         guessed at.
         """
 
-        title = clean_marketplace_title(payload.title, payload.seller_name)
+        # A store naming its own goods writes no stock code; what ends its
+        # title is the model's ("MI-WMTL-2200"), which cleaning would cut.
+        title = (
+            " ".join(payload.title.split())
+            if payload.exact_model_title
+            else clean_marketplace_title(payload.title, payload.seller_name)
+        )
         code = profile.model_key_from(title)
 
         def unmatched(reason: str) -> ProductResolveResponse:

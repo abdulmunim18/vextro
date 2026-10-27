@@ -1083,14 +1083,14 @@ TV_SCREEN = IdentityAttribute("screen_in", "Screen", "inch", _tv_screen_inches)
 # A model named by its number alone, as Dawlance and PEL do: "9173 WB",
 # "9101 SD", "6370". Not a year, and not a capacity ("345 LTR", "16 CFT").
 _FRIDGE_NUMBER_CODE = re.compile(
-    r"(?<![\w.-])(?!(?:19|20)\d\d\b)(\d{4,5})(?:\s?([A-Z]{1,3}))?\b"
+    r"(?<![\w.-])(?!(?:19|20)\d\d\b)(\d{4,5})(?:\s?(?!(?:TOP|NEW|FOR|AND|THE|KGS?)\b)([A-Z]{1,3}))?\b"
     r"(?!\s*(?:ltrs?|litres?|liters?|l\b|cft|cu\.?\s*ft|cubic|kg|w\b|watts?))",
     re.I,
 )
 
 
 _FRIDGE_SPACED_CODE = re.compile(
-    r"\b([A-Z]{2,4})[\s-](\d{3,4})(?:\s?([A-Z]{1,2}))?\b"
+    r"\b([A-Z]{2,4})[\s-](\d{3,5})(?:\s?([A-Z]{1,2}))?\b"
     r"(?!\s*(?:ltrs?|litres?|liters?|l\b|cft|cu\.?\s*ft|cubic|kg))"
 )
 
@@ -1112,6 +1112,49 @@ def fridge_model_code(title: str) -> str | None:
     if (match := _FRIDGE_NUMBER_CODE.search(title)) is not None:
         return match.group(1) + (match.group(2) or "")
     return None
+
+
+# ---- Washing machines and dryers ---------------------------------------------
+
+# Telemart writes Haier's "HWM150-1708" as "HWM 150-1708".
+_WASHER_SPACED_CODE = re.compile(r"\b([A-Z]{2,4})\s(\d{2,3}-\d{2,5}[A-Z0-9]*)\b")
+
+
+def washer_model_code(title: str) -> str | None:
+    """Return a washer's model code, written whole whichever way a store spaces it."""
+
+    if (match := _WASHER_SPACED_CODE.search(title)) is not None:
+        return match.group(1) + match.group(2)
+    return fridge_model_code(title)
+
+
+def washer_specifications(title: str) -> dict[str, str]:
+    """Return the load, how it loads, and the motor a washer title states."""
+
+    specifications = {}
+    # "10KG", "12/8KG", "20KG/12KG": a washer-dryer states both loads.
+    if (match := re.search(
+        r"\b(\d{1,2}(?:\.\d)?)(?:\s*(?:kgs?)?\s*/\s*(\d{1,2}(?:\.\d)?))?\s*kgs?\b", title, re.I
+    )):
+        specifications["capacity"] = (
+            f"{match.group(1)} kg wash / {match.group(2)} kg dry"
+            if match.group(2)
+            else f"{match.group(1)} kg"
+        )
+    for pattern, kind in (
+        (r"\bfront[\s-]*load|\bf/l\b", "Front load"),
+        (r"\btwin[\s-]*tub", "Twin tub"),
+        (r"\bsingle[\s-]*tub", "Single tub"),
+        (r"\bspin[\s-]*dryer", "Spin dryer"),
+        (r"\btumble[\s-]*dryer", "Tumble dryer"),
+        (r"\btop[\s-]*load|\bt/l\b", "Top load"),
+    ):
+        if re.search(pattern, title, re.I):
+            specifications["type"] = kind
+            break
+    if re.search(r"\binverter\b", title, re.I):
+        specifications["motor"] = "Inverter"
+    return specifications
 
 
 _FRIDGE_CAPACITY = re.compile(
@@ -1340,6 +1383,22 @@ PROFILES: dict[str, CategoryProfile] = {
             model_code=fridge_model_code,
             model_code_prefixes=True,
             title_specifications=fridge_specifications,
+        ),
+        # A washer, washer-dryer or dryer is its model code; colours are
+        # variants.
+        CategoryProfile(
+            "washing-machines",
+            "Washing Machines & Dryers",
+            (),
+            variant_words=(
+                re.compile(r"\s+with\b.*$", re.I),
+                _WARRANTY_WORDS,
+                _AC_COLOURS,
+                re.compile("�"),
+            ),
+            model_code=washer_model_code,
+            model_code_prefixes=True,
+            title_specifications=washer_specifications,
         ),
     )
 }

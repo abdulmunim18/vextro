@@ -458,6 +458,11 @@ NOT_A_LAPTOP = re.compile(
 )
 
 
+APPLIANCE_CATEGORIES = frozenset(
+    {'air-conditioners', 'televisions', 'refrigerators', 'washing-machines'}
+)
+
+
 # What an AC category also serves: covers, stands and pipe kits, air
 # coolers and fans, and at a marketplace, whatever a seller filed there.
 NOT_AN_AC = re.compile(
@@ -500,6 +505,19 @@ NOT_A_FRIDGE = re.compile(
 )
 
 
+# What a washer category also serves: covers, stands and trolleys, hoses
+# and parts, and at a marketplace, coolers, irons and whatever else a
+# seller filed there.
+NOT_A_WASHER = re.compile(
+    r'\b(?:'
+    r'covers?|stands?|trolley|hoses?|pipes?|inlet|outlet|spare|parts?|motor\s+for|timer'
+    r'|belts?|pulley|lid\s+for|air\s*coolers?|coolers?|fans?|irons?|vacuum'
+    r'|for\s+(?:women|men|girls|boys|kids)|used|refurbished|second\s*hand'
+    r')\b',
+    re.I,
+)
+
+
 def is_out_of_category(category, title):
     """Return whether a title names something its category does not sell."""
 
@@ -531,6 +549,10 @@ def is_out_of_category(category, title):
         return bool(NOT_A_FRIDGE.search(sold)) or bool(
             sells_other_cold_goods and not names_a_fridge
         )
+    if category == 'washing-machines':
+        # "... with Base" or "with Official Warranty" is the offer.
+        sold = re.split(r'\bwith\b', title or '', maxsplit=1, flags=re.I)[0]
+        return bool(NOT_A_WASHER.search(sold))
     if category == 'audio-and-earbuds':
         # What follows "with" lists features ("with Dual Speaker Drivers",
         # "with Mic"), not what is sold.
@@ -652,9 +674,18 @@ class VextroCleaningPipeline:
             if isinstance(seller, dict)
             else seller
         )
-        cleaned_title = clean_listing_title(
-            adapter.get('model'),
-            seller_name=seller_name,
+        # A store naming its own appliances writes no stock code; what ends
+        # its title is the model's ("MI-WMTL-2200", "HWM 80-1217").
+        names_own_appliance = adapter.get('exact_model_title') and (
+            adapter.get('category') or getattr(spider, 'catalog_category', None)
+        ) in APPLIANCE_CATEGORIES
+        cleaned_title = (
+            ' '.join(str(adapter.get('model') or '').split())
+            if names_own_appliance
+            else clean_listing_title(
+                adapter.get('model'),
+                seller_name=seller_name,
+            )
         )
 
         if cleaned_title != adapter.get('model'):

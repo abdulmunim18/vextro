@@ -380,3 +380,23 @@ class TelemartRefrigeratorSpider(TelemartStore):
     name = 'telemart_fridges'
     catalog_category = 'refrigerators'
     collections = ('refrigerators', 'deep-freezers')
+
+
+class FriendsHomeWashingMachineSpider(FriendsHomeStore):
+    name = 'friendshome_washers'
+    catalog_category = 'washing-machines'
+    # Holds its washers, washer-dryers and dryers; the narrower ones hold
+    # nothing more.
+    collections = ('washing-machines-dryers',)
+
+
+class JalalWashingMachineSpider(JalalStore):
+    name = 'jalal_washers'
+    catalog_category = 'washing-machines'
+    collections = ('washing-machines',)
+
+
+class TelemartWashingMachineSpider(TelemartStore):
+    name = 'telemart_washers'
+    catalog_category = 'washing-machines'
+    collections = ('washing-machines',)

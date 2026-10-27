@@ -75,6 +75,10 @@ def test_defaults_match_the_documented_behaviour():
         "telemart_fridges",
         "daraz_fridges",
         "daraz_freezers",
+        "friendshome_washers",
+        "jalal_washers",
+        "telemart_washers",
+        "daraz_washers",
         "whatmobile_opinions",
     )
 

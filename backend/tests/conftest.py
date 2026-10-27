@@ -198,6 +198,13 @@ def prepare_test_database() -> Generator[None, None, None]:
                 slug="refrigerators",
                 is_active=True,
             ),
+            # As migration d1a7e3f5c284 seeds it.
+            Category(
+                parent_id=home_appliances.id,
+                name="Washing Machines & Dryers",
+                slug="washing-machines",
+                is_active=True,
+            ),
         ]
 
         brand_names = [

@@ -1119,3 +1119,23 @@ class DarazFreezerSpider(DarazRefrigeratorSpider):
     parser_version = "daraz-freezers-v1"
     CATALOG_PATH = "/freezers/"
     start_urls = ["https://www.daraz.pk/freezers/?ajax=true"]
+
+
+class DarazWashingMachineSpider(DarazSpider):
+    """Daraz's washing machines, matched to washers VEXTRO lists.
+
+    Mixed with covers, stands, pipes and parts, and written by sellers, so
+    a listing only joins a washer another store catalogued.
+    """
+
+    name = "daraz_washers"
+    catalog_category = "washing-machines"
+    match_only = True
+    parser_version = "daraz-washers-v1"
+    CATALOG_PATH = "/washing-machines/"
+    start_urls = ["https://www.daraz.pk/washing-machines/?ajax=true"]
+
+    custom_settings = {
+        **DarazSpider.custom_settings,
+        'DARAZ_REVIEWS_ENABLED': False,
+    }

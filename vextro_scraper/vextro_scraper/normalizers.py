@@ -389,6 +389,11 @@ BRAND_ALIASES = (
     ('Multynet', ('multynet',)),
     ('Gaba National', ('gaba national', 'gaba')),
     ('Teka', ('teka',)),
+    ('Super Asia', ('super asia',)),
+    ('Midas', ('midas',)),
+    ('Boss', ('boss',)),
+    ('Bosch', ('bosch',)),
+    ('Steeline', ('steeline',)),
 )
 
 
