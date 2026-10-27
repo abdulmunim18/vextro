@@ -55,6 +55,9 @@ def test_defaults_match_the_documented_behaviour():
         "priceoye_audio",
         "shophive_audio",
         "daraz_audio",
+        "priceoye_laptops",
+        "shophive_laptops",
+        "daraz_laptops",
         "whatmobile_opinions",
     )
 

@@ -68,6 +68,11 @@ BRAND_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Awei", ("awei",)),
     ("Oraimo", ("oraimo",)),
     ("Haylou", ("haylou",)),
+    # Laptop makers.
+    ("HP", ("hp",)),
+    ("Dell", ("dell",)),
+    ("MSI", ("msi",)),
+    ("Dahua", ("dahua",)),
 )
 
 

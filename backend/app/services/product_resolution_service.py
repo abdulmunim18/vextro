@@ -613,10 +613,16 @@ class ProductResolutionService:
             payload.specifications,
         )
 
-        ram_gb, storage_gb = extract_memory_capacities(
-            specifications=payload.specifications,
-            title=title,
-        )
+        if profile.reads_own_memory:
+            ram_gb, storage_gb = profile.memory_from(
+                title=title,
+                specifications=payload.specifications,
+            )
+        else:
+            ram_gb, storage_gb = extract_memory_capacities(
+                specifications=payload.specifications,
+                title=title,
+            )
         if ram_gb is None:
             ram_gb = payload.ram_gb
         if storage_gb is None:

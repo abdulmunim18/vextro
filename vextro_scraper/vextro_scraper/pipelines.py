@@ -442,6 +442,20 @@ NOT_AUDIO = re.compile(
 )
 
 
+# What a laptop category also serves: bags and sleeves, chargers and
+# adapters, cooling pads, stands and skins, and machines sold used, which
+# are not the new laptop the stores price.
+NOT_A_LAPTOP = re.compile(
+    r'\b(?:'
+    r'bags?|backpack|sleeve|carry\s*case|charger|adapter|power\s+supply'
+    r'|cooling\s+pad|cooler|stand|skin|keyboard\s+(?:cover|protector|skin)'
+    r'|screen\s+protector|battery\s+for'
+    r'|used|refurbished|renewed|second\s*hand|pre-?owned|like\s+new|open\s+box'
+    r')\b',
+    re.I,
+)
+
+
 def is_out_of_category(category, title):
     """Return whether a title names something its category does not sell."""
 
@@ -451,6 +465,8 @@ def is_out_of_category(category, title):
         return True
     if category == 'tablets':
         return bool(NOT_A_TABLET.search(title or ''))
+    if category == 'laptops':
+        return bool(NOT_A_LAPTOP.search(title or ''))
     if category == 'audio-and-earbuds':
         # What follows "with" lists features ("with Dual Speaker Drivers",
         # "with Mic"), not what is sold.
@@ -811,6 +827,9 @@ class VextroApiIngestionPipeline:
         self.batch_size = max(1, min(int(batch_size), 100))
         self.crawler = crawler
         self.listing_buffer = []
+        # Listings this run queued for review or passed over: the catalogue
+        # holds no listing their reviews could attach to.
+        self.unplaced_listing_ids = set()
 
     @classmethod
     def from_crawler(cls, crawler):
@@ -1087,8 +1106,10 @@ class VextroApiIngestionPipeline:
         # Daraz packs a phone's whole description into its "RAM" field
         # ("+ 256GB UFS 3.1 storage ..."), so the first capacity found
         # there is often the storage. No phone has that much RAM, and
-        # sending it made the backend refuse the listing outright.
-        if ram_gb is not None and ram_gb > 32:
+        # sending it made the backend refuse the listing outright. A laptop
+        # does carry 64 GB and more, but not 512.
+        ram_limit = 256 if payload.get('category') == 'laptops' else 32
+        if ram_gb is not None and ram_gb > ram_limit:
             if storage_gb is None:
                 storage_gb = ram_gb
             ram_gb = None
@@ -1280,6 +1301,10 @@ class VextroApiIngestionPipeline:
         context = self._context(payload)
 
         if payload.get('reviews') is not None:
+            if str(payload.get('external_listing_id')) in self.unplaced_listing_ids:
+                raise ReviewsOfTurnedAwayListingError(
+                    'Reviews of a listing this run did not place in the catalogue.'
+                )
             # Reviews are resolved by (platform, external listing id), so the
             # listing must already be in the database. Buffered listings are
             # delivered first, otherwise a brand-new product's reviews would
@@ -1367,6 +1392,7 @@ class VextroApiIngestionPipeline:
         product_variant_id = match_result.get('product_variant_id')
         if not match_result.get('matched') or not product_variant_id:
             reason = str(match_result.get('reason') or 'no safe match')
+            self.unplaced_listing_ids.add(str(payload.get('external_id')))
 
             # The matcher suggests its best guess for nearly anything, so a
             # match-only listing is queued only when that guess is a
