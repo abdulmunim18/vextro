@@ -16,6 +16,12 @@ What the feed says, and what this spider does with it:
 * A variant priced at Rs 0 is not for sale at any price; it is skipped.
 * ``vendor`` is the brand at most stores, and the store's own name at
   some (Jalal). A store says which it is.
+* The feed carries no reviews. A store whose product pages show its
+  Judge.me review widget (Friends Home, Jalal) has each product page read
+  too: the product's own rating and review count go on its listings, and
+  the reviews written for that product go to VEXTRO's review store. The
+  "reviews from across our store" carousel on the same page is about other
+  products and is left alone.
 """
 
 import json
@@ -25,7 +31,7 @@ from urllib.parse import urlparse
 
 import scrapy
 
-from vextro_scraper.items import SmartphoneItem
+from vextro_scraper.items import ReviewBatchItem, SmartphoneItem
 from vextro_scraper.normalizers import parse_price
 
 
@@ -60,6 +66,8 @@ class ShopifyStoreSpider(scrapy.Spider):
     # A marketplace's sellers write their own titles; its listings only
     # join products another store catalogued.
     match_only = False
+    # Whether the store's product pages carry its Judge.me review widget.
+    reads_judgeme_reviews = False
     parser_version = 'shopify-v1-products-json'
 
     custom_settings = {
@@ -201,6 +209,121 @@ class ShopifyStoreSpider(scrapy.Spider):
         return None
 
     def product_items(self, product):
+        """Yield one listing per variant of a product, with its reviews.
+
+        Where the store's product page carries reviews, the listings wait
+        for that page so they leave with the product's rating; if the page
+        cannot be read they leave without it.
+        """
+
+        items = list(self.listing_items(product))
+        if not items:
+            return
+        if not self.reads_judgeme_reviews:
+            yield from items
+            return
+
+        yield scrapy.Request(
+            f"{self.base_url}/products/{product['handle']}",
+            callback=self.parse_review_page,
+            errback=self.review_page_failed,
+            cb_kwargs={'items': items},
+            dont_filter=True,
+        )
+
+    def review_page_failed(self, failure):
+        self.logger.warning(
+            '%s product page could not be read for reviews: %s',
+            self.platform_code, failure.getErrorMessage(),
+        )
+        yield from failure.request.cb_kwargs['items']
+
+    def parse_review_page(self, response, items):
+        """Put the product's Judge.me rating on its listings; send its reviews."""
+
+        summary = response.css('.jdgm-rev-widg')
+        rating = parse_price(summary.attrib.get('data-average-rating')) if summary else None
+        count = int(summary.attrib.get('data-number-of-reviews') or 0) if summary else 0
+        handle = response.url.rstrip('/').split('/products/')[-1].split('?')[0]
+
+        for item in items:
+            if count > 0 and rating:
+                item['rating'] = float(rating)
+                item['review_count'] = count
+            yield item
+
+        reviews = self.judgeme_reviews(response, handle)
+        if reviews:
+            batch = ReviewBatchItem()
+            batch['platform'] = self.platform_code
+            batch['external_listing_id'] = items[0]['external_id']
+            batch['source_url'] = response.url
+            batch['reviews'] = reviews
+            yield batch
+
+    def judgeme_reviews(self, response, handle):
+        """Return the reviews written for this product, each once.
+
+        The widget is printed twice on some pages, so a review is known by
+        its Judge.me id. A review the widget files under another product
+        (``data-product-url``) is not this product's.
+        """
+
+        crawler = getattr(self, 'crawler', None)
+        limit = crawler.settings.getint('MAX_REVIEWS_PER_LISTING', 50) if crawler else 50
+        reviews = []
+        seen = set()
+
+        for position, review in enumerate(response.css('.jdgm-rev-widg .jdgm-rev'), start=1):
+            review_id = review.attrib.get('data-review-id')
+            product_url = review.attrib.get('data-product-url') or ''
+            if not review_id or review_id in seen:
+                continue
+            if product_url and f'/products/{handle}' not in product_url:
+                continue
+            seen.add(review_id)
+
+            score = parse_price(review.css('.jdgm-rev__rating::attr(data-score)').get())
+            if score is None or not 1 <= score <= 5:
+                continue
+            title = ' '.join(review.css('.jdgm-rev__title ::text').getall()).strip()
+            body = ' '.join(
+                part.strip() for part in review.css('.jdgm-rev__body ::text').getall() if part.strip()
+            )
+            text = '. '.join(part for part in (title, body) if part) or None
+
+            reviews.append({
+                'external_review_id': review_id,
+                'reviewer_external_id': None,
+                'reviewer_display_name': (
+                    ' '.join(review.css('.jdgm-rev__author ::text').getall()).strip() or None
+                ),
+                'rating': int(score),
+                'review_text': text,
+                'reviewed_at': self.judgeme_time(
+                    review.css('.jdgm-rev__timestamp::attr(data-content)').get()
+                ),
+                'verified_purchase': review.attrib.get('data-verified-buyer') == 'true',
+                'helpful_count': int(review.attrib.get('data-thumb-up-count') or 0),
+                'raw_metadata': {'source_position': position, 'review_app': 'judge.me'},
+            })
+            if len(reviews) >= limit:
+                break
+
+        return reviews
+
+    @staticmethod
+    def judgeme_time(value):
+        """Return Judge.me's "2026-01-13 14:24:31 UTC" as ISO 8601, or None."""
+
+        try:
+            return datetime.strptime(
+                str(value or '').strip(), '%Y-%m-%d %H:%M:%S UTC'
+            ).replace(tzinfo=timezone.utc).isoformat()
+        except ValueError:
+            return None
+
+    def listing_items(self, product):
         """Yield one listing per variant of a product."""
 
         title = ' '.join(str(product.get('title') or '').split())
@@ -303,6 +426,7 @@ class FriendsHomeStore(ShopifyStoreSpider):
     platform_code = 'friendshome'
     base_url = 'https://friendshome.pk'
     allowed_domains = ['friendshome.pk']
+    reads_judgeme_reviews = True
 
 
 class JalalStore(ShopifyStoreSpider):
@@ -312,10 +436,15 @@ class JalalStore(ShopifyStoreSpider):
     base_url = 'https://jalalelectronics.com'
     allowed_domains = ['jalalelectronics.com']
     vendor_is_brand = False
+    reads_judgeme_reviews = True
 
 
 class TelemartStore(ShopifyStoreSpider):
-    """Telemart, a marketplace whose sellers write their own titles."""
+    """Telemart, a marketplace whose sellers write their own titles.
+
+    Its pages hold Shopify's retired Product Reviews widget, empty in the
+    page itself, so no reviews are read from it.
+    """
 
     platform_code = 'telemart'
     base_url = 'https://telemart.pk'

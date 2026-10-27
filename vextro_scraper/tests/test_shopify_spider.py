@@ -194,3 +194,118 @@ def test_a_refresh_reads_each_product_on_its_own():
 
     assert item['external_id'] == '1'
     assert not spider.full_crawl_completed
+
+
+# --------------------------------------------------------------------------
+# Judge.me reviews on the product page
+# --------------------------------------------------------------------------
+
+
+def judgeme_review(review_id, score, *, handle='haier-ac-1', title='', body='', verified='true'):
+    return (
+        f"<div class='jdgm-rev' data-review-id='{review_id}' data-verified-buyer='{verified}'"
+        f" data-product-url='/products/{handle}' data-thumb-up-count='2'>"
+        f"<span class='jdgm-rev__rating' data-score='{score}'></span>"
+        f"<span class='jdgm-rev__timestamp' data-content='2026-01-13 14:24:31 UTC'></span>"
+        f"<span class='jdgm-rev__author'>Umer</span>"
+        f"<b class='jdgm-rev__title'>{title}</b>"
+        f"<div class='jdgm-rev__body'><p>{body}</p></div></div>"
+    )
+
+
+def judgeme_page(reviews, *, average='4.50', count='2', carousel=''):
+    widget = (
+        f"<div class='jdgm-rev-widg' data-average-rating='{average}' "
+        f"data-number-of-reviews='{count}'>{''.join(reviews)}</div>"
+    )
+    # Some pages print the widget twice; a store-wide carousel sits apart.
+    html = f"<html><body>{widget}{widget}<div class='jdgm-carousel'>{carousel}</div></body></html>"
+    url = 'https://friendshome.pk/products/haier-ac-1'
+    return TextResponse(url=url, body=html.encode(), encoding='utf-8', request=Request(url))
+
+
+class ReviewingStore(StoreSpider):
+    name = 'teststore_reviews'
+    reads_judgeme_reviews = True
+
+
+def test_a_reviewing_store_reads_each_product_page_before_sending_its_listings():
+    spider = ReviewingStore()
+    [request] = read(spider, [product()])
+
+    assert isinstance(request, Request)
+    assert request.url == 'https://friendshome.pk/products/haier-ac-1'
+    assert [item['external_id'] for item in request.cb_kwargs['items']] == ['1']
+
+
+def test_the_product_rating_goes_on_its_listings_and_its_reviews_are_sent_once():
+    from vextro_scraper.items import ReviewBatchItem
+
+    spider = ReviewingStore()
+    [request] = read(spider, [product()])
+    page = judgeme_page([
+        judgeme_review('r-1', 5, title='Excellent', body='Cooling is fast.'),
+        judgeme_review('r-2', 4, body='Good value.', verified='false'),
+    ])
+
+    out = list(spider.parse_review_page(page, **request.cb_kwargs))
+    [item] = [entry for entry in out if not isinstance(entry, ReviewBatchItem)]
+    [batch] = [entry for entry in out if isinstance(entry, ReviewBatchItem)]
+
+    assert item['rating'] == 4.5
+    assert item['review_count'] == 2
+    assert batch['platform'] == 'friendshome'
+    assert batch['external_listing_id'] == '1'
+    # The widget is printed twice; each review is sent once.
+    assert [review['external_review_id'] for review in batch['reviews']] == ['r-1', 'r-2']
+    first, second = batch['reviews']
+    assert first['rating'] == 5
+    assert first['review_text'] == 'Excellent. Cooling is fast.'
+    assert first['reviewed_at'] == '2026-01-13T14:24:31+00:00'
+    assert first['verified_purchase'] is True
+    assert second['verified_purchase'] is False
+
+
+def test_reviews_of_other_products_on_the_page_are_not_this_products():
+    from vextro_scraper.items import ReviewBatchItem
+
+    spider = ReviewingStore()
+    [request] = read(spider, [product()])
+    page = judgeme_page(
+        [judgeme_review('r-9', 5, handle='westpoint-toaster', body='Nice toaster.')],
+        average='0.00',
+        count='0',
+        carousel=judgeme_review('r-8', 5, handle='gree-ac', body='Store-wide.'),
+    )
+
+    out = list(spider.parse_review_page(page, **request.cb_kwargs))
+
+    assert not [entry for entry in out if isinstance(entry, ReviewBatchItem)]
+    [item] = out
+    assert item['rating'] is None
+    assert item['review_count'] == 0
+
+
+def test_a_product_page_that_fails_still_sends_the_listings():
+    from types import SimpleNamespace
+
+    spider = ReviewingStore()
+    [request] = read(spider, [product()])
+    failure = SimpleNamespace(request=request, getErrorMessage=lambda: 'timeout')
+
+    [item] = list(spider.review_page_failed(failure))
+
+    assert item['external_id'] == '1'
+    assert item['price'] == 154000
+
+
+def test_friends_home_and_jalal_read_reviews_and_telemart_does_not():
+    from vextro_scraper.spiders.shopify_spider import (
+        FriendsHomeStore,
+        JalalStore,
+        TelemartStore,
+    )
+
+    assert FriendsHomeStore.reads_judgeme_reviews is True
+    assert JalalStore.reads_judgeme_reviews is True
+    assert TelemartStore.reads_judgeme_reviews is False
