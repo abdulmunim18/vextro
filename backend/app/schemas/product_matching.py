@@ -1,5 +1,6 @@
 """Schemas for marketplace product-to-variant matching."""
 
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import (
@@ -99,16 +100,41 @@ class ProductMatchRequest(BaseModel):
 
         return value
 
+    # The catalogue category the listing belongs to. Matching looks only
+    # at products of that category and new products are filed under it.
+    # Absent means a smartphone, as every listing was before categories.
+    category_slug: str | None = Field(default=None, max_length=120)
+
+    @field_validator("category_slug")
+    @classmethod
+    def category_is_known(cls, value: str | None) -> str | None:
+        return _known_category(value)
+
+
+def _known_category(value: str | None) -> str | None:
+    """Accept only a category VEXTRO has a profile for; None is a phone."""
+
+    if value is None or not value.strip():
+        return None
+
+    from app.services.category_profiles import profile_for
+
+    return profile_for(value).slug
+
 
 class ProductResolveRequest(ProductMatchRequest):
     """A match request that may also create missing catalog records."""
 
     allow_create: bool = True
-
-    category_slug: str | None = Field(
-        default=None,
-        max_length=120,
-    )
+    # False files the listing only under a product the catalogue already
+    # holds. A seller marketplace (Daraz) uses it in categories where its
+    # titles are mostly unbranded: it may add a colour to a known tablet,
+    # but never a new tablet or brand.
+    allow_new_product: bool = True
+    # The listing's own price, sent with match-only listings. A seller's
+    # "Galaxy Watch Ultra" at a tenth of what the stores ask is a copy
+    # wearing the name, not an offer for the watch.
+    listing_price: Decimal | None = Field(default=None, gt=0)
 
 
 class ProductMatchResponse(BaseModel):

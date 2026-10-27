@@ -109,9 +109,9 @@ query($filter: ProductAttributeFilterInput!, $page: Int!, $size: Int!) {
 }
 '''
 
-# "8GB 256GB", "4GB +64GB", "12GB 1TB": RAM, then storage.
+# "8GB 256GB", "4GB +64GB", "12GB/256GB", "12GB 1TB": RAM, then storage.
 MEMORY_PAIR = re.compile(
-    r'\b(\d{1,2})\s*GB\s*\+?\s*(\d{1,4})\s*(GB|TB)\b',
+    r'\b(\d{1,2})\s*GB\s*[+/]?\s*(\d{1,4})\s*(GB|TB)\b',
     re.I,
 )
 # A lone figure, as on iPhones: "512GB", "2TB".
@@ -122,6 +122,8 @@ BRACKETED = re.compile(r'\(\s*([^()]*?)\s*\)')
 MODEL_YEAR = re.compile(r'(?:19|20)\d{2}')
 
 COLOUR_OPTION_TITLE = re.compile(r'^\s*colou?rs?\s*$', re.I)
+# A short code mixing letters and digits: "Mh5U4", "MXW23".
+PART_NUMBER = re.compile(r'(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{4,6}')
 
 # Values Shophive types where it has nothing to state.
 EMPTY_VALUES = frozenset({
@@ -218,6 +220,11 @@ def tidy_colour(title):
 
     words = str(title or '').split()
 
+    # Shophive appends Apple's part number to iPad colours: "Space Grey
+    # Mh5U4". It names the configuration, not the colour.
+    if len(words) > 1 and PART_NUMBER.fullmatch(words[-1]):
+        words.pop()
+
     if not words:
         return None
 
@@ -282,8 +289,14 @@ def colour_image(colour, image_urls):
 class ShophiveSpider(scrapy.Spider):
     name = 'shophive_smartphones'
     platform_code = 'shophive'
+    catalog_category = 'mobile-phones'
     parser_version = 'shophive-v1-storefront-feed'
     allowed_domains = ['shophive.com']
+
+    # The store categories this spider reads, and the subcategories within
+    # them that hold something else (drawing pads, accessories).
+    category_paths = CATEGORY_PATHS
+    excluded_paths = ()
 
     custom_settings = {
         'USER_AGENT': (
@@ -357,7 +370,7 @@ class ShophiveSpider(scrapy.Spider):
                 and self.expected_counts.get(path) is not None
                 and len(self.received_skus.get(path, ()))
                 == self.expected_counts[path]
-                for path in CATEGORY_PATHS
+                for path in self.category_paths
             )
         )
 
@@ -373,7 +386,7 @@ class ShophiveSpider(scrapy.Spider):
             GRAPHQL_URL,
             data={
                 'query': CATEGORIES_QUERY,
-                'variables': {'paths': list(CATEGORY_PATHS)},
+                'variables': {'paths': list(self.category_paths)},
             },
             callback=self.parse_categories,
             errback=self.feed_fetch_error,
@@ -447,7 +460,7 @@ class ShophiveSpider(scrapy.Spider):
             if isinstance(category, dict)
         }
 
-        for path in CATEGORY_PATHS:
+        for path in self.category_paths:
             category = categories.get(path)
 
             if not category or not category.get('uid'):
@@ -526,6 +539,9 @@ class ShophiveSpider(scrapy.Spider):
 
         for entry in entries:
             if entry['sku'] in self.emitted_skus:
+                continue
+
+            if any(self.filed_under(entry, path) for path in self.excluded_paths):
                 continue
 
             if self.targeted:
@@ -613,6 +629,15 @@ class ShophiveSpider(scrapy.Spider):
                 ))
 
         return colours
+
+    @staticmethod
+    def title_colour(name):
+        """The colour a product without colour options names in its title.
+
+        Phones are sold with colour options, so they name none.
+        """
+
+        return None
 
     @staticmethod
     def with_surcharge(price, surcharge, surcharge_type):
@@ -731,7 +756,7 @@ class ShophiveSpider(scrapy.Spider):
         if not colours:
             item = base
             item['external_id'] = str(product['sku'])
-            item['color'] = None
+            item['color'] = self.title_colour(product.get('name'))
             item['price'] = price
             item['original_price'] = (
                 regular_price
@@ -782,3 +807,54 @@ class ShophiveSpider(scrapy.Spider):
             self.expected_counts,
             self.full_crawl_completed,
         )
+
+
+class ShophiveTabletSpider(ShophiveSpider):
+    """Shophive's tablets: the Apple iPad store and the tablets category.
+
+    The tablets category also holds Wacom, XP-Pen and Penpower drawing
+    pads, Kindle e-readers and tablet accessories, each in a subcategory of
+    its own; those are skipped. Drawing pads filed in no subcategory are
+    caught by the pipeline's tablet rules.
+    """
+
+    name = 'shophive_tablets'
+    catalog_category = 'tablets'
+    parser_version = 'shophive-tablets-v1'
+    category_paths = ('apple/ipad', 'tablets')
+    excluded_paths = (
+        'tablets/wacom',
+        'tablets/xp-pen',
+        'tablets/penpower',
+        'tablets/tablet-accessories',
+        'tablets/amazon-kindle',
+    )
+
+
+# "46mm Jet Black Aluminium Case With Black Sports Band": the words before
+# the case (and its material) are the case's colour.
+WATCH_CASE_COLOUR = re.compile(
+    r'(?:^|[\s,])((?:[A-Za-z]+\s+){1,3}?)'
+    r'(?:(?:alumini?um|titanium|ceramic|stainless\s+steel)\s+)?case\b',
+    re.I,
+)
+
+
+class ShophiveSmartwatchSpider(ShophiveSpider):
+    """Shophive's smart watches: the Apple Watch store and smart-watches.
+
+    Each Apple Watch colour is a product of its own, its colour written in
+    the name ("Midnight Case With Midnight Sports Band"). WHOOP's
+    screen-less trackers have a subcategory of their own and are skipped.
+    """
+
+    name = 'shophive_smartwatches'
+    catalog_category = 'smart-watches'
+    parser_version = 'shophive-smartwatches-v1'
+    category_paths = ('apple/watch', 'smart-watches')
+    excluded_paths = ('smart-watches/whoop-bands',)
+
+    @staticmethod
+    def title_colour(name):
+        match = WATCH_CASE_COLOUR.search(str(name or ''))
+        return tidy_colour(match.group(1)) if match else None

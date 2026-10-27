@@ -47,6 +47,7 @@ def start_run(
     *,
     platform: str = "daraz",
     spider_name: str = "daraz_smartphones",
+    trigger_type: str = "test",
 ) -> dict:
     response = client.post(
         RUNS_ENDPOINT,
@@ -54,7 +55,7 @@ def start_run(
         json={
             "platform": platform,
             "spider_name": spider_name,
-            "trigger_type": "test",
+            "trigger_type": trigger_type,
             "parser_version": f"{platform}-v1",
         },
     )
@@ -262,6 +263,27 @@ def test_partial_run_persists_counters_and_related_errors(
         "invalid_price",
         "backend_timeout",
     ]
+
+
+def test_a_product_lookup_that_finds_nothing_has_its_answer(client: TestClient) -> None:
+    """Daraz not selling the iPad Pro is a result, not a failed crawl."""
+
+    run = start_run(client, spider_name="daraz_tablets", trigger_type="on_demand")
+
+    response = finish_run(
+        client,
+        run["id"],
+        crawl_succeeded=True,
+        discovered=0,
+        ingested=0,
+        rejected=0,
+        failed=0,
+        errors=0,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    assert "lists nothing" in response.json()["error_summary"]
 
 
 def test_failed_run_is_represented(client: TestClient) -> None:

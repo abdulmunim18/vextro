@@ -178,16 +178,18 @@ class ScrapeMonitoringExtension:
             )
             return
 
-        result = self._request(
-            'POST',
-            self.RUNS_PATH,
-            payload={
-                'platform': platform,
-                'spider_name': spider.name,
-                'trigger_type': self.trigger_type,
-                'parser_version': parser_version,
-            },
-        )
+        payload = {
+            'platform': platform,
+            'spider_name': spider.name,
+            'trigger_type': self.trigger_type,
+            'parser_version': parser_version,
+        }
+        category = getattr(spider, 'catalog_category', None)
+        if category:
+            # A complete crawl retires only this category's listings.
+            payload['category'] = category
+
+        result = self._request('POST', self.RUNS_PATH, payload=payload)
         if result and result.get('id'):
             self.run_id = int(result['id'])
             logging.info(

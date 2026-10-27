@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     BigInteger,
+    event,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -20,6 +21,11 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.services.variant_identity import (
+    IDENTITY,
+    configuration_key,
+    variant_identity,
+)
 
 if TYPE_CHECKING:
     from app.models.canonical_product import CanonicalProduct
@@ -33,13 +39,16 @@ class ProductVariant(Base):
     __tablename__ = "product_variants"
 
     __table_args__ = (
+        # One variant per product, identity, colour and condition. The
+        # identity includes RAM and storage, so this also covers what the
+        # older RAM-and-storage rule did, and lets a Wi-Fi and a cellular
+        # tablet of one memory size exist side by side.
         UniqueConstraint(
             "canonical_product_id",
-            "ram_gb",
-            "storage_gb",
+            "configuration_key",
             "color",
             "condition",
-            name="uq_product_variants_configuration",
+            name="uq_product_variants_identity",
         ),
         CheckConstraint(
             "ram_gb IS NULL OR ram_gb > 0",
@@ -101,6 +110,15 @@ class ProductVariant(Base):
         server_default=text("'{}'::jsonb"),
     )
 
+    # The variant's identity attributes as one string, such as
+    # "ram_gb=8|storage_gb=256". Filled automatically on every save from
+    # ``variant_attributes["identity"]`` and the RAM and storage columns.
+    configuration_key: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        server_default=text("''"),
+    )
+
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -130,3 +148,34 @@ class ProductVariant(Base):
         back_populates="product_variant",
         cascade="all, delete-orphan",
     )
+
+
+@event.listens_for(ProductVariant, "before_insert")
+@event.listens_for(ProductVariant, "before_update")
+def _keep_identity_in_step(_mapper, _connection, variant: ProductVariant) -> None:
+    """Derive the identity and its key whenever a variant is written.
+
+    Whoever creates or edits a variant (the resolver, an administrator, a
+    seed script, a test) only has to set the attributes; the stored
+    identity and key cannot drift from them.
+    """
+
+    identity = variant_identity(
+        variant.variant_attributes,
+        ram_gb=variant.ram_gb,
+        storage_gb=variant.storage_gb,
+    )
+    attributes = dict(variant.variant_attributes or {})
+
+    if identity:
+        attributes[IDENTITY] = identity
+    else:
+        attributes.pop(IDENTITY, None)
+
+    if attributes != (variant.variant_attributes or {}):
+        variant.variant_attributes = attributes
+
+    key = configuration_key(identity)
+    if variant.configuration_key != key:
+        variant.configuration_key = key
+

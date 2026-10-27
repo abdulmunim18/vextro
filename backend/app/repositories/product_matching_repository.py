@@ -1,6 +1,6 @@
 """Repository helpers for marketplace product matching."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -12,6 +12,11 @@ from app.models.pending_product_match import PendingProductMatch
 from app.models.platform import Platform
 from app.models.product_listing import ProductListing
 from app.models.product_variant import ProductVariant
+from app.services.variant_identity import (
+    IDENTITY,
+    configuration_key,
+    variant_identity,
+)
 
 
 # Key in a variant's attributes holding, per marketplace, the model name
@@ -29,6 +34,7 @@ CANDIDATE_COLUMNS = (
     ProductVariant.storage_gb,
     ProductVariant.color,
     ProductVariant.condition,
+    ProductVariant.variant_attributes,
 )
 
 
@@ -48,6 +54,8 @@ class ProductMatchCandidate:
     storage_gb: int | None
     color: str | None
     condition: str
+    # Identity attributes beyond RAM and storage (connectivity, case size).
+    identity: dict[str, object] = field(default_factory=dict)
 
 
 def _build_candidate(row) -> ProductMatchCandidate:
@@ -64,6 +72,7 @@ def _build_candidate(row) -> ProductMatchCandidate:
         storage_gb=row[7],
         color=row[8],
         condition=row[9],
+        identity=dict(((row[10] or {}).get(IDENTITY)) or {}),
     )
 
 
@@ -211,12 +220,30 @@ class ProductMatchingRepository:
             .limit(1)
         )
 
+    def get_category(
+        self,
+        database_session: Session,
+        slug: str,
+    ) -> Category | None:
+        """Return a catalogue category by its slug."""
+
+        if slug == "mobile-phones":
+            return self.get_smartphone_category(database_session)
+
+        return database_session.scalar(
+            select(Category).where(
+                Category.slug == slug,
+                Category.is_active.is_(True),
+            )
+        )
+
     def get_canonical_product_by_model(
         self,
         database_session: Session,
         *,
         brand_id: int | None,
         model: str,
+        category_id: int | None = None,
     ) -> CanonicalProduct | None:
         """Return an active product with the same brand and model code."""
 
@@ -224,6 +251,9 @@ class ProductMatchingRepository:
             CanonicalProduct.is_active.is_(True),
             func.lower(CanonicalProduct.model) == model.strip().lower(),
         ]
+
+        if category_id is not None:
+            filters.append(CanonicalProduct.category_id == category_id)
 
         if brand_id is None:
             filters.append(CanonicalProduct.brand_id.is_(None))
@@ -286,26 +316,83 @@ class ProductMatchingRepository:
         storage_gb: int | None,
         color: str | None,
         condition: str = "new",
+        identity: dict[str, object] | None = None,
     ) -> ProductVariant | None:
-        """Return the variant holding one exact configuration."""
+        """Return the variant holding one exact configuration.
 
-        filters = [
-            ProductVariant.canonical_product_id == canonical_product_id,
-            ProductVariant.condition == condition,
-        ]
+        A configuration is the variant's whole identity (RAM and storage,
+        plus whatever else its category distinguishes), colour and
+        condition, compared through the stored configuration key.
+        """
 
-        for column, value in (
-            (ProductVariant.ram_gb, ram_gb),
-            (ProductVariant.storage_gb, storage_gb),
-            (ProductVariant.color, color),
-        ):
-            filters.append(
-                column.is_(None) if value is None else column == value
+        key = configuration_key(
+            variant_identity(
+                {IDENTITY: identity or {}},
+                ram_gb=ram_gb,
+                storage_gb=storage_gb,
             )
+        )
 
         return database_session.scalar(
-            select(ProductVariant).where(*filters)
+            select(ProductVariant).where(
+                ProductVariant.canonical_product_id == canonical_product_id,
+                ProductVariant.condition == condition,
+                ProductVariant.configuration_key == key,
+                ProductVariant.color.is_(None)
+                if color is None
+                else ProductVariant.color == color,
+            )
         )
+
+    def get_variant_stating_more(
+        self,
+        database_session: Session,
+        *,
+        canonical_product_id: int,
+        ram_gb: int | None,
+        storage_gb: int | None,
+        color: str | None,
+        condition: str = "new",
+        identity: dict[str, object] | None = None,
+    ) -> ProductVariant | None:
+        """Return the one variant a listing that states less belongs to.
+
+        A seller who writes "Redmi Pad 2 8GB RAM" states part of a
+        configuration the catalogue already holds in full ("8GB, 256GB,
+        Wi-Fi"). When exactly one variant of that colour and condition
+        agrees with everything the listing states, it is that variant;
+        with two or more it could be either, and none is returned.
+        """
+
+        stated = {
+            key: value
+            for key, value in variant_identity(
+                {IDENTITY: identity or {}},
+                ram_gb=ram_gb,
+                storage_gb=storage_gb,
+            ).items()
+            if value not in (None, "")
+        }
+
+        candidates = [
+            variant
+            for variant in database_session.scalars(
+                select(ProductVariant).where(
+                    ProductVariant.canonical_product_id == canonical_product_id,
+                    ProductVariant.condition == condition,
+                    ProductVariant.is_active.is_(True),
+                    ProductVariant.color.is_(None)
+                    if color is None
+                    else ProductVariant.color == color,
+                )
+            )
+            if all(
+                (variant.variant_attributes or {}).get(IDENTITY, {}).get(key) == value
+                for key, value in stated.items()
+            )
+        ]
+
+        return candidates[0] if len(candidates) == 1 else None
 
     def create_variant(
         self,
@@ -318,8 +405,12 @@ class ProductMatchingRepository:
         sku: str | None,
         variant_attributes: dict[str, object],
         condition: str = "new",
+        identity: dict[str, object] | None = None,
     ) -> ProductVariant:
         """Create and flush one product configuration."""
+
+        if identity:
+            variant_attributes = {**variant_attributes, IDENTITY: dict(identity)}
 
         variant = ProductVariant(
             canonical_product_id=canonical_product_id,
@@ -353,8 +444,13 @@ class ProductMatchingRepository:
         database_session: Session,
         *,
         brand: str | None = None,
+        category_id: int | None = None,
     ) -> list[ProductMatchCandidate]:
-        """Return active product variants eligible for matching."""
+        """Return active product variants eligible for matching.
+
+        With a category, only that category's products are candidates: a
+        tablet must never be matched to a phone of the same name.
+        """
 
         query = (
             select(*CANDIDATE_COLUMNS)
@@ -374,6 +470,9 @@ class ProductMatchingRepository:
                 ProductVariant.is_active.is_(True),
             )
         )
+
+        if category_id is not None:
+            query = query.where(CanonicalProduct.category_id == category_id)
 
         cleaned_brand = (
             brand.strip()

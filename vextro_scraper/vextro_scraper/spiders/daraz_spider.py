@@ -83,6 +83,7 @@ class DarazReviewFetchError(RuntimeError):
 class DarazSpider(scrapy.Spider):
     name = "daraz_smartphones"
     platform_code = "daraz"
+    catalog_category = "mobile-phones"
     parser_version = "daraz-v4-catalogue-search"
     allowed_domains = ["daraz.pk"]
 
@@ -232,6 +233,9 @@ class DarazSpider(scrapy.Spider):
                         'page': page,
                         'page_size': 100,
                         'is_available': 'true',
+                        # Only this spider's own category is looked up in
+                        # this spider's Daraz category.
+                        'category_slug': self.catalog_category,
                     },
                     timeout=settings.getfloat('VEXTRO_API_TIMEOUT', 20),
                 )
@@ -961,3 +965,48 @@ class DarazSpider(scrapy.Spider):
         return isinstance(cause, IgnoreRequest) and 'robots' in str(
             cause
         ).lower()
+
+
+class DarazTabletSpider(DarazSpider):
+    """Daraz's tablet listings, matched to tablets VEXTRO already lists.
+
+    Daraz's tablet category mixes in phones, refurbished stock and
+    children's writing pads, mostly without a brand. Its listings therefore
+    only join tablets another marketplace catalogued (``match_only``); they
+    never add a tablet of their own.
+    """
+
+    name = "daraz_tablets"
+    catalog_category = "tablets"
+    match_only = True
+    parser_version = "daraz-tablets-v1"
+    CATALOG_PATH = "/tablets/"
+    start_urls = ["https://www.daraz.pk/tablets/?ajax=true"]
+
+    # Reviews are requested as a listing is read, before the backend says
+    # whether it joined a tablet; most will not, so none are asked for.
+    custom_settings = {
+        **DarazSpider.custom_settings,
+        'DARAZ_REVIEWS_ENABLED': False,
+    }
+
+
+class DarazSmartwatchSpider(DarazSpider):
+    """Daraz's smart watch listings, matched to watches VEXTRO lists.
+
+    Like its tablets, Daraz's watches are mostly unbranded (the "C99 Ultra"
+    and its kin), with strap sets mixed in, so they only join watches
+    another marketplace catalogued.
+    """
+
+    name = "daraz_smartwatches"
+    catalog_category = "smart-watches"
+    match_only = True
+    parser_version = "daraz-smartwatches-v1"
+    CATALOG_PATH = "/smart-watches/"
+    start_urls = ["https://www.daraz.pk/smart-watches/?ajax=true"]
+
+    custom_settings = {
+        **DarazSpider.custom_settings,
+        'DARAZ_REVIEWS_ENABLED': False,
+    }

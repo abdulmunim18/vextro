@@ -30,6 +30,19 @@ class ScrapeRunStartInput(BaseModel):
     spider_name: str = Field(min_length=1, max_length=100)
     trigger_type: TriggerType = "manual"
     parser_version: str = Field(min_length=1, max_length=50)
+    # The catalogue category the crawl covers. A complete crawl retires
+    # only that category's listings it did not see. Absent: smartphones.
+    category: str | None = Field(default=None, max_length=50)
+
+    @field_validator("category")
+    @classmethod
+    def category_is_known(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+
+        from app.services.category_profiles import profile_for
+
+        return profile_for(value).slug
 
 
 class ScrapeRunFinishInput(BaseModel):
@@ -107,6 +120,7 @@ class ScrapeRunResponse(BaseModel):
     id: int
     platform: PlatformCode
     spider_name: str
+    category: str | None = None
     status: RunStatus
     started_at: datetime
     finished_at: datetime | None

@@ -290,7 +290,7 @@ python -m vextro_scraper.scheduler
 | `SCRAPER_ENABLED` | `true` | Run at all |
 | `SCRAPER_RUN_ON_STARTUP` | `true` | Crawl once immediately, then fall into the interval |
 | `SCRAPER_INTERVAL_HOURS` | `12` | Hours between crawls |
-| `SCRAPER_SPIDERS` | `priceoye_smartphones,daraz_smartphones` | Spiders to run, in order |
+| `SCRAPER_SPIDERS` | every spider: phones, tablets, then `whatmobile_opinions` | Spiders to run, in order |
 | `SCRAPER_LOCK_PATH` | `.runtime/scraper-scheduler.lock` | Single-instance lock |
 
 ### Only ever one scheduler

@@ -170,6 +170,13 @@ class ScrapeRun(Base):
         nullable=False,
         server_default=text("'manual'"),
     )
+    # The catalogue category the run covered, for marketplaces crawled one
+    # category at a time. Empty for runs from before categories, which
+    # covered smartphones.
+    category: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
     parser_version: Mapped[str] = mapped_column(
         String(50),
         nullable=False,

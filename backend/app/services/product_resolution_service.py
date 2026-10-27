@@ -21,11 +21,17 @@ from __future__ import annotations
 
 import logging
 import re
+from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.canonical_product import CanonicalProduct
+from app.models.platform import Platform
+from app.models.product_listing import ProductListing
+from app.models.product_variant import ProductVariant
+from app.services.category_profiles import profile_for
+from app.services.variant_identity import IDENTITY, MEMORY_COLUMNS
 from app.repositories.product_matching_repository import (
     ProductMatchingRepository,
 )
@@ -65,6 +71,12 @@ logger = logging.getLogger(__name__)
 AUTO_ATTACH_TIERS = frozenset({TIER_EXACT, TIER_HIGH})
 
 MIN_MODEL_NAME_LENGTH = 3
+
+# A match-only listing below this share of the product's cheapest offer
+# elsewhere is taken for a copy wearing the product's name.
+COPY_PRICE_RATIO = Decimal("0.5")
+# Above this multiple of its dearest offer elsewhere, a placeholder.
+PLACEHOLDER_PRICE_RATIO = Decimal("3")
 
 
 def _compact(value: str | None) -> str:
@@ -120,6 +132,27 @@ class ProductResolutionService:
                     payload = payload.model_copy(update={"color": stated})
 
             response = self._resolve(database_session, payload)
+
+            if self._priced_out_of_line(database_session, payload, response):
+                # Anything the match prepared (a colour variant) is undone.
+                database_session.rollback()
+                logger.info(
+                    "Passed over a match-only listing priced far from its "
+                    "product: platform=%s external_id=%s product_id=%s",
+                    payload.platform_code,
+                    payload.external_id,
+                    response.canonical_product_id,
+                )
+                return ProductResolveResponse(
+                    matched=False,
+                    confidence=0,
+                    reason=(
+                        "Priced far from what the stores ask for this "
+                        "product: likely a copy using its name, or a "
+                        "listing not meant to sell."
+                    ),
+                )
+
             self._adopt_marketplace_name(database_session, payload, response)
 
             if (
@@ -134,7 +167,11 @@ class ProductResolutionService:
                     database_session,
                     variant_id=response.product_variant_id,
                     platform_code=payload.platform_code,
-                    model_name=payload.title,
+                    # Without variant words, so a tablet's "5G" names its
+                    # connectivity, not a different product.
+                    model_name=profile_for(
+                        payload.category_slug
+                    ).product_title(payload.title),
                 )
             database_session.commit()
         except Exception:
@@ -142,6 +179,50 @@ class ProductResolutionService:
             raise
 
         return response
+
+    @staticmethod
+    def _priced_out_of_line(
+        database_session: Session,
+        payload: ProductResolveRequest,
+        response: ProductResolveResponse,
+    ) -> bool:
+        """Report whether a match-only listing's price rules it out.
+
+        Compared with the offers the product has in stock on the other
+        marketplaces: below half the cheapest, the listing is a copy using
+        the product's name; above three times the dearest, a placeholder a
+        seller keeps up so nobody buys it ("Do Not Purchase", Rs 99,999).
+        """
+
+        if (
+            payload.allow_new_product
+            or payload.listing_price is None
+            or not response.matched
+            or response.canonical_product_id is None
+        ):
+            return False
+
+        cheapest, dearest = database_session.execute(
+            select(
+                func.min(ProductListing.current_price),
+                func.max(ProductListing.current_price),
+            )
+            .join(ProductVariant, ProductVariant.id == ProductListing.product_variant_id)
+            .join(Platform, Platform.id == ProductListing.platform_id)
+            .where(
+                ProductVariant.canonical_product_id == response.canonical_product_id,
+                ProductListing.is_available.is_(True),
+                Platform.code != payload.platform_code,
+            )
+        ).one()
+
+        if cheapest is None:
+            return False
+
+        return (
+            payload.listing_price < cheapest * COPY_PRICE_RATIO
+            or payload.listing_price > dearest * PLACEHOLDER_PRICE_RATIO
+        )
 
     def _resolve(
         self,
@@ -236,7 +317,16 @@ class ProductResolutionService:
             return
 
         brand_name = response.brand_name
-        name = clean_model_name(payload.title, brand_name)
+        # Named as it was created: without the words that name a variant
+        # ("11inch", "Wi-Fi"), which every variant's title would otherwise
+        # take turns writing into the product's name.
+        profile = profile_for(payload.category_slug)
+        product_title = profile.product_title(payload.title)
+        if profile.slug != "mobile-phones":
+            # Cleaned as a new product's name is, so a second offer does not
+            # rename the product to a longer spelling of the same model.
+            product_title = clean_product_display_name(product_title) or product_title
+        name = clean_model_name(product_title, brand_name)
 
         if (
             not name
@@ -244,6 +334,20 @@ class ProductResolutionService:
             or cross_marketplace_product_key(name, brand_name)
             != cross_marketplace_product_key(product.name, brand_name)
         ):
+            return
+
+        if database_session.scalar(
+            select(CanonicalProduct.id)
+            .where(
+                CanonicalProduct.brand_id == product.brand_id,
+                CanonicalProduct.category_id == product.category_id,
+                CanonicalProduct.model == name[:120],
+                CanonicalProduct.id != product.id,
+            )
+            .limit(1)
+        ) is not None:
+            # Another product already carries the name; taking it would
+            # break the one-name-per-model rule.
             return
 
         product.name = name[:255]
@@ -327,12 +431,29 @@ class ProductResolutionService:
                 # The seller wrote the colour into the title.
                 return None
 
+        # The new colour keeps the matched variant's whole identity, not
+        # only its memory: a cellular tablet's other colour is cellular too.
+        matched_variant = database_session.get(
+            ProductVariant,
+            match.product_variant_id,
+        )
+        extra_identity = {
+            key: value
+            for key, value in (
+                (matched_variant.variant_attributes or {}).get(IDENTITY) or {}
+                if matched_variant is not None
+                else {}
+            ).items()
+            if key not in MEMORY_COLUMNS
+        }
+
         variant = self.repository.get_variant(
             database_session,
             canonical_product_id=match.canonical_product_id,
             ram_gb=match.ram_gb,
             storage_gb=match.storage_gb,
             color=color,
+            identity=extra_identity,
         )
         variant_created = variant is None
 
@@ -343,6 +464,7 @@ class ProductResolutionService:
                 ram_gb=match.ram_gb,
                 storage_gb=match.storage_gb,
                 color=color,
+                identity=extra_identity,
                 sku=None,
                 variant_attributes={
                     key: value
@@ -419,8 +541,14 @@ class ProductResolutionService:
         # seller's store name forever ("Carrefour Samsung Galaxy A07"), and
         # the same phone from another marketplace can then never find it.
         title = clean_marketplace_title(payload.title, payload.seller_name)
+        profile = profile_for(payload.category_slug)
+        # The product's name leaves out what names a variant ("Wi-Fi",
+        # "44mm"); the full title is still read for the variant itself.
+        name_title = profile.product_title(title)
 
-        if is_accessory_title(title):
+        # The accessory rules describe what is not a phone; other categories
+        # bring their own.
+        if profile.slug == "mobile-phones" and is_accessory_title(title):
             logger.warning(
                 "Declined to create a canonical product for an accessory: "
                 "platform=%s external_id=%s",
@@ -429,10 +557,18 @@ class ProductResolutionService:
             )
             return None
 
-        brand_name = infer_brand_name(title, payload.brand)
+        brand_name = infer_brand_name(
+            title,
+            payload.brand,
+            # A store naming its own goods states their maker; outside
+            # phones, models are often named after another brand's line.
+            prefer_provided=payload.exact_model_title and profile.slug != "mobile-phones",
+        )
         display_name = clean_model_name(
-            clean_product_display_name(payload.model or title)
-            or clean_product_display_name(title),
+            clean_product_display_name(
+                profile.product_title(payload.model) if payload.model else name_title
+            )
+            or clean_product_display_name(name_title),
             brand_name,
         )
 
@@ -449,18 +585,28 @@ class ProductResolutionService:
             )
             return None
 
-        category = self.repository.get_smartphone_category(
+        category = self.repository.get_category(
             database_session,
+            profile.slug,
         )
 
         if category is None:
             logger.error(
-                "Cannot create canonical products: no smartphone category "
-                "exists in the catalog."
+                "Cannot create canonical products: the %s category does "
+                "not exist in the catalog.",
+                profile.slug,
             )
             return None
 
-        brand = self._resolve_brand(database_session, brand_name)
+        if payload.allow_new_product:
+            brand = self._resolve_brand(database_session, brand_name)
+        else:
+            brand = self.repository.get_brand_by_name(
+                database_session,
+                brand_name,
+            )
+            if brand is None:
+                return None
 
         specifications = merge_specifications(
             infer_title_specifications(title),
@@ -475,19 +621,40 @@ class ProductResolutionService:
             ram_gb = payload.ram_gb
         if storage_gb is None:
             storage_gb = payload.storage_gb
+        if not profile.uses_memory:
+            ram_gb = storage_gb = None
 
         color = normalize_color(payload.color)
+        extra_identity = {
+            key: value
+            for key, value in profile.identity_from(
+                title=title,
+                specifications=payload.specifications,
+            ).items()
+            if key not in MEMORY_COLUMNS
+        }
 
         product, product_created = self._resolve_canonical_product(
             database_session,
             platform_code=payload.platform_code,
-            title=title,
+            title=name_title,
             display_name=display_name,
             brand=brand,
             category_id=category.id,
             specifications=specifications,
             exact_model_title=payload.exact_model_title,
+            may_create=payload.allow_new_product,
+            word_order_matters=profile.slug == "mobile-phones",
         )
+
+        if product is None:
+            logger.info(
+                "Left a listing for review: no catalogue product for it and "
+                "its source may not create one: platform=%s external_id=%s",
+                payload.platform_code,
+                payload.external_id,
+            )
+            return None
 
         variant = self.repository.get_variant(
             database_session,
@@ -495,7 +662,22 @@ class ProductResolutionService:
             ram_gb=ram_gb,
             storage_gb=storage_gb,
             color=color,
+            identity=extra_identity,
         )
+
+        if variant is None and profile.slug != "mobile-phones":
+            # A seller title that states less than the catalogue knows
+            # ("8GB RAM", no storage) joins the one variant it describes
+            # instead of opening a half-described one beside it.
+            variant = self.repository.get_variant_stating_more(
+                database_session,
+                canonical_product_id=product.id,
+                ram_gb=ram_gb,
+                storage_gb=storage_gb,
+                color=color,
+                identity=extra_identity,
+            )
+
         variant_created = variant is None
 
         if variant is None:
@@ -505,6 +687,7 @@ class ProductResolutionService:
                 ram_gb=ram_gb,
                 storage_gb=storage_gb,
                 color=color,
+                identity=extra_identity,
                 sku=self._available_sku(database_session, payload),
                 variant_attributes={
                     key: value
@@ -592,12 +775,15 @@ class ProductResolutionService:
         category_id: int,
         specifications: dict[str, str],
         exact_model_title: bool = False,
-    ) -> tuple[CanonicalProduct, bool]:
+        may_create: bool = True,
+        word_order_matters: bool = True,
+    ) -> tuple[CanonicalProduct | None, bool]:
         """Find the canonical phone for a title, or create it.
 
         A Daraz listing and a PriceOye listing for the same phone must land on
         one canonical product, so the brand-scoped cross-marketplace identity
-        key is consulted before anything new is created.
+        key is consulted before anything new is created. Without
+        ``may_create`` a title naming no known product yields ``None``.
         """
 
         brand_id = brand.id if brand is not None else None
@@ -608,6 +794,7 @@ class ProductResolutionService:
             database_session,
             brand_id=brand_id,
             model=model,
+            category_id=category_id,
         )
 
         if existing is None and brand_id is not None:
@@ -616,6 +803,8 @@ class ProductResolutionService:
                 title=title,
                 brand_id=brand_id,
                 brand_name=brand_name,
+                category_id=category_id,
+                word_order_matters=word_order_matters,
             )
 
         if existing is not None and exact_model_title and any(
@@ -638,6 +827,9 @@ class ProductResolutionService:
                 merge_specifications(existing.specifications, specifications),
             )
             return existing, False
+
+        if not may_create:
+            return None, False
 
         slug_base = _slugify(
             f"{brand_name or ''} {model}".strip(),
@@ -669,10 +861,23 @@ class ProductResolutionService:
         title: str,
         brand_id: int,
         brand_name: str | None,
+        category_id: int | None = None,
+        word_order_matters: bool = True,
     ) -> CanonicalProduct | None:
-        """Return the same phone already registered under another title."""
+        """Return the same product already registered under another title.
+
+        Without ``word_order_matters`` the same words in another order are
+        the same name: one store's "iPad Air M4 8th Gen" is another's
+        "iPad Air 8th Gen M4". Phones keep the strict comparison they
+        were tuned with.
+        """
 
         identity = cross_marketplace_product_key(title, brand_name)
+
+        def same(key: str) -> bool:
+            if word_order_matters:
+                return key == identity
+            return sorted(key.split()) == sorted(identity.split())
 
         if not identity:
             return None
@@ -685,15 +890,21 @@ class ProductResolutionService:
             .where(
                 CanonicalProduct.is_active.is_(True),
                 CanonicalProduct.brand_id == brand_id,
+                *(
+                    (CanonicalProduct.category_id == category_id,)
+                    if category_id is not None
+                    else ()
+                ),
             )
             .order_by(CanonicalProduct.id.asc())
         )
 
         for candidate in same_brand:
-            if identity in {
-                cross_marketplace_product_key(candidate.name, brand_name),
-                cross_marketplace_product_key(candidate.model, brand_name),
-            }:
+            if same(
+                cross_marketplace_product_key(candidate.name, brand_name)
+            ) or same(
+                cross_marketplace_product_key(candidate.model, brand_name)
+            ):
                 return candidate
 
         # ``find_cross_platform_canonical`` only inspects products that
@@ -705,6 +916,7 @@ class ProductResolutionService:
             title=title,
             brand_id=brand_id,
             incoming_platform_id=-1,
+            category_id=category_id,
         )
 
     def _available_sku(

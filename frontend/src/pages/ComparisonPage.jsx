@@ -12,6 +12,7 @@ import { getProductComparison } from "../services/catalogService";
 import { getApiErrorMessage } from "../utils/apiError";
 import { getMarketplaceDestination } from "../utils/marketplaceDestination";
 import { formatWarranty } from "../utils/productDisplay";
+import { variantIdentityChips } from "../utils/variantIdentity";
 
 
 function parseProductIds(value) {
@@ -400,17 +401,14 @@ function ComparisonPage() {
 
                   {primaryVariant ? (
                     <div className="mt-4 flex flex-wrap gap-2">
-                      {primaryVariant.ram_gb ? (
-                        <span className="rounded-lg bg-vextro-canvas px-3 py-2 text-xs font-bold">
-                          {primaryVariant.ram_gb} GB RAM
+                      {variantIdentityChips(primaryVariant).map((chip) => (
+                        <span
+                          className="rounded-lg bg-vextro-canvas px-3 py-2 text-xs font-bold"
+                          key={chip}
+                        >
+                          {chip}
                         </span>
-                      ) : null}
-
-                      {primaryVariant.storage_gb ? (
-                        <span className="rounded-lg bg-vextro-canvas px-3 py-2 text-xs font-bold">
-                          {primaryVariant.storage_gb} GB Storage
-                        </span>
-                      ) : null}
+                      ))}
 
                       {primaryVariant.color ? (
                         <span className="rounded-lg bg-vextro-canvas px-3 py-2 text-xs font-bold">

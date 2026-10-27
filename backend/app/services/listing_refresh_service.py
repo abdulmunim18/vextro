@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.scraper_supervisor import SCRAPER_ROOT
 from app.models.canonical_product import CanonicalProduct
+from app.models.category import Category
 from app.models.platform import Platform
 from app.models.product_listing import ProductListing
 from app.models.product_variant import ProductVariant
@@ -62,12 +63,28 @@ class TargetedSpider:
     separator: str = ","
 
 
-# Marketplace code -> how its spider refreshes one product. Adding a
+# Marketplace code -> how its spider refreshes one smartphone. Adding a
 # marketplace is one entry here, once its spider accepts the argument.
 TARGETED_SPIDERS: dict[str, TargetedSpider] = {
     "priceoye": TargetedSpider("priceoye_smartphones", "product_urls"),
     "daraz": TargetedSpider("daraz_smartphones", "search_terms", "|"),
     "shophive": TargetedSpider("shophive_smartphones", "product_urls"),
+}
+
+# Category slug -> the spiders that refresh one product of that category.
+# A category without an entry is refreshed only by its scheduled crawl.
+CATEGORY_SPIDERS: dict[str, dict[str, TargetedSpider]] = {
+    "mobile-phones": TARGETED_SPIDERS,
+    "tablets": {
+        "priceoye": TargetedSpider("priceoye_tablets", "product_urls"),
+        "daraz": TargetedSpider("daraz_tablets", "search_terms", "|"),
+        "shophive": TargetedSpider("shophive_tablets", "product_urls"),
+    },
+    "smart-watches": {
+        "priceoye": TargetedSpider("priceoye_smartwatches", "product_urls"),
+        "daraz": TargetedSpider("daraz_smartwatches", "search_terms", "|"),
+        "shophive": TargetedSpider("shophive_smartwatches", "product_urls"),
+    },
 }
 
 Launcher = Callable[[TargetedSpider, list[str]], object]
@@ -146,12 +163,21 @@ class ListingRefreshService:
     ) -> ProductRefreshResponse:
         """Start a refresh on every marketplace that needs one."""
 
-        product_name = database_session.scalar(
-            select(CanonicalProduct.name).where(
+        found = database_session.execute(
+            select(CanonicalProduct.name, Category.slug)
+            .join(Category, Category.id == CanonicalProduct.category_id)
+            .where(
                 CanonicalProduct.id == product_id,
                 CanonicalProduct.is_active.is_(True),
             )
+        ).first()
+        product_name = found[0] if found else None
+        category_slug = (
+            "mobile-phones"
+            if not found or found[1] in ("mobile-phones", "smartphones")
+            else found[1]
         )
+        spiders = CATEGORY_SPIDERS.get(category_slug, {})
 
         if product_name is None:
             return ProductRefreshResponse(
@@ -200,7 +226,7 @@ class ListingRefreshService:
                 select(Platform.code).where(Platform.is_active.is_(True))
             )
         )
-        for code, target in TARGETED_SPIDERS.items():
+        for code, target in spiders.items():
             if target.argument == "search_terms" and code in active_codes:
                 by_platform.setdefault(
                     code,
@@ -217,7 +243,7 @@ class ListingRefreshService:
         for code in sorted(by_platform):
             entry = by_platform[code]
             last_seen_at = entry["last_seen_at"]
-            target = TARGETED_SPIDERS.get(code)
+            target = spiders.get(code)
             values = (
                 []
                 if target is None
