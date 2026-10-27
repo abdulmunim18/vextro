@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import re
 from datetime import datetime, timezone
@@ -181,6 +182,8 @@ BRAND_PLACEHOLDERS = frozenset(
         # PriceOye's brand for unbranded goods, and Daraz's refurbished
         # programme, which is a seller, not a maker.
         'assorted', 'generic', 'daraz like new', '',
+        # Appliance stores that put their own name where a brand goes.
+        'telemart', 'jalal electronics',
     }
 )
 
@@ -365,6 +368,28 @@ def infer_title_specifications(model, specifications=None, *, bare_memory_pairs=
 
 PHONE_CATEGORY = 'mobile-phones'
 
+# The backend stores at most 150 characters of a listing's marketplace id.
+EXTERNAL_ID_LIMIT = 150
+
+
+def bounded_external_id(value):
+    """Return a listing id the backend can store, the same on every crawl.
+
+    PriceOye builds ids from page slugs, and a few slugs carry a whole
+    sales pitch ("xinji-stone-m2-...-for-men-and-women--black", 190
+    characters). Those keep their start and gain a short hash of the whole.
+    """
+
+    if value is None:
+        return None
+
+    text = str(value)
+    if len(text) <= EXTERNAL_ID_LIMIT:
+        return text
+
+    digest = hashlib.sha1(text.encode('utf-8')).hexdigest()[:12]
+    return f'{text[:100].rstrip("-")}--{digest}'
+
 # What a tablet category also serves: drawing pads and pen displays,
 # children's LCD writing boards, e-paper notebooks, and tablet accessories
 # and keyboard bundles, which are priced apart from the tablet itself.
@@ -406,6 +431,108 @@ COPY_MARKERS = re.compile(
 )
 
 
+# What an earbud category also serves: cases and covers for AirPods and
+# their kin, ear tips, cables and chargers, and the speakers, soundbars
+# and microphones some audio stores file beside earbuds.
+NOT_AUDIO = re.compile(
+    r'\b(?:'
+    r'(?:case|cover|skin|pouch|sleeve)\s+for|(?:silicone|protective|leather)\s+(?:case|cover)'
+    r'|ear\s*tips?|ear\s*hooks?|replacement|charging\s+cable|cable\s+for|charger|adapter'
+    r'|speakers?|sound\s*bar|amplifier|microphone|lavalier|karaoke'
+    r')\b',
+    re.I,
+)
+
+
+# What a laptop category also serves: bags and sleeves, chargers and
+# adapters, cooling pads, stands and skins, and machines sold used, which
+# are not the new laptop the stores price.
+NOT_A_LAPTOP = re.compile(
+    r'\b(?:'
+    r'bags?|backpack|sleeve|carry\s*case|charger|adapter|power\s+supply'
+    r'|cooling\s+pad|cooler|stand|skin|keyboard\s+(?:cover|protector|skin)'
+    r'|screen\s+protector|battery\s+for'
+    r'|used|refurbished|renewed|second\s*hand|pre-?owned|like\s+new|open\s+box'
+    r')\b',
+    re.I,
+)
+
+
+APPLIANCE_CATEGORIES = frozenset(
+    {'air-conditioners', 'televisions', 'refrigerators', 'washing-machines', 'microwave-ovens'}
+)
+
+
+# What an AC category also serves: covers, stands and pipe kits, air
+# coolers and fans, and at a marketplace, whatever a seller filed there.
+NOT_AN_AC = re.compile(
+    r'\b(?:'
+    r'covers?|stands?|brackets?|copper|pipe|installation|remote|stabili[sz]ers?'
+    r'|air\s*coolers?|coolers?|fans?|purifiers?|dehumidifiers?'
+    r'|pumps?|shoes?|sandals?|for\s+(?:women|men|girls|boys|kids)'
+    r'|used|refurbished|second\s*hand'
+    r')\b',
+    re.I,
+)
+
+
+# What a TV category also serves: mounts and stands, remotes, TV boxes and
+# sticks, cables, monitors, projectors and commercial displays, and at a
+# marketplace, whatever a seller filed there.
+NOT_A_TV = re.compile(
+    r'\b(?:'
+    r'mounts?|brackets?|stands?|trolley|remotes?|boxe?s?|sticks?|dongle|cables?|hdmi'
+    r'|mouse|keyboard|monitors?|projectors?|screen\s+protector|covers?|antenna|receiver'
+    r'|media\s+player|chromecast|fire\s+tv|easycap|commercial\s+display|viewboard'
+    r'|interactive|signage|portable\s+led|lamp|night\s+light|power\s+bank'
+    r'|bib|perfume|edp|for\s+(?:women|men|girls|boys|kids)'
+    r'|used|refurbished|second\s*hand'
+    r')\b',
+    re.I,
+)
+
+
+# What a fridge category also serves: trays, stabilizers and spare parts,
+# shop display chillers and water dispensers, and at a marketplace,
+# whatever a seller filed there.
+NOT_A_FRIDGE = re.compile(
+    r'\b(?:'
+    r'trays?|stabili[sz]ers?|gaskets?|thermostats?|spare|parts?|covers?|stands?|organi[sz]ers?'
+    r'|visi[\s-]*(?:chiller|cooler)|bottle\s+cooler|mini\s+cooler|cooler\s+bag'
+    r'|for\s+(?:women|men|girls|boys|kids)|used|refurbished|second\s*hand'
+    r')\b',
+    re.I,
+)
+
+
+# What a washer category also serves: covers, stands and trolleys, hoses
+# and parts, and at a marketplace, coolers, irons and whatever else a
+# seller filed there.
+NOT_A_WASHER = re.compile(
+    r'\b(?:'
+    r'covers?|stands?|trolley|hoses?|pipes?|inlet|outlet|spare|parts?|motor\s+for|timer'
+    r'|belts?|pulley|lid\s+for|air\s*coolers?|coolers?|fans?|irons?|vacuum'
+    r'|for\s+(?:women|men|girls|boys|kids)|used|refurbished|second\s*hand'
+    r')\b',
+    re.I,
+)
+
+
+# What a microwave category also serves: plates, covers, stands and gloves,
+# and the toaster ovens, air fryers and baking ovens stores file beside
+# microwaves. An "Air Fryer Microwave Oven" is a microwave.
+MICROWAVE_ACCESSORIES = re.compile(
+    r'\b(?:plates?|turntable|covers?|stands?|racks?|brackets?|mitts?|gloves?|bowls?'
+    r'|containers?|for\s+(?:women|men|girls|boys|kids)|used|refurbished|second\s*hand)\b',
+    re.I,
+)
+OTHER_OVENS = re.compile(
+    r'\b(?:air[\s-]*fryers?|toasters?|electric\s+oven|built[\s-]*in\s+oven|gas\s+oven'
+    r'|baking\s+oven|rotiss?erie|kettle|sandwich\s+maker)\b',
+    re.I,
+)
+
+
 def is_out_of_category(category, title):
     """Return whether a title names something its category does not sell."""
 
@@ -415,6 +542,42 @@ def is_out_of_category(category, title):
         return True
     if category == 'tablets':
         return bool(NOT_A_TABLET.search(title or ''))
+    if category == 'laptops':
+        return bool(NOT_A_LAPTOP.search(title or ''))
+    if category == 'air-conditioners':
+        # "... AC with Official Warranty" and "with Free Installation" are
+        # the offer, not what is sold.
+        sold = re.split(r'\bwith\b', title or '', maxsplit=1, flags=re.I)[0]
+        return bool(NOT_AN_AC.search(sold))
+    if category == 'televisions':
+        sold = re.split(r'\bwith\b', title or '', maxsplit=1, flags=re.I)[0]
+        return bool(NOT_A_TV.search(sold))
+    if category == 'refrigerators':
+        # "with Water Dispenser" is a feature of the fridge sold.
+        sold = re.split(r'\bwith\b', title or '', maxsplit=1, flags=re.I)[0]
+        # A side-by-side's "WATER DISPENSER DOOR IN DOOR" is a fridge; a
+        # dispenser or ice maker on its own is not.
+        names_a_fridge = re.search(r'\b(?:refrigerators?|fridges?|freezers?)\b', sold, re.I)
+        sells_other_cold_goods = re.search(
+            r'\b(?:water\s+(?:dispenser|cooler)|dispensers?|ice\s+maker)\b', sold, re.I
+        )
+        return bool(NOT_A_FRIDGE.search(sold)) or bool(
+            sells_other_cold_goods and not names_a_fridge
+        )
+    if category == 'washing-machines':
+        # "... with Base" or "with Official Warranty" is the offer.
+        sold = re.split(r'\bwith\b', title or '', maxsplit=1, flags=re.I)[0]
+        return bool(NOT_A_WASHER.search(sold))
+    if category == 'microwave-ovens':
+        sold = re.split(r'\bwith\b', title or '', maxsplit=1, flags=re.I)[0]
+        return bool(MICROWAVE_ACCESSORIES.search(sold)) or bool(
+            OTHER_OVENS.search(sold) and not re.search(r'\bmicrowave\b', sold, re.I)
+        )
+    if category == 'audio-and-earbuds':
+        # What follows "with" lists features ("with Dual Speaker Drivers",
+        # "with Mic"), not what is sold.
+        sold = re.split(r'\bwith\b', title or '', maxsplit=1, flags=re.I)[0]
+        return bool(NOT_AUDIO.search(sold))
     if category == 'smart-watches':
         # "... Smart Watch with 2 Straps" is a watch with a spare strap.
         watch = re.sub(r'\bwith\b[^|,]{0,25}?\bstraps?\b', ' ', title or '', flags=re.I)
@@ -441,6 +604,9 @@ class VextroCleaningPipeline:
         # Review batches use the dedicated backend review contract and do not
         # contain listing prices.
         if adapter.get('reviews') is not None:
+            adapter['external_listing_id'] = bounded_external_id(
+                adapter.get('external_listing_id')
+            )
             if str(adapter.get('external_listing_id')) in self.turned_away:
                 raise ReviewsOfTurnedAwayListingError(
                     'Reviews of a listing this run did not deliver.'
@@ -528,9 +694,18 @@ class VextroCleaningPipeline:
             if isinstance(seller, dict)
             else seller
         )
-        cleaned_title = clean_listing_title(
-            adapter.get('model'),
-            seller_name=seller_name,
+        # A store naming its own appliances writes no stock code; what ends
+        # its title is the model's ("MI-WMTL-2200", "HWM 80-1217").
+        names_own_appliance = adapter.get('exact_model_title') and (
+            adapter.get('category') or getattr(spider, 'catalog_category', None)
+        ) in APPLIANCE_CATEGORIES
+        cleaned_title = (
+            ' '.join(str(adapter.get('model') or '').split())
+            if names_own_appliance
+            else clean_listing_title(
+                adapter.get('model'),
+                seller_name=seller_name,
+            )
         )
 
         if cleaned_title != adapter.get('model'):
@@ -581,6 +756,7 @@ class VextroCleaningPipeline:
         if url and not adapter.get('external_id'):
             # Example: grabs "xiaomi-redmi-note-14-pro" from the end of the URL
             adapter['external_id'] = url.rstrip('/').split('/')[-1]
+        adapter['external_id'] = bounded_external_id(adapter.get('external_id'))
 
         # 5. Normalize and deduplicate gallery URLs while preserving order.
         # A listing without a usable image reaches the catalog as a blank
@@ -766,6 +942,9 @@ class VextroApiIngestionPipeline:
         self.batch_size = max(1, min(int(batch_size), 100))
         self.crawler = crawler
         self.listing_buffer = []
+        # Listings this run queued for review or passed over: the catalogue
+        # holds no listing their reviews could attach to.
+        self.unplaced_listing_ids = set()
 
     @classmethod
     def from_crawler(cls, crawler):
@@ -1042,8 +1221,10 @@ class VextroApiIngestionPipeline:
         # Daraz packs a phone's whole description into its "RAM" field
         # ("+ 256GB UFS 3.1 storage ..."), so the first capacity found
         # there is often the storage. No phone has that much RAM, and
-        # sending it made the backend refuse the listing outright.
-        if ram_gb is not None and ram_gb > 32:
+        # sending it made the backend refuse the listing outright. A laptop
+        # does carry 64 GB and more, but not 512.
+        ram_limit = 256 if payload.get('category') == 'laptops' else 32
+        if ram_gb is not None and ram_gb > ram_limit:
             if storage_gb is None:
                 storage_gb = ram_gb
             ram_gb = None
@@ -1235,6 +1416,10 @@ class VextroApiIngestionPipeline:
         context = self._context(payload)
 
         if payload.get('reviews') is not None:
+            if str(payload.get('external_listing_id')) in self.unplaced_listing_ids:
+                raise ReviewsOfTurnedAwayListingError(
+                    'Reviews of a listing this run did not place in the catalogue.'
+                )
             # Reviews are resolved by (platform, external listing id), so the
             # listing must already be in the database. Buffered listings are
             # delivered first, otherwise a brand-new product's reviews would
@@ -1322,6 +1507,7 @@ class VextroApiIngestionPipeline:
         product_variant_id = match_result.get('product_variant_id')
         if not match_result.get('matched') or not product_variant_id:
             reason = str(match_result.get('reason') or 'no safe match')
+            self.unplaced_listing_ids.add(str(payload.get('external_id')))
 
             # The matcher suggests its best guess for nearly anything, so a
             # match-only listing is queued only when that guess is a

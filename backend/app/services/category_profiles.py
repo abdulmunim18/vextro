@@ -63,6 +63,61 @@ class CategoryProfile:
     name_rewrites: tuple[
         tuple[re.Pattern, str | Callable[[re.Match], str]], ...
     ] = ()
+    # RAM and storage are read with this profile's own extractors instead
+    # of the phone reading: a laptop title also states its graphics card's
+    # memory ("RTX5090 24GB"), which a phone reading takes for RAM.
+    reads_own_memory: bool = False
+    # Appliances carry their maker's model code ("HSU-19HFAB", "55C6K"),
+    # which names the product exactly where names are written every which
+    # way. A profile that reads one matches on the code alone.
+    model_code: Callable[[str], str | None] | None = None
+    # Some makers name a model in words ("Orient 18G Lunar Grace"). Where a
+    # title states no code, this reads such a name as a key that only the
+    # same words, in any order, share.
+    model_name_key: Callable[[str], str | None] | None = None
+    # Whether a code may name a catalogued one by its beginning: a store
+    # writing a fridge's "HRF-398" for the "HRF-398IDBA" another catalogued.
+    # Only ever where exactly one catalogued code begins so.
+    model_code_prefixes: bool = False
+    # The colour a model code names, for a listing that names none in words:
+    # "HSU-19HFS-W" is the white one.
+    code_colour: Callable[[str], str | None] | None = None
+    # What a title says about the product that is not its identity: an AC's
+    # tonnage, whether it heats. Kept with the product's specifications.
+    title_specifications: Callable[[str], dict[str, str]] | None = None
+
+    def model_code_from(self, title: str | None) -> str | None:
+        """Return the model code a title states, as the catalogue keys it.
+
+        Stores write one code with and without hyphens and spaces
+        ("GS-18FITH1", "GS18FITH1"), so only its letters and digits count.
+        """
+
+        if self.model_code is None or not title:
+            return None
+        code = self.model_code(html.unescape(str(title)))
+        if not code:
+            return None
+        return re.sub(r"[^A-Z0-9]", "", code.upper()) or None
+
+    def model_key_from(self, title: str | None) -> str | None:
+        """Return the key a title files under: its code, or its model name."""
+
+        code = self.model_code_from(title)
+        if code is not None or self.model_name_key is None or not title:
+            return code
+        return self.model_name_key(html.unescape(str(title)))
+
+    def memory_from(
+        self,
+        *,
+        title: str | None,
+        specifications: dict[str, object] | None = None,
+    ) -> tuple[int | None, int | None]:
+        """Return ``(ram_gb, storage_gb)`` as this profile reads them."""
+
+        identity = self.identity_from(title=title, specifications=specifications)
+        return identity.get("ram_gb"), identity.get("storage_gb")
 
     def product_title(self, title: str | None) -> str:
         """Return the title without the words that name a variant."""
@@ -392,6 +447,322 @@ _WATCH_NAME_REWRITES = (
 )
 
 
+# --- Laptops -----------------------------------------------------------------
+#
+# One laptop model ("HP ProBook 460 G11") is sold with several processors,
+# memory sizes and graphics cards, at as many prices. The model is the
+# product; the processor, graphics card and screen are, with RAM and
+# storage, what tells its variants apart.
+
+_PROCESSORS = (
+    # Apple silicon: "M5", "M4 Pro Chip".
+    (
+        re.compile(r"\b(?:apple\s+)?m([1-6])(?:\s+(pro|max|ultra))?\b", re.I),
+        lambda m: " ".join(part for part in (f"m{m.group(1)}", m.group(2)) if part).lower(),
+    ),
+    # Apple's phone chips in the MacBook Neo: "A18 Pro Chip".
+    (
+        re.compile(r"\b(?:apple\s+)?a(1[5-9])(?:\s+(pro))?\s+chip\b", re.I),
+        lambda m: " ".join(part for part in (f"a{m.group(1)}", m.group(2)) if part).lower(),
+    ),
+    # Intel Core Ultra: "Core Ultra 7 155U", "Ultra 9 275HX", "Ultra X7 358H".
+    (
+        re.compile(
+            r"\b(?:intel\s+)?(?:core\s+)?ultra\s*x?([579])(?:\s+(?:processor\s+)?(\d{3}[a-z]{0,2}))?\b",
+            re.I,
+        ),
+        lambda m: " ".join(part for part in ("ultra", m.group(1), m.group(2)) if part).lower(),
+    ),
+    # Intel Core i: "i7-13620H", "Ci7-13620H", "Core i5 13th Gen", "i3-N305".
+    (
+        re.compile(
+            r"\b(?:intel\s+)?(?:core[\s-]*)?c?i([3579])"
+            r"(?:[\s-]+(?:(n?\d{3,5}[a-z]{0,2}\d?)\b|(\d{1,2})(?:st|nd|rd|th)\s*gen))?",
+            re.I,
+        ),
+        lambda m: (
+            f"i{m.group(1)}-{m.group(2)}" if m.group(2)
+            else f"i{m.group(1)} {m.group(3)}th gen" if m.group(3)
+            else f"i{m.group(1)}"
+        ).lower(),
+    ),
+    # Intel Core 3/5/7/9 without "i" or "Ultra": "Core 5 120U", "7-150U",
+    # "Core 9 270H", and "14th Gen Core 7" with no number.
+    (
+        re.compile(
+            r"\b(?:intel\s+)?(?:core\s+([3579])(?:\s+(\d{3}[a-z]{0,2}))?|([3579])-(\d{3}[uhp]))\b",
+            re.I,
+        ),
+        lambda m: " ".join(
+            part for part in ("core", m.group(1) or m.group(3), m.group(2) or m.group(4)) if part
+        ).lower(),
+    ),
+    # AMD: "Ryzen 7 8845HS", "Ryzen AI 9 HX 370", "Ryzen AI Max+ 395", "Ryzen".
+    (
+        re.compile(
+            r"\b(?:amd\s+)?ryzen\s*(ai\s*)?(max\+?\s*)?(?:pro\s*)?([3579])?"
+            r"(?:\s*(?:pro\s*|hx\s*)?(\d{3,4}[a-z]{0,2}))?\b",
+            re.I,
+        ),
+        lambda m: " ".join(
+            part
+            for part in (
+                "ryzen",
+                "ai" if m.group(1) else None,
+                "max" if m.group(2) else None,
+                m.group(3),
+                m.group(4),
+            )
+            if part
+        ).lower(),
+    ),
+    # Qualcomm: "Snapdragon X Elite", "Snapdragon X X1-26-100", "X1-26-100".
+    (
+        re.compile(
+            r"\bsnapdragon\s*x\d?(?:\s*(elite|plus))?(?:\s*extreme)?(?:\s+x\d[a-z]?[\s-]\d{2}[\s-]\d{3})?\b"
+            r"|\bx\d[a-z]?[\s-]\d{2}[\s-]\d{3}\b",
+            re.I,
+        ),
+        lambda m: " ".join(part for part in ("snapdragon x", m.group(1)) if part).lower(),
+    ),
+    (re.compile(r"\b(?:intel\s+)?(?:processor\s+)?(n(?:100|150|200|300|305))\b", re.I), lambda m: m.group(1).lower()),
+    (re.compile(r"\bceleron\s*(n?\d{4})?\b", re.I), lambda m: f"celeron {m.group(1) or ''}".strip().lower()),
+    # A chip's number on its own: "1165G7", "7445H", "155U", "HX370".
+    (
+        re.compile(r"\b(?:hx)?(\d{3,5}(?:g\d|hx|hs|h|u|v|p))\b", re.I),
+        lambda m: m.group(1).lower(),
+    ),
+)
+
+
+def _processor(text: str, specifications: dict[str, str], title: str) -> str | None:
+    """The chip a title names, written one way: "ultra 5 125u", "m5"."""
+
+    found = []
+    for pattern, normalize in _PROCESSORS:
+        match = pattern.search(text)
+        if match is not None:
+            found.append((match.start(), normalize(match)))
+    return min(found)[1] if found else None
+
+
+_GRAPHICS = re.compile(
+    r"\b(?:nvidia\s+)?(?:geforce\s+)?(rtx|gtx|mx)[\s™-]*(\d{3,4})(\s*ti)?\b"
+    r"|\bradeon\s+(rx\s*\d{4}[a-z]?)\b"
+    # An RTX number on its own: "Legion 5 5070", "Victus 15 4050".
+    r"|\b()([2345]0[5-9]0)(\s*ti)?\b",
+    re.I,
+)
+
+
+def _graphics(text: str, specifications: dict[str, str], title: str) -> str | None:
+    """A dedicated graphics card: the RTX 4050 and 4060 Nitro are two prices."""
+
+    match = _GRAPHICS.search(text)
+    if match is None:
+        return None
+    if match.group(4):
+        return match.group(4).lower().replace(" ", "")
+    family, number, ti = (match.group(1), match.group(2), match.group(3)) if match.group(2) else (
+        "rtx", match.group(6), match.group(7),
+    )
+    return f"{family} {number}{' ti' if ti else ''}".lower()
+
+
+# A graphics card's own memory: "RTX5090 24GB", "8GB GDDR6 Graphics".
+_GRAPHICS_MEMORY = re.compile(
+    # "RTX 5050 16GB RAM" names the card, then the laptop's RAM.
+    r"\b(?:(?:rtx|gtx|mx)\s*-?\d{3,4}(?:\s*ti)?|radeon\s+rx\s*\d{4}[a-z]?)\s*\d{1,2}\s*gb\b(?!\s*(?:ddr\d\w*\s*)?ram)"
+    r"|\b\d{1,2}\s*gb\s+(?:gddr\d\s+)?(?:graphics|gc|vram)\b",
+    re.I,
+)
+_LAPTOP_RAM_SIZES = {4, 8, 12, 16, 18, 24, 32, 36, 48, 64, 96, 128, 192}
+
+
+def _laptop_memory(text: str, specifications: dict[str, str]) -> tuple[int | None, int | None]:
+    """RAM and storage of a laptop, never its graphics card's memory.
+
+    "64GB 2TB SSD RTX5090 24GB" is 64 GB of RAM: a phone reading takes the
+    graphics card's 24 GB for it. The specification sheet comes first, as
+    for phones.
+    """
+
+    ram_gb, storage_gb = extract_memory_capacities(specifications=specifications, title="")
+    text = _GRAPHICS_MEMORY.sub(" ", text)
+
+    # "16GB-512GB", "16GB RAM 512GB", "8-512GB", "8GB/512GB".
+    pair = next(
+        (
+            match
+            for match in re.finditer(
+                r"\b(\d{1,3})\s*(?:gb\s*)?(?:ram\s*)?(?:[-/+,]\s*|\s+)(\d{1,4})\s*(gb|tb)\b", text, re.I,
+            )
+            if int(match.group(1)) in _LAPTOP_RAM_SIZES
+        ),
+        None,
+    )
+    if pair:
+        ram_gb = ram_gb or int(pair.group(1))
+        storage_gb = storage_gb or int(pair.group(2)) * (1024 if pair.group(3).lower() == "tb" else 1)
+
+    if ram_gb is None:
+        stated = re.search(r"\b(\d{1,3})\s*gb\s*(?:ddr\d\w*\s*|lpddr\d\w*\s*)?ram\b", text, re.I)
+        if stated:
+            ram_gb = int(stated.group(1))
+    if storage_gb is None:
+        stated = re.search(r"\b(\d{1,4})\s*(gb|tb)\s*(?:ssd|hdd|nvme|storage)\b", text, re.I)
+        if stated:
+            storage_gb = int(stated.group(1)) * (1024 if stated.group(2).lower() == "tb" else 1)
+
+    return ram_gb, storage_gb
+
+
+def _laptop_ram_gb(text: str, specifications: dict[str, str], title: str) -> int | None:
+    return _laptop_memory(text, specifications)[0]
+
+
+def _laptop_storage_gb(text: str, specifications: dict[str, str], title: str) -> int | None:
+    return _laptop_memory(text, specifications)[1]
+
+
+def _laptop_screen_inches(text: str, specifications: dict[str, str], title: str) -> int | float | None:
+    """A laptop's screen as the title states it: the 13.6" and 15.3" Air."""
+
+    for match in [*_SCREEN_SIZE.finditer(text), *_BARE_LAPTOP_SCREEN.finditer(text)]:
+        size = float(match.group(1))
+        if 11 <= size <= 18.5:
+            return int(size) if size.is_integer() else round(size, 1)
+    return None
+
+
+# "15.6 FHD": a laptop screen written without its unit.
+_BARE_LAPTOP_SCREEN = re.compile(
+    r"\b(1[1-8]\.\d)\b(?!\s*-?\s*(?:\"|''|”|″|inch|gb|tb|ghz|kg|mm|hours?))",
+    re.I,
+)
+
+
+def _drop_stock_code(match: re.Match) -> str:
+    """Drop a configuration's stock code ("15IAN8", "FA506NCG-HN16GW").
+
+    Six characters or more with two letters and two figures in them: the
+    code one store prints for one build. Model names ("G11", "XL442",
+    "Book4") are shorter or plainer and stay.
+    """
+
+    word = match.group(0)
+    # "13-inch" is the screen, read as identity and removed with it.
+    if re.fullmatch(r"\d{1,2}(?:\.\d)?-inch(?:es)?", word, re.I):
+        return word
+    letters = sum(character.isalpha() for character in word)
+    figures = sum(character.isdigit() for character in word)
+    plain = word.replace("-", "")
+    if not (len(plain) >= 6 and letters >= 2 and figures >= 1):
+        return word
+    # "15-FD0229NIA", "15s-fq5317tu", "F15-FX507VV": the series before the
+    # code stays.
+    series = word.split("-", 1)[0]
+    if "-" in word and len(series) <= 3 and any(character.isdigit() for character in series):
+        return f" {series} "
+    return " "
+
+
+_LAPTOP_NAME_REWRITES = (
+    (re.compile(r"[™®©‎‏]"), " "),
+    (re.compile(r"\(([^()]*)\)"), r" \1 "),
+    *_BRAND_SPELLINGS,
+    # "ThinkBook16", "15G2": a model written without its spaces.
+    (re.compile(r"\b([A-Za-z]{5,})(\d{2})\b"), r"\1 \2"),
+    (re.compile(r"\b(\d{2})(G\d{1,2})\b"), r"\1 \2"),
+    # The processor's generation and code name, before "Gen 2" is read as
+    # the laptop's own generation below.
+    (re.compile(r"\b\d{1,2}\s*(?:st|nd|rd|th)\s*gen(?:eration)?\b", re.I), " "),
+    (re.compile(r"\b\d{1,2}\s*(?:st|nd|rd|th)\b|\b\d{1,2}gen\b", re.I), " "),
+    (
+        re.compile(
+            r"\b(?:raptor|alder|panther|arrow|lunar|meteor|tiger|comet|ice|kaby|coffee)\s+lake(?:\s+refresh)?\b",
+            re.I,
+        ),
+        " ",
+    ),
+    # A laptop's own generation: Lenovo writes "Gen 2" and "G2" alike.
+    (re.compile(r"\bgen(?:eration)?\s*(\d{1,2})\b", re.I), r"G\1"),
+    (re.compile(r"\b[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+\b|\b[A-Za-z0-9]{6,}\b"), _drop_stock_code),
+    # Shorter stock codes: Apple's ("MDE44", "MRXW3", "A2918"), MSI's
+    # ("A2WH", "B2RVE") and Lenovo's platform ("IAL", "IRL", "ABP").
+    (re.compile(r"\bM[A-Z]{2,4}\d{1,2}(?:LL|ZA|ZM|AM)?(?:/A)?\b|\bA2\d{3}\b"), " "),
+    (re.compile(r"\b[A-C]\d[A-Z]{2,4}\b"), " "),
+    (re.compile(r"\b(?:IAL|IRL|IRH|IAH|IAP|IAU|IAX|IMH|IRU|ABP|ARP|ARH|AHP|AKP|APH|ASP)\d*\b"), " "),
+    (re.compile(r"\bmac\s*book\b", re.I), "MacBook"),
+)
+
+_LAPTOP_VARIANT_WORDS = (
+    re.compile(r"\s+with\b.*$", re.I),
+    # "1 Year Acer Official Warranty": the maker's name may sit inside.
+    re.compile(
+        r"\b(?:\d{1,2}|one|two|three)\s*(?:years?|yrs?|months?)\s+(?:[A-Za-z]+\s+){0,2}warranty\b"
+        r"|\b(?:international|local)\b(?:\s+warranty)?",
+        re.I,
+    ),
+    re.compile(r"\b\d{1,2}-core\b|\b\d{1,2}\s*-\s*\d{3,4}\s*(?:gb|tb)\b|\bd[o0]s\b", re.I),
+    _BARE_LAPTOP_SCREEN,
+    # The chip, the graphics card, memory and screen are read as identity.
+    *(pattern for pattern, _ in _PROCESSORS),
+    _GRAPHICS,
+    re.compile(r"\b\d{1,2}\s*gb\s+(?:gddr\d\s+)?(?:graphics|gc|vram)\b|\b(?:graphics|gc)\b", re.I),
+    re.compile(r"\b\d{1,4}\s*(?:gb|tb)\b(?:\s*(?:ram|ssd|hdd|nvme|storage|ddr\d\w*|lpddr\d\w*))?", re.I),
+    re.compile(r"\b(?:ram|ssd|hdd|nvme)\b", re.I),
+    _SCREEN_SIZE,
+    # What every title says around the model.
+    re.compile(r"\bcopilot\+?\s*pc\b|\bnext\s+gen\s+ai\b|\bai\s+(?:laptop|pc)\b", re.I),
+    re.compile(r"\b(?:notebook\s+pc|notebook|laptops?|gaming|2\s*in\s*1|2-in-1)\b", re.I),
+    re.compile(r"\b(?:windows\s*1[01](?:\s*(?:home|pro))?|win\s*1[01]|free\s*dos|dos|chrome\s*os)\b", re.I),
+    re.compile(r"\b(?:intel|amd|nvidia|core|processor|cpu|series\s*\d?|chip|gen|rtx|gtx|ti)\b", re.I),
+    re.compile(r"\bcopilot\+?\b", re.I),
+    # The finish is the variant's colour; the build options are its own.
+    re.compile(
+        r"\b(?:space\s+black|space\s+gr[ae]y|pike\s+silver|arctic(?:\s+gr[ae]y)?|sky\s+blue"
+        r"|silver|black|grey|gray|gold|blue|white|midnight|starlight|alumini?um)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:backlit\s+keyboard|keyboard|touch(?:screen)?|oled|fhd|qhd|uhd|ips|home"
+        r"|dual|octa|vpro|pen|m\.2|pcie|premium|year|pc)\b|\b\d\s*y\b",
+        re.I,
+    ),
+    # Memory left without its unit: "512", "GB".
+    re.compile(r"\b(?:128|256|512|1024)\b|\bgb\b", re.I),
+    _WARRANTY_WORDS,
+    _MODEL_YEAR,
+)
+
+LAPTOP_RAM = IdentityAttribute("ram_gb", "RAM", "GB", _laptop_ram_gb)
+LAPTOP_STORAGE = IdentityAttribute("storage_gb", "Storage", "GB", _laptop_storage_gb)
+PROCESSOR = IdentityAttribute("processor", "Processor", None, _processor)
+GRAPHICS = IdentityAttribute("graphics", "Graphics", None, _graphics)
+LAPTOP_SCREEN = IdentityAttribute("screen_in", "Screen", "inch", _laptop_screen_inches)
+
+
+_AUDIO_NAME_REWRITES = (
+    (re.compile(r"\(([^()]*)\)"), r" \1 "),
+    *_BRAND_SPELLINGS,
+    (
+        re.compile(r"\b(\d{1,2})(st|nd|rd|th)\b", re.I),
+        lambda match: match.group(1) + match.group(2).lower(),
+    ),
+    # "AirPods 4 Active Noise Cancellation" is the "AirPods 4 ANC": a model
+    # of its own, written two ways.
+    (re.compile(r"\bactive\s+noise\s+cancel+(?:ation|ing)\b", re.I), "ANC"),
+    (re.compile(r"\bSamsung\s+(?:Galaxy\s+)?Buds\b", re.I), "Samsung Galaxy Buds"),
+    # Anker's SKU ("A3953P11", "D1200H11") and Apple's part number
+    # ("MKFW4LL/A") name a stock unit, not the model, and one store only
+    # writes them. "Soundcore" is Anker's line, written or not.
+    (re.compile(r"\b[A-D]\d{4}[A-Z0-9]{2,3}\b"), " "),
+    (re.compile(r"\bM[A-Z0-9]{3,6}(?:LL|ZA|ZM|AM)(?:/A)?\b"), " "),
+    (re.compile(r"\bsoundcore\b", re.I), " "),
+)
+
+
 RAM = IdentityAttribute("ram_gb", "RAM", "GB", _ram_gb)
 STORAGE = IdentityAttribute("storage_gb", "Storage", "GB", _storage_gb)
 CONNECTIVITY = IdentityAttribute("connectivity", "Connectivity", None, _connectivity)
@@ -399,6 +770,513 @@ CASE_SIZE = IdentityAttribute("case_size_mm", "Case size", "mm", _case_size_mm)
 SCREEN_SIZE = IdentityAttribute("screen_in", "Screen", "inch", _screen_inches)
 WATCH_CONNECTIVITY = IdentityAttribute("connectivity", "Connectivity", None, _watch_connectivity)
 CASE_MATERIAL = IdentityAttribute("case_material", "Case", None, _case_material)
+
+
+# ---------------------------------------------------------------------------
+# Appliances
+# ---------------------------------------------------------------------------
+
+# Where a store points at the code: "(GS18FITH1W)", "Model HSU-19HFAB W".
+_STATED_CODE = re.compile(
+    r"\(\s*([A-Z0-9][A-Z0-9/-]{3,24})\s*\)"
+    r"|\bmodel\s*(?:no\.?|#|:)?\s*([A-Z0-9][A-Z0-9/-]{3,24})",
+    re.I,
+)
+# A word of letters and digits together, five or more long: "55P635".
+_CODE_WORD = re.compile(
+    r"(?<![\w.])(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])[A-Z0-9][A-Z0-9-]{4,24}\b",
+    re.I,
+)
+# Letters and digits that are not a code: "4K-UHD", "120Hz", "R410A" gas.
+_NOT_A_CODE = re.compile(
+    r"^\d+(?:ton|inch|in|kg|ltr|l|w|hz|k|cuft|gb|tb|mm|cm|hp|mah)\b"
+    r"|^R\d{2,3}A?$|^[A-Z]\d$",
+    re.I,
+)
+
+
+def _is_model_code(word: str) -> bool:
+    return (
+        any(character.isdigit() for character in word)
+        and any(character.isalpha() for character in word)
+        and not _NOT_A_CODE.search(word)
+    )
+
+
+def stated_model_code(title: str) -> str | None:
+    """Return the model code a title states, as written there.
+
+    The code a store points at (in brackets, after "Model") wins; otherwise
+    the first word that looks like one.
+    """
+
+    for match in _STATED_CODE.finditer(title):
+        code = match.group(1) or match.group(2)
+        if _is_model_code(code):
+            return code
+    for match in _CODE_WORD.finditer(title):
+        if _is_model_code(match.group(0)):
+            return match.group(0)
+    return None
+
+
+# ---- Air conditioners ------------------------------------------------------
+
+# The letters an AC code ends in to name its colour: "HSU-19HFS-W" white,
+# "-S" silver, "-DG" dark grey, "HSU-20HFTEX OW" off-white.
+_AC_FINISHES = {
+    # "G" is Haier's grey on one model and its gold on another
+    # ("HSU-19HFS (G) GOLDEN"), so it names no colour.
+    "W": "White", "B": "Black", "BK": "Black", "S": "Silver", "G": None,
+    "DG": "Dark Grey", "OW": "Off White", "GD": "Gold", "SW": "Snow White",
+}
+_AC_FINISH = "|".join(sorted(_AC_FINISHES, key=len, reverse=True))
+_AC_CODE_FINISH = re.compile(rf"-({_AC_FINISH})$", re.I)
+# The finish written after the code: " W", "(W)", or past an outdoor unit's
+# code: "HSU-19HFS/023WDC(W)".
+_AC_FINISH_AFTER = re.compile(
+    rf"^(?:/[A-Z0-9-]+)?\s*\(?\s*({_AC_FINISH})\s*\)?(?=[\s,|-]|$)", re.I
+)
+
+
+def _ac_code_parts(title: str) -> tuple[str, str | None] | None:
+    """Return an AC's model code without what stores add to it, and its finish.
+
+    * Jalal adds the climate rating: "GS-12AITH21W-T3".
+    * A split AC's outdoor unit has a code of its own, after a slash:
+      "HSU-19HFCM/013USDC"; an indoor unit ending "I" pairs with one
+      ending "O": "AEW12QC01HCI/AEW12QC01HCO".
+    * A colour is written after a hyphen or a space: "HSU-19HFS-W".
+    """
+
+    written = stated_model_code(title)
+    if written is None:
+        return None
+
+    indoor, _, outdoor = written.partition("/")
+    if not outdoor and (
+        match := re.match(r"\s*/\s*([A-Z0-9-]+)", title[title.find(written) + len(written):], re.I)
+    ):
+        outdoor = match.group(1)
+    if (
+        outdoor
+        and indoor[-1:].upper() == "I"
+        and outdoor.upper() == indoor[:-1].upper() + "O"
+    ):
+        indoor = indoor[:-1]
+    code = re.sub(r"-T3$", "", indoor, flags=re.I)
+
+    finish = None
+    if (match := _AC_CODE_FINISH.search(code)) is not None:
+        finish = match.group(1).upper()
+        code = code[: match.start()]
+    else:
+        after = title[title.find(written) + len(written):]
+        if (match := _AC_FINISH_AFTER.match(after)) is not None:
+            finish = match.group(1).upper()
+
+    return code, finish
+
+
+def ac_model_code(title: str) -> str | None:
+    parts = _ac_code_parts(title)
+    return parts[0] if parts else None
+
+
+def ac_code_colour(title: str) -> str | None:
+    """Return the colour an AC's code names ("HSU-19HFS-W"), if it names one."""
+
+    parts = _ac_code_parts(title)
+    return _AC_FINISHES.get(parts[1]) if parts and parts[1] else None
+
+
+_AC_TONNAGE = re.compile(r"\b(\d(?:\.\d)?)\s*-?\s*tons?\b", re.I)
+
+
+def _ac_tonnage(title: str) -> str | None:
+    match = _AC_TONNAGE.search(title)
+    if match is None:
+        return None
+    tons = float(match.group(1))
+    return f"{tons:g} Ton"
+
+
+def ac_specifications(title: str) -> dict[str, str]:
+    """Return the tonnage, compressor and heating an AC title states."""
+
+    specifications = {}
+    if (tonnage := _ac_tonnage(title)) is not None:
+        specifications["capacity"] = tonnage
+    if re.search(r"\binverter\b", title, re.I):
+        specifications["compressor"] = "Inverter"
+    if re.search(r"\bheat\s*(?:&|and|/|n)\s*cool\b|\bh\s*&\s*c\b|\bhot\s*(?:&|and)\s*cold\b", title, re.I):
+        specifications["heating"] = "Heat & Cool"
+    elif re.search(r"\bcool\s+only\b", title, re.I):
+        specifications["heating"] = "Cool only"
+    return specifications
+
+
+# Words every AC title may carry or leave out: they say what an AC is, not
+# which one.
+_AC_GENERIC_WORDS = re.compile(
+    r"\b(?:split|air\s+cond\w*|ac|inverter|dc|t[13]|r410a?|r32|hot"
+    r"|heat\s*(?:&|and|/|n)?\s*cool|h\s*&\s*c|hot\s*(?:&|and)\s*cold|cool\s+only|cool"
+    r"|model|series|unit|self[\s-]+clean(?:ing)?|wi-?fi|smart|energy\s+saver"
+    r"|official|warranty|new|latest|20\d{2})\b",
+    re.I,
+)
+_AC_COLOURS = re.compile(
+    r"\b(?:(?:pearl|silk|mirror|marble|matte?|pure|super|snow|off)\s+)?"
+    r"(?:white|black|golden|gold|silver|grey|gray)\b",
+    re.I,
+)
+
+
+def ac_model_name_key(title: str) -> str | None:
+    """Return the key of an AC named in words, or ``None`` if too vague.
+
+    "ORIENT 1.5 TON ULTRON DC INVERTER AC Model 18G LUNAR GRACE BLACK" keys
+    as "1.5T 18G GRACE LUNAR ORIENT ULTRON": its tonnage and the words that
+    name the model, without colour and the words every AC title carries.
+    A title left with nothing but its tonnage, or one bare word, names no
+    model.
+    """
+
+    text = re.split(r"\bwith\b", title, maxsplit=1, flags=re.I)[0]
+    tonnage = _ac_tonnage(text)
+    text = _AC_TONNAGE.sub(" ", text)
+    text = re.sub(r"\b\d(?:\.\d)?\s*hp\b", " ", text, flags=re.I)
+    text = _AC_GENERIC_WORDS.sub(" ", text)
+    text = _AC_COLOURS.sub(" ", text)
+    words = sorted({word.upper() for word in re.findall(r"[A-Za-z0-9]+", text)})
+    # The brand is one word of it; on its own it names nothing.
+    model_words = [word for word in words if not _BRAND_WORD.fullmatch(word)]
+
+    if not model_words or (
+        len(model_words) == 1 and not any(character.isdigit() for character in model_words[0])
+    ):
+        return None
+
+    key = " ".join(model_words)
+    return f"{tonnage.replace(' Ton', 'T')} {key}" if tonnage else key
+
+
+_BRAND_WORD = re.compile(
+    "|".join(re.escape(alias.upper()) for _name, aliases in BRAND_ALIASES for alias in aliases)
+)
+
+
+
+# ---- Televisions -----------------------------------------------------------
+
+# Screen sizes TVs are sold in, in inches.
+_TV_SIZES = frozenset(
+    {19, 22, 24, 28, 32, 39, 40, 42, 43, 48, 49, 50, 55, 58, 60, 65, 70, 75, 77, 82, 83, 85, 86, 98, 100, 115}
+)
+# A code that starts with its size, after the maker's letters: "75P6L",
+# "UA55U8000F", "H55S81EUX", "CX-40Q874", "KDL49W800G", "TH-65MX740M".
+_TV_LEADING_SIZE = re.compile(r"^[A-Z]{0,4}-?(\d{2,3})(?=[A-Z])")
+# ... or ends with it, after a hyphen: "PRISMAX-65". Without one the
+# number belongs to the series: LG's "QNED86".
+_TV_TRAILING_SIZE = re.compile(r"^([A-Z][A-Z0-9]*?)-(\d{2,3})$")
+# The market a Samsung or LG set was made for: "UA55U8000FUSMM",
+# "86UA8450PSA". Not part of the model.
+_TV_REGION = re.compile(r"(?<=[A-Z0-9]{4})(?:A?USMM|UXLY|USWK|UXZN|UXMM|KXPK|AKXX[A-Z]?|PSA|PVA|PTA)$")
+# Samsung's letters after the year letter, which stores keep or leave out:
+# "Q7FAA" and "Q7F".
+_TV_SAMSUNG_TAIL = re.compile(r"(?<=\d[A-Z])A{1,2}$")
+_TV_INCHES = re.compile(r"\b(\d{2,3})\s*(?:\"|''|”|″|-?\s*inch(?:es)?)", re.I)
+
+
+def _tv_code_parts(title: str) -> tuple[str, str, int | None] | None:
+    """Return a TV's code as written, its series and the size the code states.
+
+    A maker gives each size of a set a code of its own, the size written
+    into it; the series is what is left: "55C6K" is the 55-inch C6K.
+    """
+
+    written = stated_model_code(title)
+    if written is None:
+        return None
+    code = re.sub(r"[^A-Z0-9-]", "", written.split("/")[0].upper())
+
+    size = None
+    if (
+        (match := _TV_LEADING_SIZE.match(code))
+        and int(match.group(1)) in _TV_SIZES
+        # A series has a number of its own ("C6K", "U8000F"); in "QN70F",
+        # Samsung's Neo QLED, the 70 is the series's.
+        and any(character.isdigit() for character in code[match.end():])
+    ):
+        size = int(match.group(1))
+        series = code[match.end():]
+    elif (match := _TV_TRAILING_SIZE.match(code)) and int(match.group(2)) in _TV_SIZES:
+        size = int(match.group(2))
+        series = match.group(1)
+    else:
+        series = code
+    series = _TV_SAMSUNG_TAIL.sub("", _TV_REGION.sub("", series.replace("-", "")))
+    return written, series, size
+
+
+def tv_model_code(title: str) -> str | None:
+    parts = _tv_code_parts(title)
+    return parts[1] if parts and len(parts[1]) >= 3 else None
+
+
+def _tv_screen_inches(text: str, specifications: dict[str, str], title: str) -> int | None:
+    """Return the screen size: as the code states it, else as the title does."""
+
+    parts = _tv_code_parts(title)
+    if parts and parts[2] is not None:
+        return parts[2]
+    for match in _TV_INCHES.finditer(text):
+        if int(match.group(1)) in _TV_SIZES:
+            return int(match.group(1))
+    # "Xiaomi TV A Pro 65 2026": a size standing on its own.
+    for match in re.finditer(r"(?<![\w.])(\d{2,3})(?![\w.])", text):
+        if int(match.group(1)) in _TV_SIZES and int(match.group(1)) >= 24:
+            return int(match.group(1))
+    return None
+
+
+# Words every TV title may carry or leave out.
+_TV_GENERIC_WORDS = re.compile(
+    r"\b(?:led|lcd|q?led|oled|qned|mini\s*led|qd|tv|television|smart|google|android|webos|tizen"
+    r"|full\s+hd|fhd|uhd|ultra\s+hd|hd|[248]k|hdr\d*|dolby|vision|atmos|frameless|bezel\s*less"
+    r"|series|model|inch(?:es)?|official|warranty|new|latest|20\d{2})\b",
+    re.I,
+)
+
+
+def tv_model_name_key(title: str) -> str | None:
+    """Return the key of a TV named in words ("Dawlance Kore", "Orient Falcon")."""
+
+    text = re.split(r"\bwith\b", title, maxsplit=1, flags=re.I)[0]
+    text = _TV_INCHES.sub(" ", text)
+    text = _TV_GENERIC_WORDS.sub(" ", text)
+    words = sorted({
+        word.upper() for word in re.findall(r"[A-Za-z0-9]+", text)
+        if not (word.isdigit() and int(word) in _TV_SIZES)
+    })
+    model_words = [word for word in words if not _BRAND_WORD.fullmatch(word)]
+    if not model_words or (len(model_words) == 1 and len(model_words[0]) < 3):
+        return None
+    return " ".join(model_words)
+
+
+def _tv_series_in_name(title: str) -> str:
+    """Write the series where the title writes the sized code: "55C6K" -> "C6K"."""
+
+    parts = _tv_code_parts(title)
+    if not parts or parts[2] is None:
+        return title
+    written, series, _size = parts
+    return title.replace(written, series, 1)
+
+
+TV_SCREEN = IdentityAttribute("screen_in", "Screen", "inch", _tv_screen_inches)
+
+
+# ---- Refrigerators and freezers ---------------------------------------------
+
+# A model named by its number alone, as Dawlance and PEL do: "9173 WB",
+# "9101 SD", "6370". Not a year, and not a capacity ("345 LTR", "16 CFT").
+_FRIDGE_NUMBER_CODE = re.compile(
+    r"(?<![\w.-])(?!(?:19|20)\d\d\b)(\d{4,5})(?:\s?(?!(?:TOP|NEW|FOR|AND|THE|KGS?)\b)([A-Z]{1,3}))?\b"
+    r"(?!\s*(?:ltrs?|litres?|liters?|l\b|cft|cu\.?\s*ft|cubic|kg|w\b|watts?))",
+    re.I,
+)
+
+
+_FRIDGE_SPACED_CODE = re.compile(
+    r"\b([A-Z]{2,4})[\s-](\d{3,5})(?:\s?([A-Z]{1,2}))?\b"
+    r"(?!\s*(?:ltrs?|litres?|liters?|l\b|cft|cu\.?\s*ft|cubic|kg))"
+)
+
+
+def fridge_model_code(title: str) -> str | None:
+    """Return a fridge's model code, or the number a maker names it by.
+
+    Friends Home writes Dawlance's "9101SD" as "REF-9101SD"; the "REF-"
+    is the store's.
+    """
+
+    code = stated_model_code(title)
+    if code is not None:
+        return re.sub(r"^REF-", "", code.split("/")[0], flags=re.I)
+    # Letters and a number written apart: Jalal's "HDF 405 SD" for the
+    # "HDF-405SD" others write, Telemart's "DFD 900".
+    if (match := _FRIDGE_SPACED_CODE.search(title)) is not None:
+        return "".join(part for part in match.groups() if part)
+    if (match := _FRIDGE_NUMBER_CODE.search(title)) is not None:
+        return match.group(1) + (match.group(2) or "")
+    return None
+
+
+# ---- Washing machines and dryers ---------------------------------------------
+
+# Telemart writes Haier's "HWM150-1708" as "HWM 150-1708".
+_WASHER_SPACED_CODE = re.compile(r"\b([A-Z]{2,4})\s(\d{2,3}-\d{2,5}[A-Z0-9]*)\b")
+
+
+def washer_model_code(title: str) -> str | None:
+    """Return a washer's model code, written whole whichever way a store spaces it."""
+
+    if (match := _WASHER_SPACED_CODE.search(title)) is not None:
+        return match.group(1) + match.group(2)
+    return fridge_model_code(title)
+
+
+def washer_specifications(title: str) -> dict[str, str]:
+    """Return the load, how it loads, and the motor a washer title states."""
+
+    specifications = {}
+    # "10KG", "12/8KG", "20KG/12KG": a washer-dryer states both loads.
+    if (match := re.search(
+        r"\b(\d{1,2}(?:\.\d)?)(?:\s*(?:kgs?)?\s*/\s*(\d{1,2}(?:\.\d)?))?\s*kgs?\b", title, re.I
+    )):
+        specifications["capacity"] = (
+            f"{match.group(1)} kg wash / {match.group(2)} kg dry"
+            if match.group(2)
+            else f"{match.group(1)} kg"
+        )
+    for pattern, kind in (
+        (r"\bfront[\s-]*load|\bf/l\b", "Front load"),
+        (r"\btwin[\s-]*tub", "Twin tub"),
+        (r"\bsingle[\s-]*tub", "Single tub"),
+        (r"\bspin[\s-]*dryer", "Spin dryer"),
+        (r"\btumble[\s-]*dryer", "Tumble dryer"),
+        (r"\btop[\s-]*load|\bt/l\b", "Top load"),
+    ):
+        if re.search(pattern, title, re.I):
+            specifications["type"] = kind
+            break
+    if re.search(r"\binverter\b", title, re.I):
+        specifications["motor"] = "Inverter"
+    return specifications
+
+
+# ---- Microwave ovens -----------------------------------------------------------
+
+# Kenwood writes a point inside the code: "MWP20.020BK" (solo) and
+# "MWP20.030SI" (grill) are two ovens, not one "MWP20".
+_MICROWAVE_DOTTED_CODE = re.compile(r"\b([A-Z]{2,4}\d{2})\.(\d{3}[A-Z]{0,3})\b")
+# Letters, then a number of three or more, then series letters, written
+# apart: "DW 297 GSS", "DW 136 G".
+_MICROWAVE_SPACED_CODE = re.compile(
+    r"\b([A-Z]{2,4})[\s-](\d{3,5})(?:\s?([A-Z]{1,3}))?\b"
+    r"(?!\s*(?:ltrs?|litres?|liters?|l\b|w\b|watts?))"
+)
+# A model named by its number: Jalal's "297 GSS", "131HP".
+_MICROWAVE_NUMBER_CODE = re.compile(
+    r"(?<![\w.-])(\d{3,5})(?:\s?(?!(?:LTRS?|LITRES?|LITERS?|L|W|NEW)\b)([A-Z]{1,3}))?\b"
+    r"(?!\s*(?:ltrs?|litres?|liters?|l\b|w\b|watts?))",
+    re.I,
+)
+
+
+def microwave_model_code(title: str) -> str | None:
+    """Return a microwave's model code, with Dawlance's "DW" left off.
+
+    One Dawlance oven is "DW-136G" at one store and "DW 136 G" or "136 G"
+    at another; without the "DW" every store's spelling meets.
+    """
+
+    if (match := _MICROWAVE_DOTTED_CODE.search(title)) is not None:
+        return match.group(1) + match.group(2)
+    # PEL's "PMO – 26": a dash typed as a spaced en dash.
+    title = re.sub(r"\s+[–—]\s+", "-", title)
+    # Dawlance's MD series, written "MD-7", "DW MD7" and "DW MD 10".
+    if (match := re.search(r"\bMD[\s-]?(\d{1,2})(?:-?([A-Z]))?\b", title)) is not None:
+        return "MD" + match.group(1) + (match.group(2) or "")
+    code = stated_model_code(title)
+    if code is None and (match := _MICROWAVE_SPACED_CODE.search(title)) is not None:
+        code = "".join(part for part in match.groups() if part)
+    if code is None and (match := _MICROWAVE_NUMBER_CODE.search(title)) is not None:
+        code = match.group(1) + (match.group(2) or "")
+    if code is None:
+        return None
+    return re.sub(r"^DW-?(?=\d)", "", code.split("/")[0], flags=re.I)
+
+
+def microwave_specifications(title: str) -> dict[str, str]:
+    """Return the capacity, kind and inverter a microwave title states."""
+
+    specifications = {}
+    if (match := re.search(r"\b(\d{2})\s*-?\s*(?:ltrs?|litres?|liters?|l)\b", title, re.I)):
+        specifications["capacity"] = f"{match.group(1)} litres"
+    for pattern, kind in (
+        (r"\bbuilt[\s-]*in\b", "Built-in"),
+        (r"\bair[\s-]*fryer\b", "Air fryer"),
+        (r"\bconvection\b", "Convection"),
+        (r"\bgrill(?:ing)?\b|\bgirll\b", "Grill"),
+        (r"\bsolo\b", "Solo"),
+    ):
+        if re.search(pattern, title, re.I):
+            specifications["type"] = kind
+            break
+    if re.search(r"\binverter\b", title, re.I):
+        specifications["inverter"] = "Yes"
+    return specifications
+
+
+_FRIDGE_CAPACITY = re.compile(
+    r"\b(\d{1,4}(?:\.\d)?)\s*(cft|cu\.?\s*ft|cubic\s+f(?:ee|oo)?t|ltrs?|litres?|liters?)\b", re.I
+)
+
+
+def fridge_specifications(title: str) -> dict[str, str]:
+    """Return the capacity and compressor a fridge title states."""
+
+    specifications = {}
+    if (match := _FRIDGE_CAPACITY.search(title)) is not None:
+        unit = "litres" if match.group(2).lower().startswith("l") else "cu ft"
+        specifications["capacity"] = f"{match.group(1)} {unit}"
+    if re.search(r"\bnon[\s-]*inverter\b", title, re.I):
+        specifications["compressor"] = "Non-inverter"
+    elif re.search(r"\binverter\b", title, re.I):
+        specifications["compressor"] = "Inverter"
+    return specifications
+
+
+# Short words appliance titles write in capitals whatever the case around them.
+_APPLIANCE_ACRONYMS = frozenset(
+    {"AC", "DC", "TV", "LED", "QLED", "OLED", "QNED", "QD", "UHD", "FHD", "HD", "HDR", "LG", "TCL", "PEL", "INV"}
+)
+# Words with a spelling of their own.
+_APPLIANCE_SPELLINGS = {"MINILED": "MiniLED", "NANOCELL": "NanoCell", "ECOSTAR": "EcoStar"}
+
+
+def appliance_name(title: str, brand_name: str) -> str:
+    """Return an appliance's catalogue name from its title.
+
+    Some stores write every title in capitals ("HAIER 1.5 TON T3 INVERTER
+    AC"); the catalogue writes words as words and the brand as the brand
+    is written, leaving codes and acronyms as they are.
+    """
+
+    words = title.split()
+    # In capitals but for the odd word ("... INVERTER AC Model HSU-19HFAB").
+    letters = [character for character in title if character.isalpha()]
+    shouted = bool(letters) and sum(map(str.islower, letters)) <= len(letters) // 5
+
+    def written(word: str) -> str:
+        if word.lower() == brand_name.lower():
+            return brand_name
+        if not shouted or any(character.isdigit() for character in word):
+            return word
+        if word.upper() in _APPLIANCE_SPELLINGS:
+            return _APPLIANCE_SPELLINGS[word.upper()]
+        if word.upper() in _APPLIANCE_ACRONYMS or len(word) == 1:
+            return word
+        # Each part of "HEAT/COOL" is a word of its own.
+        return re.sub(r"[A-Za-z]+", lambda part: part.group(0).capitalize(), word)
+
+    name = " ".join(written(word) for word in words)
+    if not name.lower().startswith(brand_name.lower()):
+        name = f"{brand_name} {name}"
+    return name
 
 
 # ---------------------------------------------------------------------------
@@ -462,8 +1340,145 @@ PROFILES: dict[str, CategoryProfile] = {
             ),
             name_rewrites=_WATCH_NAME_REWRITES,
         ),
-        # Earbuds come in colours only; the model name is the product.
-        CategoryProfile("audio-and-earbuds", "Audio and Earbuds", ()),
+        CategoryProfile(
+            "laptops",
+            "Laptops",
+            (LAPTOP_RAM, LAPTOP_STORAGE, PROCESSOR, GRAPHICS, LAPTOP_SCREEN),
+            variant_words=_LAPTOP_VARIANT_WORDS,
+            name_rewrites=_LAPTOP_NAME_REWRITES,
+            reads_own_memory=True,
+        ),
+        # Earbuds and headphones come in colours only; the model name is
+        # the product, and what titles add around it is removed.
+        CategoryProfile(
+            "audio-and-earbuds",
+            "Audio and Earbuds",
+            (),
+            variant_words=(
+                # "with Charging Case", "with ENC Mic": the box and its
+                # selling points.
+                re.compile(r"\s+with\b.*$", re.I),
+                # The category's own nouns, which stores add or leave out.
+                re.compile(
+                    r"\b(?:true\s+)?wireless\b|\btws\b|\bbluetooth\b|\bear\s*buds?\b"
+                    r"|\bearphones?\b|\bheadphones?\b|\bheadsets?\b|\bhandsfree\b"
+                    r"|\bstereo\b|\bin-?ear\b",
+                    re.I,
+                ),
+                # "Bluetooth 5.3", "40H Playtime", "IPX5", "ENC".
+                re.compile(r"\b(?:v|bt)?\s?5\.\d\b", re.I),
+                re.compile(r"\b\d+\s*(?:h|hrs?|hours?)\b(?:\s+playtime)?", re.I),
+                re.compile(r"\bipx?\d\b|\benc\b|\bplaytime\b|\bgaming\b|\boriginal\b", re.I),
+                # A feature; "Active Noise Cancellation" was written "ANC" above.
+                re.compile(r"\bnoise[\s-]+cancel+(?:ation|ing)\b", re.I),
+                # How it sits on the ear, which one store writes and one not.
+                re.compile(
+                    r"\b(?:on|over|open)[\s-]?ear\b|\bclip[\s-]?on\b|\bcomfortable\b|\btruly\b",
+                    re.I,
+                ),
+                _WARRANTY_WORDS,
+                _MODEL_YEAR,
+            ),
+            name_rewrites=_AUDIO_NAME_REWRITES,
+        ),
+        # Appliances are matched on their model code. What tells their
+        # variants apart (an AC's tonnage, a TV's screen size) arrives with
+        # each appliance's own phase.
+        CategoryProfile(
+            "air-conditioners",
+            "Air Conditioners",
+            # One code is one AC; its colours are its variants.
+            (),
+            variant_words=(
+                re.compile(r"\s+with\b.*$", re.I),
+                _WARRANTY_WORDS,
+                # The colour, in words or as the code's letters ("... HSU-19HFS
+                # S"), names a variant; a store's broken dash ("�") nothing.
+                _AC_COLOURS,
+                re.compile(r"(?<=\s)\(?(?:W|S|G|B|OW|DG|GD)\)?(?=\s|$)"),
+                re.compile("�"),
+            ),
+            # Written so the clean-up of a lone "&" leaves it whole.
+            name_rewrites=(
+                (re.compile(r"\bheat\s*(?:&|and|/|n)\s*cool\b", re.I), "Heat/Cool"),
+            ),
+            model_code=ac_model_code,
+            model_name_key=ac_model_name_key,
+            code_colour=ac_code_colour,
+            title_specifications=ac_specifications,
+        ),
+        # A TV series is the product; its screen sizes are its variants.
+        CategoryProfile(
+            "televisions",
+            "Televisions",
+            (TV_SCREEN,),
+            variant_words=(
+                re.compile(r"\s+with\b.*$", re.I),
+                _WARRANTY_WORDS,
+                _TV_INCHES,
+                re.compile(r"\b\d{2,3}\s*-?\s*(?:cm)\b", re.I),
+                # Philips's market after the code: "65PQT8169/98".
+                re.compile(r"(?<=[A-Z0-9])/\d{2}\b"),
+                # A size standing on its own: "Xiaomi TV A Pro 65 2026".
+                re.compile(
+                    r"(?<![\w.])(?:"
+                    + "|".join(str(size) for size in sorted(_TV_SIZES, reverse=True) if size >= 24)
+                    + r")(?![\w.])"
+                ),
+                re.compile("�"),
+            ),
+            name_rewrites=(
+                (re.compile(r"^.*$", re.S), lambda match: _tv_series_in_name(match.group(0))),
+            ),
+            model_code=tv_model_code,
+            model_name_key=tv_model_name_key,
+        ),
+        # A fridge or freezer is its model code; its colours are variants.
+        CategoryProfile(
+            "refrigerators",
+            "Refrigerators & Freezers",
+            (),
+            variant_words=(
+                re.compile(r"\s+with\b.*$", re.I),
+                _WARRANTY_WORDS,
+                _AC_COLOURS,
+                re.compile("�"),
+            ),
+            model_code=fridge_model_code,
+            model_code_prefixes=True,
+            title_specifications=fridge_specifications,
+        ),
+        # A washer, washer-dryer or dryer is its model code; colours are
+        # variants.
+        CategoryProfile(
+            "washing-machines",
+            "Washing Machines & Dryers",
+            (),
+            variant_words=(
+                re.compile(r"\s+with\b.*$", re.I),
+                _WARRANTY_WORDS,
+                _AC_COLOURS,
+                re.compile("�"),
+            ),
+            model_code=washer_model_code,
+            model_code_prefixes=True,
+            title_specifications=washer_specifications,
+        ),
+        # A microwave is its model code; colours are variants.
+        CategoryProfile(
+            "microwave-ovens",
+            "Microwave Ovens",
+            (),
+            variant_words=(
+                re.compile(r"\s+with\b.*$", re.I),
+                _WARRANTY_WORDS,
+                _AC_COLOURS,
+                re.compile("�"),
+            ),
+            model_code=microwave_model_code,
+            model_code_prefixes=True,
+            title_specifications=microwave_specifications,
+        ),
     )
 }
 
@@ -490,10 +1505,12 @@ def profile_for(slug: str | None) -> CategoryProfile:
 __all__ = [
     "ALIASES",
     "DEFAULT_CATEGORY",
+    "appliance_name",
     "PROFILES",
     "CategoryProfile",
     "IdentityAttribute",
     "UnknownCategoryError",
     "configuration_key",
     "profile_for",
+    "stated_model_code",
 ]

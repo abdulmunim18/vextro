@@ -17,6 +17,9 @@ PlatformCode = Literal[
     "daraz",
     "priceoye",
     "shophive",
+    "friendshome",
+    "jalal",
+    "telemart",
 ]
 
 IngestionStatus = Literal[

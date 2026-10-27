@@ -21,7 +21,8 @@ from app.services.review_normalization import (
 )
 
 
-PlatformCode = Literal["daraz", "priceoye"]
+# Friends Home and Jalal publish Judge.me reviews on their product pages.
+PlatformCode = Literal["daraz", "priceoye", "shophive", "friendshome", "jalal", "telemart"]
 StrictRating = Annotated[int, Field(strict=True, ge=1, le=5)]
 StrictHelpfulCount = Annotated[int, Field(strict=True, ge=0)]
 

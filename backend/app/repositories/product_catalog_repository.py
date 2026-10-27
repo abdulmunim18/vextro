@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from sqlalchemy import exists, func, or_, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, aliased, selectinload
 
 from app.models.brand import Brand
 from app.models.canonical_product import CanonicalProduct
@@ -38,17 +38,32 @@ def list_products(
     ]
 
     if category_slug:
+        # A parent such as Home Appliances holds no products itself; asking
+        # for it means asking for every category under it.
+        parent_category = aliased(Category)
+
         products_query = products_query.join(
             Category,
             CanonicalProduct.category_id == Category.id,
+        ).outerjoin(
+            parent_category,
+            Category.parent_id == parent_category.id,
         )
 
         count_query = count_query.join(
             Category,
             CanonicalProduct.category_id == Category.id,
+        ).outerjoin(
+            parent_category,
+            Category.parent_id == parent_category.id,
         )
 
-        filters.append(Category.slug == category_slug)
+        filters.append(
+            or_(
+                Category.slug == category_slug,
+                parent_category.slug == category_slug,
+            )
+        )
 
     if brand_slug:
         products_query = products_query.join(

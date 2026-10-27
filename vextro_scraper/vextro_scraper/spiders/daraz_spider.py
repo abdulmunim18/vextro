@@ -1010,3 +1010,152 @@ class DarazSmartwatchSpider(DarazSpider):
         **DarazSpider.custom_settings,
         'DARAZ_REVIEWS_ENABLED': False,
     }
+
+
+class DarazAudioSpider(DarazSpider):
+    """Daraz's earbuds, matched to earbuds VEXTRO lists.
+
+    Mostly unbranded ("U39", "M10 TWS") and mixed with cases and cables, so
+    its listings only join earbuds another marketplace catalogued.
+    """
+
+    name = "daraz_audio"
+    catalog_category = "audio-and-earbuds"
+    match_only = True
+    parser_version = "daraz-audio-v1"
+    CATALOG_PATH = "/wireless-earbuds/"
+    start_urls = ["https://www.daraz.pk/wireless-earbuds/?ajax=true"]
+
+    custom_settings = {
+        **DarazSpider.custom_settings,
+        'DARAZ_REVIEWS_ENABLED': False,
+    }
+
+
+class DarazLaptopSpider(DarazSpider):
+    """Daraz's laptops, matched to laptops VEXTRO lists.
+
+    Mixed with used and refurbished machines and with bags, so its listings
+    only join laptops another marketplace catalogued.
+    """
+
+    name = "daraz_laptops"
+    catalog_category = "laptops"
+    match_only = True
+    parser_version = "daraz-laptops-v1"
+    CATALOG_PATH = "/laptops/"
+    start_urls = ["https://www.daraz.pk/laptops/?ajax=true"]
+
+    custom_settings = {
+        **DarazSpider.custom_settings,
+        'DARAZ_REVIEWS_ENABLED': False,
+    }
+
+
+class DarazAirConditionerSpider(DarazSpider):
+    """Daraz's air conditioners, matched to ACs VEXTRO lists.
+
+    Sellers mix in stands, covers and pipe kits and write their own titles,
+    so a listing only joins an AC whose model code another store catalogued.
+    """
+
+    name = "daraz_acs"
+    catalog_category = "air-conditioners"
+    match_only = True
+    parser_version = "daraz-acs-v1"
+    CATALOG_PATH = "/air-conditioners/"
+    start_urls = ["https://www.daraz.pk/air-conditioners/?ajax=true"]
+
+    custom_settings = {
+        **DarazSpider.custom_settings,
+        'DARAZ_REVIEWS_ENABLED': False,
+    }
+
+
+class DarazTelevisionSpider(DarazSpider):
+    """Daraz's televisions, matched to TVs VEXTRO lists.
+
+    Mixed with wall mounts, remotes and TV boxes, and with unbranded sets,
+    so a listing only joins a TV whose model another store catalogued.
+    """
+
+    name = "daraz_tvs"
+    catalog_category = "televisions"
+    match_only = True
+    parser_version = "daraz-tvs-v1"
+    CATALOG_PATH = "/televisions/"
+    start_urls = ["https://www.daraz.pk/televisions/?ajax=true"]
+
+    custom_settings = {
+        **DarazSpider.custom_settings,
+        'DARAZ_REVIEWS_ENABLED': False,
+    }
+
+
+class DarazRefrigeratorSpider(DarazSpider):
+    """Daraz's refrigerators, matched to fridges VEXTRO lists.
+
+    Mixed with mini coolers, stabilizers and spare parts, and written by
+    sellers, so a listing only joins a fridge another store catalogued.
+    """
+
+    name = "daraz_fridges"
+    catalog_category = "refrigerators"
+    match_only = True
+    parser_version = "daraz-fridges-v1"
+    CATALOG_PATH = "/refrigerators/"
+    start_urls = ["https://www.daraz.pk/refrigerators/?ajax=true"]
+
+    custom_settings = {
+        **DarazSpider.custom_settings,
+        'DARAZ_REVIEWS_ENABLED': False,
+    }
+
+
+class DarazFreezerSpider(DarazRefrigeratorSpider):
+    """Daraz's freezers, which it files apart from its refrigerators."""
+
+    name = "daraz_freezers"
+    parser_version = "daraz-freezers-v1"
+    CATALOG_PATH = "/freezers/"
+    start_urls = ["https://www.daraz.pk/freezers/?ajax=true"]
+
+
+class DarazWashingMachineSpider(DarazSpider):
+    """Daraz's washing machines, matched to washers VEXTRO lists.
+
+    Mixed with covers, stands, pipes and parts, and written by sellers, so
+    a listing only joins a washer another store catalogued.
+    """
+
+    name = "daraz_washers"
+    catalog_category = "washing-machines"
+    match_only = True
+    parser_version = "daraz-washers-v1"
+    CATALOG_PATH = "/washing-machines/"
+    start_urls = ["https://www.daraz.pk/washing-machines/?ajax=true"]
+
+    custom_settings = {
+        **DarazSpider.custom_settings,
+        'DARAZ_REVIEWS_ENABLED': False,
+    }
+
+
+class DarazMicrowaveSpider(DarazSpider):
+    """Daraz's microwaves, matched to microwaves VEXTRO lists.
+
+    Mixed with toaster ovens, plates and covers, and written by sellers, so
+    a listing only joins a microwave another store catalogued.
+    """
+
+    name = "daraz_microwaves"
+    catalog_category = "microwave-ovens"
+    match_only = True
+    parser_version = "daraz-microwaves-v1"
+    CATALOG_PATH = "/microwaves/"
+    start_urls = ["https://www.daraz.pk/microwaves/?ajax=true"]
+
+    custom_settings = {
+        **DarazSpider.custom_settings,
+        'DARAZ_REVIEWS_ENABLED': False,
+    }

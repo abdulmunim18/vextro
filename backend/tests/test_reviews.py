@@ -473,3 +473,42 @@ def test_review_read_rejects_listing_from_another_product(
         params={"listing_id": other_listing.id},
     )
     assert response.status_code == 404
+
+
+def test_a_store_publishing_judgeme_reviews_can_deliver_them(
+    client: TestClient,
+    database_session: Session,
+) -> None:
+    """Friends Home's product pages carry Judge.me reviews of the product."""
+
+    product, listing, _seller = create_review_listing(
+        database_session, platform_code="friendshome"
+    )
+    payload = {
+        "platform_code": "friendshome",
+        "external_listing_id": listing.external_id,
+        "source_url": "https://friendshome.pk/products/review-test",
+        "reviews": [
+            {
+                "external_review_id": "43ef2d83-4f35-4715-8020-6f0b445f908c",
+                "reviewer_display_name": "Umer",
+                "rating": 5,
+                "review_text": "Excellent product, exceptional service.",
+                "reviewed_at": "2026-01-13T14:24:31+00:00",
+                "verified_purchase": True,
+                "helpful_count": 0,
+                "raw_metadata": {"source_position": 1, "review_app": "judge.me"},
+            }
+        ],
+    }
+
+    response = client.post(
+        "/api/v1/internal/acquisition/reviews",
+        headers=ingestion_headers(),
+        json=payload,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["created_count"] == 1
+    read = client.get(f"/api/v1/products/{product.id}/reviews")
+    assert [item["platform_code"] for item in read.json()["items"]] == ["friendshome"]

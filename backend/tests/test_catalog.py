@@ -14,7 +14,7 @@ def test_list_platforms(
 
     items = response.json()["items"]
 
-    assert len(items) == 3
+    assert len(items) == 6
 
     assert [
         platform["code"]
@@ -23,6 +23,9 @@ def test_list_platforms(
         "daraz",
         "priceoye",
         "shophive",
+        "friendshome",
+        "jalal",
+        "telemart",
     ]
 
     assert all(
@@ -44,7 +47,8 @@ def test_list_categories_with_hierarchy(
 
     items = response.json()["items"]
 
-    assert len(items) == 8
+    # Electronics and its seven, Home Appliances and its five.
+    assert len(items) == 14
 
     categories_by_slug = {
         category["slug"]: category

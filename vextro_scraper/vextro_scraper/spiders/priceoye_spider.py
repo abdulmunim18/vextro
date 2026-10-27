@@ -1104,3 +1104,76 @@ class PriceoyeSmartwatchSpider(PriceoyeSpider):
     start_urls = ["https://priceoye.pk/smart-watches"]
     PRODUCT_URL_PREFIX = "https://priceoye.pk/smart-watches/"
     unbranded_slugs = ('assorted',)
+
+
+class PriceoyeAudioSpider(PriceoyeSpider):
+    """PriceOye's wireless earbuds catalogue, which holds its headphones too.
+
+    A third of it is unbranded and filed under "Assorted"; those pages are
+    not requested.
+    """
+
+    name = "priceoye_audio"
+    catalog_category = "audio-and-earbuds"
+    parser_version = "priceoye-audio-v1"
+    catalog_path = "/wireless-earbuds"
+    start_urls = ["https://priceoye.pk/wireless-earbuds"]
+    PRODUCT_URL_PREFIX = "https://priceoye.pk/wireless-earbuds/"
+    unbranded_slugs = ('assorted',)
+
+
+class PriceoyeLaptopSpider(PriceoyeSpider):
+    """PriceOye's laptop catalogue.
+
+    A page names one model and processor; its options are memory and
+    storage ("512gb - 16gb ram"), read as a phone's are.
+    """
+
+    name = "priceoye_laptops"
+    catalog_category = "laptops"
+    parser_version = "priceoye-laptops-v1"
+    catalog_path = "/laptops"
+    start_urls = ["https://priceoye.pk/laptops"]
+    PRODUCT_URL_PREFIX = "https://priceoye.pk/laptops/"
+    unbranded_slugs = ('assorted',)
+
+
+class PriceoyeAirConditionerSpider(PriceoyeSpider):
+    """PriceOye's air conditioners.
+
+    Every title ends in the maker's model code in brackets ("Gree 1.5 Ton
+    Fairy Series Split Inverter AC (GS18FITH1W)"), which the catalogue
+    matches on.
+    """
+
+    name = "priceoye_acs"
+    catalog_category = "air-conditioners"
+    parser_version = "priceoye-acs-v1"
+    catalog_path = "/ac"
+    start_urls = ["https://priceoye.pk/ac"]
+    PRODUCT_URL_PREFIX = "https://priceoye.pk/ac/"
+    unbranded_slugs = ('assorted',)
+
+
+class PriceoyeTelevisionSpider(PriceoyeSpider):
+    """PriceOye's televisions; each title ends in the model code in brackets."""
+
+    name = "priceoye_tvs"
+    catalog_category = "televisions"
+    parser_version = "priceoye-tvs-v1"
+    catalog_path = "/led-tv"
+    start_urls = ["https://priceoye.pk/led-tv"]
+    PRODUCT_URL_PREFIX = "https://priceoye.pk/led-tv/"
+    unbranded_slugs = ('assorted',)
+
+
+class PriceoyeRefrigeratorSpider(PriceoyeSpider):
+    """PriceOye's refrigerators; each title ends in the model code in brackets."""
+
+    name = "priceoye_fridges"
+    catalog_category = "refrigerators"
+    parser_version = "priceoye-fridges-v1"
+    catalog_path = "/refrigerators"
+    start_urls = ["https://priceoye.pk/refrigerators"]
+    PRODUCT_URL_PREFIX = "https://priceoye.pk/refrigerators/"
+    unbranded_slugs = ('assorted',)
