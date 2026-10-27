@@ -400,3 +400,23 @@ class TelemartWashingMachineSpider(TelemartStore):
     name = 'telemart_washers'
     catalog_category = 'washing-machines'
     collections = ('washing-machines',)
+
+
+class FriendsHomeMicrowaveSpider(FriendsHomeStore):
+    name = 'friendshome_microwaves'
+    catalog_category = 'microwave-ovens'
+    collections = ('microwave-ovens-pakistan',)
+
+
+class JalalMicrowaveSpider(JalalStore):
+    name = 'jalal_microwaves'
+    catalog_category = 'microwave-ovens'
+    # Its microwave collection also holds baking ovens, which the pipeline
+    # turns away.
+    collections = ('microwave-oven', 'built-in-microwave-oven')
+
+
+class TelemartMicrowaveSpider(TelemartStore):
+    name = 'telemart_microwaves'
+    catalog_category = 'microwave-ovens'
+    collections = ('microwave-ovens',)

@@ -459,7 +459,7 @@ NOT_A_LAPTOP = re.compile(
 
 
 APPLIANCE_CATEGORIES = frozenset(
-    {'air-conditioners', 'televisions', 'refrigerators', 'washing-machines'}
+    {'air-conditioners', 'televisions', 'refrigerators', 'washing-machines', 'microwave-ovens'}
 )
 
 
@@ -518,6 +518,21 @@ NOT_A_WASHER = re.compile(
 )
 
 
+# What a microwave category also serves: plates, covers, stands and gloves,
+# and the toaster ovens, air fryers and baking ovens stores file beside
+# microwaves. An "Air Fryer Microwave Oven" is a microwave.
+MICROWAVE_ACCESSORIES = re.compile(
+    r'\b(?:plates?|turntable|covers?|stands?|racks?|brackets?|mitts?|gloves?|bowls?'
+    r'|containers?|for\s+(?:women|men|girls|boys|kids)|used|refurbished|second\s*hand)\b',
+    re.I,
+)
+OTHER_OVENS = re.compile(
+    r'\b(?:air[\s-]*fryers?|toasters?|electric\s+oven|built[\s-]*in\s+oven|gas\s+oven'
+    r'|baking\s+oven|rotiss?erie|kettle|sandwich\s+maker)\b',
+    re.I,
+)
+
+
 def is_out_of_category(category, title):
     """Return whether a title names something its category does not sell."""
 
@@ -553,6 +568,11 @@ def is_out_of_category(category, title):
         # "... with Base" or "with Official Warranty" is the offer.
         sold = re.split(r'\bwith\b', title or '', maxsplit=1, flags=re.I)[0]
         return bool(NOT_A_WASHER.search(sold))
+    if category == 'microwave-ovens':
+        sold = re.split(r'\bwith\b', title or '', maxsplit=1, flags=re.I)[0]
+        return bool(MICROWAVE_ACCESSORIES.search(sold)) or bool(
+            OTHER_OVENS.search(sold) and not re.search(r'\bmicrowave\b', sold, re.I)
+        )
     if category == 'audio-and-earbuds':
         # What follows "with" lists features ("with Dual Speaker Drivers",
         # "with Mic"), not what is sold.

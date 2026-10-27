@@ -1157,6 +1157,70 @@ def washer_specifications(title: str) -> dict[str, str]:
     return specifications
 
 
+# ---- Microwave ovens -----------------------------------------------------------
+
+# Kenwood writes a point inside the code: "MWP20.020BK" (solo) and
+# "MWP20.030SI" (grill) are two ovens, not one "MWP20".
+_MICROWAVE_DOTTED_CODE = re.compile(r"\b([A-Z]{2,4}\d{2})\.(\d{3}[A-Z]{0,3})\b")
+# Letters, then a number of three or more, then series letters, written
+# apart: "DW 297 GSS", "DW 136 G".
+_MICROWAVE_SPACED_CODE = re.compile(
+    r"\b([A-Z]{2,4})[\s-](\d{3,5})(?:\s?([A-Z]{1,3}))?\b"
+    r"(?!\s*(?:ltrs?|litres?|liters?|l\b|w\b|watts?))"
+)
+# A model named by its number: Jalal's "297 GSS", "131HP".
+_MICROWAVE_NUMBER_CODE = re.compile(
+    r"(?<![\w.-])(\d{3,5})(?:\s?(?!(?:LTRS?|LITRES?|LITERS?|L|W|NEW)\b)([A-Z]{1,3}))?\b"
+    r"(?!\s*(?:ltrs?|litres?|liters?|l\b|w\b|watts?))",
+    re.I,
+)
+
+
+def microwave_model_code(title: str) -> str | None:
+    """Return a microwave's model code, with Dawlance's "DW" left off.
+
+    One Dawlance oven is "DW-136G" at one store and "DW 136 G" or "136 G"
+    at another; without the "DW" every store's spelling meets.
+    """
+
+    if (match := _MICROWAVE_DOTTED_CODE.search(title)) is not None:
+        return match.group(1) + match.group(2)
+    # PEL's "PMO – 26": a dash typed as a spaced en dash.
+    title = re.sub(r"\s+[–—]\s+", "-", title)
+    # Dawlance's MD series, written "MD-7", "DW MD7" and "DW MD 10".
+    if (match := re.search(r"\bMD[\s-]?(\d{1,2})(?:-?([A-Z]))?\b", title)) is not None:
+        return "MD" + match.group(1) + (match.group(2) or "")
+    code = stated_model_code(title)
+    if code is None and (match := _MICROWAVE_SPACED_CODE.search(title)) is not None:
+        code = "".join(part for part in match.groups() if part)
+    if code is None and (match := _MICROWAVE_NUMBER_CODE.search(title)) is not None:
+        code = match.group(1) + (match.group(2) or "")
+    if code is None:
+        return None
+    return re.sub(r"^DW-?(?=\d)", "", code.split("/")[0], flags=re.I)
+
+
+def microwave_specifications(title: str) -> dict[str, str]:
+    """Return the capacity, kind and inverter a microwave title states."""
+
+    specifications = {}
+    if (match := re.search(r"\b(\d{2})\s*-?\s*(?:ltrs?|litres?|liters?|l)\b", title, re.I)):
+        specifications["capacity"] = f"{match.group(1)} litres"
+    for pattern, kind in (
+        (r"\bbuilt[\s-]*in\b", "Built-in"),
+        (r"\bair[\s-]*fryer\b", "Air fryer"),
+        (r"\bconvection\b", "Convection"),
+        (r"\bgrill(?:ing)?\b|\bgirll\b", "Grill"),
+        (r"\bsolo\b", "Solo"),
+    ):
+        if re.search(pattern, title, re.I):
+            specifications["type"] = kind
+            break
+    if re.search(r"\binverter\b", title, re.I):
+        specifications["inverter"] = "Yes"
+    return specifications
+
+
 _FRIDGE_CAPACITY = re.compile(
     r"\b(\d{1,4}(?:\.\d)?)\s*(cft|cu\.?\s*ft|cubic\s+f(?:ee|oo)?t|ltrs?|litres?|liters?)\b", re.I
 )
@@ -1399,6 +1463,21 @@ PROFILES: dict[str, CategoryProfile] = {
             model_code=washer_model_code,
             model_code_prefixes=True,
             title_specifications=washer_specifications,
+        ),
+        # A microwave is its model code; colours are variants.
+        CategoryProfile(
+            "microwave-ovens",
+            "Microwave Ovens",
+            (),
+            variant_words=(
+                re.compile(r"\s+with\b.*$", re.I),
+                _WARRANTY_WORDS,
+                _AC_COLOURS,
+                re.compile("�"),
+            ),
+            model_code=microwave_model_code,
+            model_code_prefixes=True,
+            title_specifications=microwave_specifications,
         ),
     )
 }

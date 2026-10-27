@@ -205,6 +205,13 @@ def prepare_test_database() -> Generator[None, None, None]:
                 slug="washing-machines",
                 is_active=True,
             ),
+            # As migration e8b4c2a6d913 seeds it.
+            Category(
+                parent_id=home_appliances.id,
+                name="Microwave Ovens",
+                slug="microwave-ovens",
+                is_active=True,
+            ),
         ]
 
         brand_names = [

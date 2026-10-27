@@ -1139,3 +1139,23 @@ class DarazWashingMachineSpider(DarazSpider):
         **DarazSpider.custom_settings,
         'DARAZ_REVIEWS_ENABLED': False,
     }
+
+
+class DarazMicrowaveSpider(DarazSpider):
+    """Daraz's microwaves, matched to microwaves VEXTRO lists.
+
+    Mixed with toaster ovens, plates and covers, and written by sellers, so
+    a listing only joins a microwave another store catalogued.
+    """
+
+    name = "daraz_microwaves"
+    catalog_category = "microwave-ovens"
+    match_only = True
+    parser_version = "daraz-microwaves-v1"
+    CATALOG_PATH = "/microwaves/"
+    start_urls = ["https://www.daraz.pk/microwaves/?ajax=true"]
+
+    custom_settings = {
+        **DarazSpider.custom_settings,
+        'DARAZ_REVIEWS_ENABLED': False,
+    }

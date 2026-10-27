@@ -47,8 +47,8 @@ def test_list_categories_with_hierarchy(
 
     items = response.json()["items"]
 
-    # Electronics and its seven, Home Appliances and its four.
-    assert len(items) == 13
+    # Electronics and its seven, Home Appliances and its five.
+    assert len(items) == 14
 
     categories_by_slug = {
         category["slug"]: category

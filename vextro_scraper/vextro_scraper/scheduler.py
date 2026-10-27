@@ -80,6 +80,10 @@ DEFAULT_SPIDERS = (
     "jalal_washers",
     "telemart_washers",
     "daraz_washers",
+    "friendshome_microwaves",
+    "jalal_microwaves",
+    "telemart_microwaves",
+    "daraz_microwaves",
     # Last: it looks up the phones the marketplace crawls just listed.
     "whatmobile_opinions",
 )

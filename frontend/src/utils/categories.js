@@ -10,6 +10,7 @@ const WITHOUT_MEMORY = new Set([
   "televisions",
   "refrigerators",
   "washing-machines",
+  "microwave-ovens",
 ]);
 
 export function statesMemory(categorySlug) {

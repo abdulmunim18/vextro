@@ -79,6 +79,10 @@ def test_defaults_match_the_documented_behaviour():
         "jalal_washers",
         "telemart_washers",
         "daraz_washers",
+        "friendshome_microwaves",
+        "jalal_microwaves",
+        "telemart_microwaves",
+        "daraz_microwaves",
         "whatmobile_opinions",
     )
 

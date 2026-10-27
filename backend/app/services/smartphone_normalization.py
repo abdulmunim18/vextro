@@ -104,6 +104,11 @@ BRAND_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Boss", ("boss",)),
     ("Bosch", ("bosch",)),
     ("Steeline", ("steeline",)),
+    ("Westpoint", ("westpoint", "west point")),
+    ("Anex", ("anex",)),
+    ("Enviro", ("enviro",)),
+    ("Glam Gas", ("glam gas",)),
+    ("General Tec", ("general tec",)),
 )
 
 

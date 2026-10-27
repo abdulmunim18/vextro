@@ -13,6 +13,7 @@ const CATEGORY_MARKETPLACES = {
   televisions: [...ELECTRONICS_STORES, ...APPLIANCE_STORES],
   refrigerators: ["daraz", "priceoye", ...APPLIANCE_STORES],
   "washing-machines": ["daraz", ...APPLIANCE_STORES],
+  "microwave-ovens": ["daraz", ...APPLIANCE_STORES],
 };
 
 export function isMarketplace(platform) {

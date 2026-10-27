@@ -621,3 +621,43 @@ def test_a_store_naming_its_own_washer_keeps_the_number_ending_its_code(
 
     assert result["product_created"] is True
     assert result["model"] == f"MIWMTL{number}"
+
+
+# --------------------------------------------------------------------------
+# Microwave ovens
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("title", "code"),
+    [
+        # One Dawlance oven at three stores: "DW" is left off.
+        ("DAWLANCE MICROWAVE DW-136G", "136G"),
+        ("DAWLANCE MICROWAVE OVEN GRILL Model DW 136 G", "136G"),
+        ("DAWLANCE MICROWAVE 297 GSS", "297GSS"),
+        ("DAWLANCE GRILL MICROWAVE OVEN 20 LITER Model DW 297 GSS", "297GSS"),
+        # Dawlance's MD series, however it is spaced.
+        ("Dawlance MD-7 Heating Microwave Oven 20L With Official Warranty", "MD7"),
+        ("DAWLANCE SOLO MICROWAVE OVEN 20 LITERS Model DW MD7", "MD7"),
+        # Kenwood's point is inside the code: these are two ovens.
+        ("KENWOOD SOLO MICROWAVE OVEN 20 LITRE Model MWP20.020BK", "MWP20020BK"),
+        ("KENWOOD GRILL MICROWAVE OVEN 20 LITRE Model MWP20.030SI", "MWP20030SI"),
+        # PEL's spaced en dash.
+        ("PEL CONVECTION AIR FRYER MICROWAVE OVEN 26 LITRE Model PMO – 26", "PMO26"),
+        ("HAIER SOLO MICROWAVE OVEN 20 LITRE Model HMW-20MXP3", "HMW20MXP3"),
+    ],
+)
+def test_a_microwave_is_read_by_its_code_however_a_store_writes_it(title, code):
+    assert profile_for("microwave-ovens").model_key_from(title) == code
+
+
+def test_a_microwave_title_states_its_capacity_kind_and_inverter():
+    from app.services.category_profiles import microwave_specifications
+
+    assert microwave_specifications("HAIER SOLO MICROWAVE OVEN 20 LITRE Model HMW-20MXP3") == {
+        "capacity": "20 litres",
+        "type": "Solo",
+    }
+    assert microwave_specifications(
+        "PEL INVERTER CONVECTION AIR FRYER 30 LITRE MICROWAVE OVEN"
+    ) == {"capacity": "30 litres", "type": "Air fryer", "inverter": "Yes"}
