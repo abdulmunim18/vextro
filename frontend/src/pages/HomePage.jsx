@@ -14,6 +14,7 @@ const categoryLinks = [
   { icon: "💻", label: "Laptops", slug: "laptops" },
   { icon: "⌚", label: "Wearables", slug: "smart-watches" },
   { icon: "🎧", label: "Audio", slug: "audio-and-earbuds" },
+  { icon: "❄️", label: "Appliances", slug: "home-appliances" },
 ];
 
 const howItWorks = [

@@ -13,6 +13,7 @@ import {
   getProducts,
 } from "../services/catalogService";
 import { getApiErrorMessage } from "../utils/apiError";
+import { nestCategories } from "../utils/categories";
 
 const PAGE_SIZE = 12;
 
@@ -53,7 +54,6 @@ const LEGACY_CATEGORY_SLUGS = {
 
 // Categories that hold no products of their own: the parent of every
 // category, and the old name phones were filed under.
-const HIDDEN_CATEGORY_SLUGS = new Set(["electronics", "smartphones"]);
 
 function filtersFromUrl(searchParams) {
   const categorySlug = searchParams.get("category")?.trim() || "";
@@ -547,16 +547,14 @@ const comparisonUrl =
 >
   <option value="">All categories</option>
 
-  {categories
-    .filter((category) => !HIDDEN_CATEGORY_SLUGS.has(category.slug))
-    .map((category) => (
-      <option
-        key={category.id}
-        value={category.slug}
-      >
-        {category.name}
-      </option>
-    ))}
+  {nestCategories(categories).map(({ category, nested }) => (
+    <option
+      key={category.id}
+      value={category.slug}
+    >
+      {nested ? `– ${category.name}` : category.name}
+    </option>
+  ))}
 </select>
           </div>
 

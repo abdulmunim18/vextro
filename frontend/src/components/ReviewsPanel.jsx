@@ -16,11 +16,11 @@ import { summariseDarazRatings } from "../utils/darazRatings";
 // single product without a second request.
 const FETCH_PAGE_SIZE = 100;
 const REVIEWS_PER_PLATFORM_BOX = 6;
-// Only marketplaces whose review text VEXTRO can actually read get a box.
-// Daraz closes its review pages to other sites, so it has none to show;
-// its star rating still appears on each Daraz offer card. Adding "daraz"
-// back here restores its box and the marketplace comparison.
-const SUPPORTED_PLATFORM_CODES = ["priceoye"];
+// Stores whose review text VEXTRO can read: PriceOye's own reviews and the
+// Judge.me reviews on Friends Home's and Jalal's product pages. A store gets
+// a box only where it lists this product or has reviewed it. Daraz closes
+// its review pages to other sites, so it has its rating box instead.
+const SUPPORTED_PLATFORM_CODES = ["priceoye", "friendshome", "jalal"];
 const MIN_REVIEWS_FOR_RECOMMENDATION = 3;
 
 const SUSPICION_STYLES = {
@@ -50,6 +50,8 @@ const SUSPICION_STYLES = {
 const PLATFORM_LABELS = {
   daraz: "Daraz",
   priceoye: "PriceOye",
+  friendshome: "Friends Home",
+  jalal: "Jalal Electronics",
 };
 
 function StarRating({ value }) {
@@ -99,7 +101,7 @@ function dominantLevel(low, medium, high) {
   return "low";
 }
 
-// What the marketplace itself reports for this phone: its star rating and
+// What the marketplace itself reports for this product: its star rating and
 // how many buyers rated it. VEXTRO can read only some of the review text
 // (none of it on Daraz, which closes its review pages to other sites), so
 // these figures are the fuller picture of what buyers think.
@@ -113,7 +115,7 @@ function summariseMarketplaceRatings(listings) {
     return null;
   }
 
-  // A marketplace that sells the phone itself repeats one product-wide
+  // A marketplace that sells the product itself repeats one product-wide
   // figure on every colour; separate sellers each have their own buyers.
   const bySeller = new Map();
   rated.forEach((listing) => {
@@ -249,9 +251,8 @@ function EmptyPlatformCard({ label, marketplace, isListed }) {
         <div className="mt-5">
           <MarketplaceRatingSummary label={label} summary={marketplace} />
           <p className="mt-4 text-xs leading-6 text-vextro-muted">
-            {label} does not let other sites collect the text of its
-            reviews, so VEXTRO shows {label}'s own rating and review
-            count. Open {label} to read what buyers wrote.
+            VEXTRO shows {label}'s own rating and review count. Open{" "}
+            {label} to read what buyers wrote.
           </p>
         </div>
       ) : (
@@ -261,8 +262,8 @@ function EmptyPlatformCard({ label, marketplace, isListed }) {
           </span>
           <h4 className="mt-3 text-base font-black text-vextro-ink">
             {isListed
-              ? `No buyer has reviewed this phone on ${label} yet`
-              : `This phone is not listed on ${label}`}
+              ? `No buyer has reviewed this product on ${label} yet`
+              : `This product is not listed on ${label}`}
           </h4>
           <p className="mt-2 text-xs leading-6 text-vextro-muted">
             {isListed
@@ -448,7 +449,7 @@ function TrustRecommendation({ groups }) {
           </div>
         ) : (
           <p className="mt-2 text-sm font-bold text-vextro-ink">
-            No buyer has rated this phone on either marketplace yet.
+            No buyer has rated this product on any store yet.
           </p>
         )}
         <p className="mt-3 text-xs leading-6 text-vextro-muted">
@@ -710,11 +711,11 @@ function ReviewsPanel({ productId, listings = [], platformNames }) {
         high,
         averageSuspicion,
       };
-    });
+    }).filter((group) => group.isListed || group.total > 0);
   }, [reviewsResponse, analysis, listings, platformNames]);
 
   // Daraz gets its own box built from its published ratings; it has no
-  // review text VEXTRO may collect. Shown whenever Daraz lists the phone.
+  // review text VEXTRO may collect. Shown whenever Daraz lists the product.
   const darazSummary = useMemo(() => {
     const darazListings = listings.filter(
       (listing) =>
@@ -827,15 +828,28 @@ function ReviewsPanel({ productId, listings = [], platformNames }) {
           ),
         )}
         {darazSummary ? <DarazRatingBox summary={darazSummary} /> : null}
+        {boxCount === 0 ? (
+          <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-white p-8 text-center">
+            <span className="text-4xl" aria-hidden="true">
+              💬
+            </span>
+            <h4 className="mt-3 text-base font-black text-vextro-ink">
+              No customer reviews for this product yet
+            </h4>
+            <p className="mt-2 text-xs leading-6 text-vextro-muted">
+              None of the stores selling it has published a review VEXTRO
+              can read. Reviews appear here as soon as one does.
+            </p>
+          </div>
+        ) : null}
         {communitySources.map((source) => (
           <CommunitySourceBox key={source.source} source={source} />
         ))}
       </div>
 
       <p className="mt-6 text-[11px] leading-5 text-vextro-muted">
-        Reviews are refreshed automatically as new phones are ingested
-        by VEXTRO's marketplace crawlers — no action needed on your
-        part.
+        Reviews are refreshed automatically each time VEXTRO's crawlers
+        read the stores — no action needed on your part.
       </p>
     </section>
   );

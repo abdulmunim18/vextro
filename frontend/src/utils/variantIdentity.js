@@ -27,6 +27,45 @@ const CASE_MATERIAL_LABELS = {
   steel: "Stainless steel case",
 };
 
+const CHIP_WORDS = {
+  ultra: "Core Ultra",
+  core: "Core",
+  ryzen: "Ryzen",
+  ai: "AI",
+  max: "Max",
+  rtx: "RTX",
+  gtx: "GTX",
+  mx: "MX",
+  snapdragon: "Snapdragon",
+  ti: "Ti",
+  celeron: "Celeron",
+  gen: "Gen",
+  pro: "Pro",
+  elite: "Elite",
+  plus: "Plus",
+};
+
+// "ultra 7 155u" -> "Core Ultra 7 155U", "i7-13620h" -> "i7-13620H",
+// "rtx 4050" -> "RTX 4050", "m4 pro" -> "M4 Pro".
+function formatChipName(value) {
+  return String(value)
+    .split(" ")
+    .map((word) => {
+      if (CHIP_WORDS[word]) {
+        return CHIP_WORDS[word];
+      }
+      if (/^i[3579]/.test(word)) {
+        return word.replace(/[a-z]+$/, (suffix) => suffix.toUpperCase());
+      }
+      // "13th" stays as written.
+      if (/^\d+(st|nd|rd|th)$/.test(word)) {
+        return word;
+      }
+      return word.toUpperCase();
+    })
+    .join(" ");
+}
+
 export function isInternalVariantAttribute(key) {
   return INTERNAL_ATTRIBUTES.has(key);
 }
@@ -48,6 +87,23 @@ export function variantIdentityDetails(variant) {
   const ramGb = variant.ram_gb ?? identity.ram_gb;
   const storageGb = variant.storage_gb ?? identity.storage_gb;
   const details = [];
+
+  // A laptop's chip and graphics card, stored lower-case ("ultra 7 155u").
+  if (identity.processor) {
+    details.push({
+      key: "processor",
+      label: "Processor",
+      value: formatChipName(identity.processor),
+    });
+  }
+
+  if (identity.graphics) {
+    details.push({
+      key: "graphics",
+      label: "Graphics",
+      value: formatChipName(identity.graphics),
+    });
+  }
 
   if (identity.screen_in) {
     details.push({

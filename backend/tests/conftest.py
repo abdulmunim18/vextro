@@ -170,6 +170,50 @@ def prepare_test_database() -> Generator[None, None, None]:
             ),
         ]
 
+        # As migration a4e8b1c3d927 seeds them.
+        home_appliances = Category(
+            name="Home Appliances",
+            slug="home-appliances",
+            is_active=True,
+        )
+        database_session.add(home_appliances)
+        database_session.flush()
+        child_categories += [
+            Category(
+                parent_id=home_appliances.id,
+                name="Air Conditioners",
+                slug="air-conditioners",
+                is_active=True,
+            ),
+            Category(
+                parent_id=home_appliances.id,
+                name="Televisions",
+                slug="televisions",
+                is_active=True,
+            ),
+            # As migration c6f2d8a41b93 seeds it.
+            Category(
+                parent_id=home_appliances.id,
+                name="Refrigerators & Freezers",
+                slug="refrigerators",
+                is_active=True,
+            ),
+            # As migration d1a7e3f5c284 seeds it.
+            Category(
+                parent_id=home_appliances.id,
+                name="Washing Machines & Dryers",
+                slug="washing-machines",
+                is_active=True,
+            ),
+            # As migration e8b4c2a6d913 seeds it.
+            Category(
+                parent_id=home_appliances.id,
+                name="Microwave Ovens",
+                slug="microwave-ovens",
+                is_active=True,
+            ),
+        ]
+
         brand_names = [
             "Apple",
             "Samsung",
@@ -217,6 +261,14 @@ def prepare_test_database() -> Generator[None, None, None]:
                 code="shophive",
                 base_url="https://www.shophive.com",
                 is_active=True,
+            ),
+            *(
+                Platform(name=name, code=code, base_url=base_url, is_active=True)
+                for name, code, base_url in (
+                    ("Friends Home", "friendshome", "https://friendshome.pk"),
+                    ("Jalal Electronics", "jalal", "https://jalalelectronics.com"),
+                    ("Telemart", "telemart", "https://telemart.pk"),
+                )
             ),
         ]
 

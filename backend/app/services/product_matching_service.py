@@ -968,6 +968,14 @@ class ProductMatchingService:
                 specification_storage or extracted_storage
             )
 
+        if profile.reads_own_memory:
+            own_ram, own_storage = profile.memory_from(
+                title=title,
+                specifications=payload.specifications,
+            )
+            requested_ram = own_ram or payload.ram_gb
+            requested_storage = own_storage or payload.storage_gb
+
         if not profile.uses_memory:
             requested_ram = requested_storage = None
 

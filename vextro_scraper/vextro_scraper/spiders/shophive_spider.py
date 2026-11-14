@@ -858,3 +858,52 @@ class ShophiveSmartwatchSpider(ShophiveSpider):
     def title_colour(name):
         match = WATCH_CASE_COLOUR.search(str(name or ''))
         return tidy_colour(match.group(1)) if match else None
+
+
+class ShophiveAudioSpider(ShophiveSpider):
+    """Shophive's earbuds, headphones and neckbands, and its AirPods.
+
+    Its audio store also sells speakers, soundbars and microphones, which
+    sit in subcategories of their own and are not read.
+    """
+
+    name = 'shophive_audio'
+    catalog_category = 'audio-and-earbuds'
+    parser_version = 'shophive-audio-v1'
+    category_paths = (
+        'audio/earbuds',
+        'audio/wireless-headphones',
+        'audio/neckband',
+        'apple/airpod',
+    )
+
+
+class ShophiveLaptopSpider(ShophiveSpider):
+    """Shophive's laptops and its MacBooks.
+
+    Bags, chargers and desktops (iMac, Mac mini, Mac Studio) have
+    categories of their own and are not read.
+    """
+
+    name = 'shophive_laptops'
+    catalog_category = 'laptops'
+    parser_version = 'shophive-laptops-v1'
+    category_paths = (
+        'laptops-computers/laptops',
+        'apple/mac/macbook-air',
+        'apple/mac/macbook-pro',
+        'apple/mac/macbook-neo',
+    )
+
+
+class ShophiveTelevisionSpider(ShophiveSpider):
+    """Shophive's televisions, under TV > LED by brand.
+
+    Projectors, TV boxes, mounts and trolleys have categories of their own
+    and are not read.
+    """
+
+    name = 'shophive_tvs'
+    catalog_category = 'televisions'
+    parser_version = 'shophive-tvs-v1'
+    category_paths = ('tv/led',)

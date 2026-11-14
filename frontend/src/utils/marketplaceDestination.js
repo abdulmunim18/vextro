@@ -46,6 +46,20 @@ export function getMarketplaceDestination(
     };
   }
 
+  // The Shopify stores share one search address.
+  const shopifyStore = [
+    ["friends home", "https://friendshome.pk"],
+    ["jalal", "https://jalalelectronics.com"],
+    ["telemart", "https://telemart.pk"],
+  ].find(([name]) => normalizedPlatform.includes(name));
+
+  if (shopifyStore) {
+    return {
+      url: `${shopifyStore[1]}/search?q=${searchQuery}`,
+      isSearchFallback: true,
+    };
+  }
+
   return {
     url: productUrl || "#",
     isSearchFallback: !productUrl,

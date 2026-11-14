@@ -47,10 +47,11 @@ class ProductMatchRequest(BaseModel):
         max_length=150,
     )
 
+    # Up to 256 GB: a workstation laptop carries 192 GB.
     ram_gb: int | None = Field(
         default=None,
         ge=1,
-        le=128,
+        le=256,
     )
 
     storage_gb: int | None = Field(

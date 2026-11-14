@@ -65,7 +65,7 @@ function DarazRatingBox({ summary }) {
           </>
         ) : (
           <p className="mt-2 text-sm font-bold text-vextro-ink">
-            No buyer has rated this phone on Daraz yet.
+            No buyer has rated this product on Daraz yet.
           </p>
         )}
       </div>

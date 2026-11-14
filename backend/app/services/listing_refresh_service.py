@@ -85,6 +85,50 @@ CATEGORY_SPIDERS: dict[str, dict[str, TargetedSpider]] = {
         "daraz": TargetedSpider("daraz_smartwatches", "search_terms", "|"),
         "shophive": TargetedSpider("shophive_smartwatches", "product_urls"),
     },
+    "audio-and-earbuds": {
+        "priceoye": TargetedSpider("priceoye_audio", "product_urls"),
+        "daraz": TargetedSpider("daraz_audio", "search_terms", "|"),
+        "shophive": TargetedSpider("shophive_audio", "product_urls"),
+    },
+    "laptops": {
+        "priceoye": TargetedSpider("priceoye_laptops", "product_urls"),
+        "daraz": TargetedSpider("daraz_laptops", "search_terms", "|"),
+        "shophive": TargetedSpider("shophive_laptops", "product_urls"),
+    },
+    "air-conditioners": {
+        "friendshome": TargetedSpider("friendshome_acs", "product_urls"),
+        "jalal": TargetedSpider("jalal_acs", "product_urls"),
+        "telemart": TargetedSpider("telemart_acs", "product_urls"),
+        "priceoye": TargetedSpider("priceoye_acs", "product_urls"),
+        "daraz": TargetedSpider("daraz_acs", "search_terms", "|"),
+    },
+    "televisions": {
+        "friendshome": TargetedSpider("friendshome_tvs", "product_urls"),
+        "jalal": TargetedSpider("jalal_tvs", "product_urls"),
+        "telemart": TargetedSpider("telemart_tvs", "product_urls"),
+        "priceoye": TargetedSpider("priceoye_tvs", "product_urls"),
+        "shophive": TargetedSpider("shophive_tvs", "product_urls"),
+        "daraz": TargetedSpider("daraz_tvs", "search_terms", "|"),
+    },
+    "refrigerators": {
+        "friendshome": TargetedSpider("friendshome_fridges", "product_urls"),
+        "jalal": TargetedSpider("jalal_fridges", "product_urls"),
+        "telemart": TargetedSpider("telemart_fridges", "product_urls"),
+        "priceoye": TargetedSpider("priceoye_fridges", "product_urls"),
+        "daraz": TargetedSpider("daraz_fridges", "search_terms", "|"),
+    },
+    "washing-machines": {
+        "friendshome": TargetedSpider("friendshome_washers", "product_urls"),
+        "jalal": TargetedSpider("jalal_washers", "product_urls"),
+        "telemart": TargetedSpider("telemart_washers", "product_urls"),
+        "daraz": TargetedSpider("daraz_washers", "search_terms", "|"),
+    },
+    "microwave-ovens": {
+        "friendshome": TargetedSpider("friendshome_microwaves", "product_urls"),
+        "jalal": TargetedSpider("jalal_microwaves", "product_urls"),
+        "telemart": TargetedSpider("telemart_microwaves", "product_urls"),
+        "daraz": TargetedSpider("daraz_microwaves", "search_terms", "|"),
+    },
 }
 
 Launcher = Callable[[TargetedSpider, list[str]], object]
